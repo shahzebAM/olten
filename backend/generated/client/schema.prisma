@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Employee {
+  id        Int    @id @default(autoincrement())
+  firstName String
+  lastName  String
+  baseRate  Float
+}

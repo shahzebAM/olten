@@ -1,0 +1,43 @@
+# =========================
+# Node.js / Dependencies
+# =========================
+node_modules/
+package-lock.json
+npm-debug.log
+yarn-error.log
+yarn.lock
+
+# =========================
+# Environment Variables (CRITICAL)
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Backend (NestJS / Prisma)
+# =========================
+backend/dist/
+backend/coverage/
+backend/.nestjs/
+backend/prisma/*.db
+backend/prisma/*.db-journal
+
+# =========================
+# Frontend (Vite / React)
+# =========================
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+frontend/.eslintcache
+
+# =========================
+# OS / Editor Files
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.user
+*.log

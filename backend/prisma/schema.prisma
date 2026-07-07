@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" 
+  url      = "file:./dev.db"
+}
+
+model Employee {
+  id               Int          @id @default(autoincrement())
+  firstName        String
+  middleName       String?
+  lastName         String
+  dateOfBirth      DateTime
+  address          String
+  civilStatus      String
+  baseRate         Float
+  employmentStatus String
+  tin              String?      @unique
+  sssNumber        String?      @unique
+  philhealth       String?      @unique
+  pagIbig          String?      @unique
+  bankAccount      String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @default(now()) @updatedAt // <-- ADD @default(now())
+
+  attendances      Attendance[]
+  payrolls         Payroll[]
+}
+
+model Settings {
+  id         Int    @id @default(autoincrement())
+  shiftStart String @default("08:00")
+  shiftEnd   String @default("17:00")
+}
+
+model Attendance {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       String   
+  timeIn     String
+  timeOut    String
+  hours      Float
+  reason     String?
+  shiftStart String?  // <-- Add this line
+  shiftEnd   String?  // <-- Add this line
+  createdAt  DateTime @default(now())
+}
+
+model Payroll {
+  id               Int      @id @default(autoincrement())
+  employeeId       Int
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  daysWorked       Float
+  totalHours       Float
+  cashAdvance      Float    @default(0)
+  sssDeduction     Float    @default(0)
+  pagIbigDeduct    Float    @default(0)
+  philhealthDeduct Float    @default(0)
+  tax              Float    @default(0)
+  grossPay         Float
+  netPay           Float
+  createdAt        DateTime @default(now())
+}
+
