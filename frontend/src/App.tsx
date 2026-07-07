@@ -40,9 +40,64 @@ const formatMoney = (val: number) => {
   return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+// Formats Decimal Hours (0.50) into Human Readable Minutes (30m) purely for display
+const formatDecToHM = (decimalHours: number) => {
+  if (!decimalHours || decimalHours <= 0) return '0m';
+  const h = Math.floor(decimalHours);
+  const m = Math.round((decimalHours - h) * 60);
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+};
+
 // ==========================================
 // 2. REUSABLE UI COMPONENTS
 // ==========================================
+
+// Custom 12-Hour Time Picker (Bypasses Mobile OS Overrides)
+const TimePicker12h = ({ value, onChange, disabled = false, compact = false }: any) => {
+  const initialHours24 = value ? parseInt(value.split(':')[0]) : 9;
+  const initialMinutes = value ? value.split(':')[1] : '00';
+  let initialHours12 = initialHours24 % 12 || 12;
+  const initialPeriod = initialHours24 >= 12 ? 'PM' : 'AM';
+
+  const [hour, setHour] = useState(String(initialHours12).padStart(2, '0'));
+  const [minute, setMinute] = useState(initialMinutes);
+  const [period, setPeriod] = useState(initialPeriod);
+
+  useEffect(() => {
+    if(value) {
+        const h24 = parseInt(value.split(':')[0]);
+        const m = value.split(':')[1];
+        setHour(String(h24 % 12 || 12).padStart(2, '0'));
+        setMinute(m);
+        setPeriod(h24 >= 12 ? 'PM' : 'AM');
+    }
+  }, [value]);
+
+  const syncTimeChange = (h: string, m: string, p: string) => {
+    let finalHour = parseInt(h);
+    if (p === 'PM' && finalHour < 12) finalHour += 12;
+    if (p === 'AM' && finalHour === 12) finalHour = 0;
+    onChange(`${String(finalHour).padStart(2, '0')}:${m}`);
+  };
+
+  return (
+    <div className={`flex items-center gap-1 bg-white border border-slate-300 rounded-lg ${compact ? 'p-1.5' : 'p-2.5'} focus-within:ring-2 focus-within:ring-indigo-500 shadow-sm w-full ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <select value={hour} onChange={(e) => { setHour(e.target.value); syncTimeChange(e.target.value, minute, period); }} className="bg-transparent p-1 focus:outline-none w-full text-center text-slate-800 font-bold appearance-none cursor-pointer text-sm sm:text-base">
+        {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(h => (<option key={h} value={h}>{h}</option>))}
+      </select>
+      <span className="text-slate-400 font-bold">:</span>
+      <select value={minute} onChange={(e) => { setMinute(e.target.value); syncTimeChange(hour, e.target.value, period); }} className="bg-transparent p-1 focus:outline-none w-full text-center text-slate-800 font-bold appearance-none cursor-pointer text-sm sm:text-base">
+        {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map(m => (<option key={m} value={m}>{m}</option>))}
+      </select>
+      <select value={period} onChange={(e) => { setPeriod(e.target.value); syncTimeChange(hour, minute, e.target.value); }} className="bg-slate-100 border-l border-slate-200 px-2 py-1.5 rounded font-bold text-xs sm:text-sm text-indigo-600 focus:outline-none cursor-pointer appearance-none ml-1">
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
+  );
+};
 
 const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false }: any) => {
   const renderInput = () => {
@@ -223,6 +278,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
+  // Payroll Compute Tab States
+  const [payrollComputeMonth, setPayrollComputeMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
+  const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
+
   // Modals & Status
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
@@ -589,14 +649,25 @@ export default function App() {
   // --- PAYROLL LOGIC ---
   const openPayrollModal = (emp: Employee) => {
     setActiveEmployee(emp);
-    setPayrollData({ daysWorked: '13', cashAdvance: '0', sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false });
+    
+    // Calculate actual days present in the selected month to auto-fill the cutoff days
+    const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
+    const actualDays = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+    const defaultDays = actualDays > 0 ? actualDays.toString() : '13';
+
+    setPayrollData({ daysWorked: defaultDays, cashAdvance: '0', sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false });
     setIsPayrollModalOpen(true);
   };
 
   const calculatePayroll = () => {
     if (!activeEmployee) return null;
     
-    const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id);
+    // Explicitly filter logs by the active employee AND the currently selected computation month
+    const empLogs = attendances.filter(a => 
+      Number(a.employeeId) === activeEmployee.id && 
+      a.date && 
+      a.date.split('T')[0].startsWith(payrollComputeMonth)
+    );
     
     // Dynamically reactive calculations for the ACTIVE payroll compute flow
     const totalHoursWorked = empLogs.reduce((sum, log) => {
@@ -757,6 +828,24 @@ export default function App() {
     return fullName.includes(query);
   });
 
+  // Specifically filter Active Employees for the Compute Salary list
+  const filteredActiveEmployees = employees.filter(emp => {
+    if (!payrollActiveSearchQuery) return true;
+    const query = payrollActiveSearchQuery.toLowerCase();
+    const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
+    return fullName.includes(query);
+  });
+
+  // Specifically filter Saved Payroll History
+  const filteredSavedPayrolls = payrolls.filter(pr => {
+    if (!payrollHistorySearchQuery) return true;
+    const query = payrollHistorySearchQuery.toLowerCase();
+    const emp = employees.find(e => e.id === Number(pr.employeeId));
+    const fullName = emp ? `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase() : '';
+    const dateStr = formatMDY(pr.createdAt).toLowerCase();
+    return fullName.includes(query) || dateStr.includes(query);
+  });
+
   return (
     <div className="min-h-screen print:min-h-0 print:h-auto bg-slate-50 relative selection:bg-blue-100 selection:text-blue-900 font-sans text-slate-900">
       
@@ -846,14 +935,14 @@ export default function App() {
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-slate-50/50">
+            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-slate-50/50 shrink-0">
               <div><h2 className="text-xl font-bold text-blue-950">Edit Employee Record</h2></div>
               <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
             </div>
             <div className="overflow-y-auto p-6">
               <form onSubmit={handleSubmitEmployee} className="flex flex-col gap-6">
                 <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
-                <div className="flex gap-3 mt-6 pt-6 border-t border-slate-200">
+                <div className="flex gap-3 mt-6 pt-6 border-t border-slate-200 shrink-0">
                   <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-blue-700 text-white rounded-xl font-semibold shadow-sm">{isSaving ? "Saving..." : "Save Changes"}</button>
                   <button type="button" onClick={() => setIsEditModalOpen(false)} className="py-3 px-8 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50">Cancel</button>
                 </div>
@@ -867,7 +956,7 @@ export default function App() {
       {monthLogsModalEmp && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-indigo-50/50">
+            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-indigo-50/50 shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-indigo-950">
                   Monthly Logs: {monthLogsModalEmp.firstName} {monthLogsModalEmp.lastName}
@@ -903,16 +992,16 @@ export default function App() {
                       </span>
                       <span className="text-slate-200">|</span>
                       
-                      <span className="font-bold text-indigo-600 w-[70px]">Reg: {shiftDetails.reg.toFixed(2)}</span>
+                      <span className="font-bold text-indigo-600 w-[70px]">Reg: {formatDecToHM(shiftDetails.reg)}</span>
                       <span className="text-slate-200">|</span>
                       {shiftDetails.earlyOt > 0 ? (
-                        <span className="font-bold text-amber-600 w-[70px]" title="Early Hours">Early: {shiftDetails.earlyOt.toFixed(2)}</span>
+                        <span className="font-bold text-amber-600 w-[70px]" title="Early Hours">Early: {formatDecToHM(shiftDetails.earlyOt)}</span>
                       ) : (
                         <span className="font-medium text-slate-400 w-[70px]">Early: --</span>
                       )}
                       <span className="text-slate-200">|</span>
                       {shiftDetails.lateOt > 0 ? (
-                        <span className="font-bold text-amber-600 w-[75px]" title="Late Overtime">Late OT: {shiftDetails.lateOt.toFixed(2)}</span>
+                        <span className="font-bold text-amber-600 w-[75px]" title="Late Overtime">Late OT: {formatDecToHM(shiftDetails.lateOt)}</span>
                       ) : (
                         <span className="font-medium text-slate-400 w-[75px]">Late OT: --</span>
                       )}
@@ -938,7 +1027,7 @@ export default function App() {
       {editingLog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-indigo-50/50">
+            <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-indigo-50/50 shrink-0">
               <h2 className="text-lg font-bold text-indigo-950">Edit Log for {formatMDY(editingLog.date)}</h2>
               <button onClick={() => setEditingLog(null)} className="text-slate-400 hover:text-slate-600 p-1">✕</button>
             </div>
@@ -965,14 +1054,14 @@ export default function App() {
               </div>
 
               {editLogForm.type === 'regular' ? (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5 w-full">
                     <label className="text-sm font-medium text-slate-600">Time In</label>
-                    <input type="time" value={editLogForm.timeIn} onChange={(e) => setEditLogForm({...editLogForm, timeIn: e.target.value})} className="px-4 py-2.5 border rounded-lg text-sm bg-white outline-none focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm" />
+                    <TimePicker12h value={editLogForm.timeIn} onChange={(val: string) => setEditLogForm({...editLogForm, timeIn: val})} />
                   </div>
                   <div className="flex flex-col gap-1.5 w-full">
                     <label className="text-sm font-medium text-slate-600">Time Out</label>
-                    <input type="time" value={editLogForm.timeOut} onChange={(e) => setEditLogForm({...editLogForm, timeOut: e.target.value})} className="px-4 py-2.5 border rounded-lg text-sm bg-white outline-none focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm" />
+                    <TimePicker12h value={editLogForm.timeOut} onChange={(val: string) => setEditLogForm({...editLogForm, timeOut: val})} />
                   </div>
                 </div>
               ) : (
@@ -982,7 +1071,7 @@ export default function App() {
                 </div>
               )}
 
-              <button onClick={submitEditLog} disabled={isSaving} className="mt-2 w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">
+              <button onClick={submitEditLog} disabled={isSaving} className="mt-2 w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 shrink-0">
                 {isSaving ? "Updating..." : "Update Attendance"}
               </button>
             </div>
@@ -996,7 +1085,7 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
             
             {/* Top Bar - Hidden on Print */}
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print">
+            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print shrink-0">
               <h2 className="font-bold text-slate-800">Generated Payslip</h2>
               <div className="flex gap-2">
                 <button onClick={() => window.print()} className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-sm font-bold text-sm hover:bg-blue-700 flex items-center gap-2 transition-colors">
@@ -1016,8 +1105,14 @@ export default function App() {
                   const rec = selectedPayslip.record;
                   const emp = selectedPayslip.emp;
                   
-                  const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id);
-                  const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+                  // Lock the days present count strictly to the month the payroll was created
+const payrollMonth = new Date(rec.createdAt).toISOString().slice(0, 7);
+const empLogs = attendances.filter(a => 
+  Number(a.employeeId) === emp.id && 
+  a.date && 
+  a.date.split('T')[0].startsWith(payrollMonth)
+);
+const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
 
                   const baseSalary = emp.baseRate;
                   const days = rec.daysWorked || 0;
@@ -1089,12 +1184,12 @@ export default function App() {
                         <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">TOTAL HOURS</td>
                           <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(rec.totalHours)}</td>
+                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(rec.totalHours)}</td>
                         </tr>
                         <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REQUIRED NO.OF HOURS</td>
                           <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(requiredHrs)}</td>
+                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(requiredHrs)}</td>
                         </tr>
                         <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">REGULAR PAY</td>
@@ -1104,7 +1199,7 @@ export default function App() {
                         <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td>
                           <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{otHours > 0 ? formatMoney(otHours) : '-'}</td>
+                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{otHours > 0 ? formatDecToHM(otHours) : '-'}</td>
                         </tr>
                         <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td>
@@ -1221,7 +1316,7 @@ export default function App() {
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
             
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print">
+            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print shrink-0">
               <h2 className="font-bold text-slate-800">Summary Report Output</h2>
               <div className="flex gap-2">
                 <button onClick={() => window.print()} className="bg-amber-600 text-white px-4 py-2 rounded-lg shadow-sm font-bold text-sm hover:bg-amber-700 flex items-center gap-2 transition-colors">
@@ -1275,8 +1370,8 @@ export default function App() {
                                 <td className="py-2 px-3 border border-slate-300 font-bold uppercase text-slate-700">{row.emp.lastName}, {row.emp.firstName}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-center font-medium">{row.count}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatMoney(row.totalDays)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatMoney(row.totalHours)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatMoney(row.otHours)}</td>
+                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatDecToHM(row.totalHours)}</td>
+                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatDecToHM(row.otHours)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-700 bg-emerald-50/50">{formatMoney(row.totalGross)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700 bg-rose-50/50">{formatMoney(row.totalDeductions)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-indigo-900 bg-indigo-50/50">{formatMoney(row.totalNet)}</td>
@@ -1305,7 +1400,7 @@ export default function App() {
       {isPayrollModalOpen && activeEmployee && computed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-emerald-50/50">
+            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-emerald-950">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
                 <p className="text-sm text-emerald-700 font-mono mt-1">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
@@ -1313,14 +1408,14 @@ export default function App() {
               <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
             </div>
             
-            <div className="overflow-y-auto p-6 flex flex-col lg:flex-row gap-8">
-              <div className="flex-1 space-y-6">
+            <div className="overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+              <div className="space-y-6">
                 <h3 className="font-bold text-slate-800 border-b pb-2">Time & Attendance Settings</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <InputField type="number" step="0.1" label="Days in Cutoff" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField type="text" disabled label="Total Logged Hours" value={`${computed.totalHoursWorked.toFixed(2)} hrs`} />
-                  <InputField type="text" disabled label="Total OT Hours" value={`${computed.otHrs.toFixed(2)} hrs`} />
+                  <InputField type="text" disabled label="Total Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
+                  <InputField type="text" disabled label="Total OT Hours" value={formatDecToHM(computed.otHrs)} />
                 </div>
                 
                 <h3 className="font-bold text-slate-800 border-b pb-2 mt-6">Deductions</h3>
@@ -1367,17 +1462,17 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 bg-slate-50 p-6 rounded-xl border border-slate-200 flex flex-col">
+              <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 flex flex-col">
                 <h3 className="font-bold text-slate-800 border-b pb-2 mb-4">Calculation Breakdown</h3>
                 <div className="space-y-3 text-sm flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{computed.requiredHrs} hrs</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{computed.totalHoursWorked.toFixed(2)} hrs</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-100 mt-2 mb-2">
-                      <span>Total Overtime ({computed.otHrs.toFixed(2)} hrs @ 125%):</span> 
+                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
@@ -1390,7 +1485,7 @@ export default function App() {
                   )}
 
                   <hr className="my-2" />
-                  <div className="flex justify-between font-bold text-slate-800"><span>Gross Pay:</span> <span className="font-mono">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                  <div className="flex justify-between font-bold text-slate-800"><span>Gross Pay:</span> <span className="font-mono text-base sm:text-lg">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
                   
                   {computed.autoTax > 0 && (
                     <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-2 rounded border border-rose-100">
@@ -1402,12 +1497,12 @@ export default function App() {
                   <div className="flex justify-between text-rose-600"><span>Total Deductions:</span> <span className="font-mono">- ₱{computed.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
                 </div>
 
-                <div className="mt-6 p-4 bg-emerald-950 text-white rounded-xl shadow-inner text-center">
+                <div className="mt-6 p-4 bg-emerald-950 text-white rounded-xl shadow-inner text-center overflow-hidden shrink-0">
                   <p className="text-emerald-200 text-sm font-semibold uppercase tracking-wider mb-1">Final Net Pay</p>
-                  <p className="text-4xl font-mono font-bold">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                  <p className="text-4xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
                 </div>
 
-                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-4 w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors">
+                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-4 w-full py-3 sm:py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm sm:text-base shrink-0">
                   {isSaving ? "Saving to Database..." : "Close & Save Payroll"}
                 </button>
               </div>
@@ -1577,7 +1672,7 @@ export default function App() {
             </div>
 
             {/* Reference Matrix */}
-            <div className="bg-white shadow-sm border border-slate-300 p-4 w-fit">
+            <div className="bg-white shadow-sm border border-slate-300 p-4 w-fit overflow-x-auto">
               <table className="text-center border-collapse border border-slate-400 text-sm">
                 <thead className="bg-slate-100 font-bold text-slate-800">
                   <tr>
@@ -1680,17 +1775,17 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="flex items-center gap-4 mt-4 bg-white p-3 rounded-xl shadow-sm border border-indigo-100 w-fit">
-                    <div className="flex flex-col gap-1">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-4 bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-indigo-100 w-full xl:w-fit">
+                    <div className="flex flex-col gap-1 w-full sm:w-auto">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office In</label>
-                      <input type="time" value={tempShiftStart} onChange={e => setTempShiftStart(e.target.value)} className="text-sm font-mono font-bold text-indigo-900 border-none outline-none bg-transparent cursor-pointer" />
+                      <TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact />
                     </div>
-                    <div className="w-px h-8 bg-slate-200"></div>
-                    <div className="flex flex-col gap-1">
+                    <div className="hidden sm:block w-px h-8 bg-slate-200"></div>
+                    <div className="flex flex-col gap-1 w-full sm:w-auto">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office Out</label>
-                      <input type="time" value={tempShiftEnd} onChange={e => setTempShiftEnd(e.target.value)} className="text-sm font-mono font-bold text-indigo-900 border-none outline-none bg-transparent cursor-pointer" />
+                      <TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact />
                     </div>
-                    <button onClick={applyShiftSettings} disabled={isSaving} className="ml-2 px-4 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs font-bold rounded shadow-sm transition-colors uppercase tracking-wide disabled:opacity-50">
+                    <button onClick={applyShiftSettings} disabled={isSaving} className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-3 sm:py-2.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs sm:text-sm font-bold rounded shadow-sm transition-colors uppercase tracking-wide disabled:opacity-50">
                       Save Shift
                     </button>
                   </div>
@@ -1798,15 +1893,15 @@ export default function App() {
                                     </div>
                                     {!isLeave && shiftCalc ? (
                                       <div className="flex gap-4 px-4 py-2.5 text-[11px] uppercase font-bold text-slate-500 bg-white items-center flex-wrap border-t border-indigo-50">
-                                        <span className="text-indigo-600" title="Regular Shift Hours">Reg: {shiftCalc.reg.toFixed(2)}</span>
+                                        <span className="text-indigo-600" title="Regular Shift Hours">Reg: {formatDecToHM(shiftCalc.reg)}</span>
                                         <span className="text-slate-200">|</span>
-                                        <span title="Early Overtime Hours" className={`${shiftCalc.earlyOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Early: {shiftCalc.earlyOt > 0 ? shiftCalc.earlyOt.toFixed(2) : '--'}</span>
+                                        <span title="Early Overtime Hours" className={`${shiftCalc.earlyOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Early: {shiftCalc.earlyOt > 0 ? formatDecToHM(shiftCalc.earlyOt) : '--'}</span>
                                         <span className="text-slate-200">|</span>
-                                        <span title="Late Overtime Hours" className={`${shiftCalc.lateOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Late OT: {shiftCalc.lateOt > 0 ? shiftCalc.lateOt.toFixed(2) : '--'}</span>
+                                        <span title="Late Overtime Hours" className={`${shiftCalc.lateOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Late OT: {shiftCalc.lateOt > 0 ? formatDecToHM(shiftCalc.lateOt) : '--'}</span>
                                       </div>
                                     ) : (
                                       <div className={`px-4 py-2.5 text-[11px] uppercase font-bold border-t border-indigo-50 ${log.hours > 0 ? 'text-emerald-600 bg-white' : 'text-rose-600 bg-rose-50'}`}>
-                                        {log.hours > 0 ? `Auto-credited: ${log.hours.toFixed(2)} hrs` : 'Deducted: 0.00 hrs'}
+                                        {log.hours > 0 ? `Auto-credited: ${formatDecToHM(log.hours)}` : 'Deducted: 0m'}
                                       </div>
                                     )}
                                   </div>
@@ -1817,19 +1912,18 @@ export default function App() {
                         </td>
 
                         <td className="py-5 px-6 align-top">
-                          <div className="flex flex-col gap-2 w-full max-w-[280px]">
+                          <div className="flex flex-col gap-2 w-full min-w-[200px] max-w-full sm:max-w-[320px]">
                             <select value={currentLog.type} onChange={(e) => handleTimeChange(emp.id, 'type', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:border-indigo-500 bg-white w-full shadow-sm">
                               <option value="regular">Standard Office Shift</option>
                               <option value="paid_leave">Paid Leave (8 hrs)</option>
                               <option value="unpaid_leave">Unpaid Leave (0 hrs)</option>
                             </select>
                             
-                            <div className="flex items-center gap-2 mt-1">
+                            <div className="flex flex-col gap-2 mt-1 w-full">
                               {currentLog.type === 'regular' ? (
                                 <>
-                                  <input type="time" value={currentLog.timeIn} onChange={(e) => handleTimeChange(emp.id, 'timeIn', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-indigo-500 w-full shadow-sm" />
-                                  <span className="text-slate-400 text-sm">to</span>
-                                  <input type="time" value={currentLog.timeOut} onChange={(e) => handleTimeChange(emp.id, 'timeOut', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-indigo-500 w-full shadow-sm" />
+                                  <TimePicker12h value={currentLog.timeIn} onChange={(val: string) => handleTimeChange(emp.id, 'timeIn', val)} compact />
+                                  <TimePicker12h value={currentLog.timeOut} onChange={(val: string) => handleTimeChange(emp.id, 'timeOut', val)} compact />
                                 </>
                               ) : (
                                 <input 
@@ -1846,12 +1940,12 @@ export default function App() {
                         </td>
 
                         <td className="py-5 px-6 align-top text-right font-mono font-semibold text-amber-600 text-sm">
-                           {totalOtHrs > 0 ? `${totalOtHrs.toFixed(2)} hrs` : '--'}
+                           {totalOtHrs > 0 ? formatDecToHM(totalOtHrs) : '--'}
                         </td>
 
                         <td className="py-5 px-6 align-top text-right">
                            <span className="inline-block whitespace-nowrap font-mono font-bold text-sm text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">
-                             {totalHrs > 0 ? `${totalHrs.toFixed(2)} hrs` : '--'}
+                             {totalHrs > 0 ? formatDecToHM(totalHrs) : '--'}
                            </span>
                         </td>
                       </tr>
@@ -1891,10 +1985,10 @@ export default function App() {
                         </td>
 
                         <td className="py-5 px-6 align-top text-right font-mono font-bold text-amber-700 text-sm">
-                           {totalOverallOtHrs > 0 ? `${totalOverallOtHrs.toFixed(2)} hrs` : '--'}
+                           {totalOverallOtHrs > 0 ? formatDecToHM(totalOverallOtHrs) : '--'}
                         </td>
                         <td className="py-5 px-6 align-top text-right font-mono font-bold text-indigo-700 text-sm">
-                           <span className="inline-block whitespace-nowrap bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">{totalHrs > 0 ? `${totalHrs.toFixed(2)} hrs` : '0.00 hrs'}</span>
+                           <span className="inline-block whitespace-nowrap bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">{totalHrs > 0 ? formatDecToHM(totalHrs) : '0m'}</span>
                         </td>
                       </tr>
                     )
@@ -1909,9 +2003,21 @@ export default function App() {
         {activeTab === 'payroll' && (
           <div className="space-y-6">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-200 bg-emerald-50/30 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-emerald-950">Active Employees (Compute Salary)</h2>
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider">Syncs with valid logged hours</span>
+              <div className="p-4 border-b border-slate-200 bg-emerald-50/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-emerald-950">Active Employees (Compute Salary)</h2>
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider inline-block mt-2 sm:mt-0 sm:ml-2">Syncs with valid logged hours</span>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                  <div className="relative">
+                    <input type="month" value={payrollComputeMonth} onChange={e => setPayrollComputeMonth(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                    <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white shadow-sm flex items-center justify-between w-full sm:w-[150px] pointer-events-none text-emerald-900 font-semibold">
+                      <span>{formatMonthYear(payrollComputeMonth)}</span>
+                      <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    </div>
+                  </div>
+                  <input type="text" placeholder="Search employee..." value={payrollActiveSearchQuery} onChange={e => setPayrollActiveSearchQuery(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 shadow-sm w-full sm:w-auto min-w-[200px]" />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[800px]">
@@ -1924,30 +2030,35 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {employees.map((emp) => {
-                      const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id);
-                      
-                      const totalLogged = empLogs.reduce((sum, log) => {
-                          if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
-                          return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
-                      }, 0);
-                      
-                      // FIXED: AGGREGATE OT CALCULATION TO MATCH EXCEL
-                      const days = parseFloat(payrollData.daysWorked) || 0;
-                      const requiredHrs = days * 8;
-                      const totalOtLogged = Math.max(0, totalLogged - requiredHrs);
+                    {filteredActiveEmployees.length === 0 ? (
+                      <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
+                    ) : (
+                      filteredActiveEmployees.map((emp) => {
+                        // Filter explicitly by selected computation month
+                        const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
+                        
+                        const totalLogged = empLogs.reduce((sum, log) => {
+                            if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
+                            return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
+                        }, 0);
+                        
+                        // FIXED: AGGREGATE OT CALCULATION TO USE ACTUAL DAYS PRESENT FOR PREVIEW
+                        const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+                        const requiredHrs = actualDaysPresentCount * 8;
+                        const totalOtLogged = Math.max(0, totalLogged - requiredHrs);
 
-                      return (
-                        <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
-                          <td className="py-4 px-6 font-semibold text-blue-950">{emp.firstName} {emp.lastName}</td>
-                          <td className="py-4 px-6 font-mono text-slate-600">{totalLogged.toFixed(2)} hrs</td>
-                          <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{totalOtLogged > 0 ? `${totalOtLogged.toFixed(2)} hrs` : '--'}</td>
-                          <td className="py-4 px-6 text-right">
-                            <button onClick={() => openPayrollModal(emp)} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase rounded hover:bg-emerald-700 shadow-sm transition-colors">Compute Salary</button>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        return (
+                          <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
+                            <td className="py-4 px-6 font-semibold text-blue-950">{emp.firstName} {emp.lastName}</td>
+                            <td className="py-4 px-6 font-mono text-slate-600">{formatDecToHM(totalLogged)}</td>
+                            <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{totalOtLogged > 0 ? formatDecToHM(totalOtLogged) : '--'}</td>
+                            <td className="py-4 px-6 text-right">
+                              <button onClick={() => openPayrollModal(emp)} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase rounded hover:bg-emerald-700 shadow-sm transition-colors">Compute Salary</button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1955,8 +2066,9 @@ export default function App() {
 
             {/* --- SAVED PAYROLL HISTORY TABLE --- */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8">
-              <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+              <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-lg font-bold text-slate-800">Saved Payroll History</h2>
+                <input type="text" placeholder="Search by name or date..." value={payrollHistorySearchQuery} onChange={e => setPayrollHistorySearchQuery(e.target.value)} className="w-full sm:w-[250px] px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-slate-600/10 focus:border-slate-500 shadow-sm" />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[900px]">
@@ -1970,16 +2082,16 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {payrolls.length === 0 ? (
-                      <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No payroll records saved yet.</td></tr>
+                    {filteredSavedPayrolls.length === 0 ? (
+                      <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No payroll records saved or matching your search.</td></tr>
                     ) : (
-                      payrolls.map(pr => {
+                      filteredSavedPayrolls.map(pr => {
                         const emp = employees.find(e => e.id === Number(pr.employeeId));
                         return (
                           <tr key={pr.id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 px-6 text-sm text-slate-600 font-mono font-semibold">{formatMDY(pr.createdAt)}</td>
                             <td className="py-4 px-6 font-semibold text-blue-950">{emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown Employee'}</td>
-                            <td className="py-4 px-6 text-sm text-slate-600">{pr.totalHours.toFixed(2)} hrs / {pr.daysWorked} days</td>
+                            <td className="py-4 px-6 text-sm text-slate-600">{formatDecToHM(pr.totalHours)} / {pr.daysWorked} days</td>
                             <td className="py-4 px-6 font-mono font-bold text-emerald-700">₱{pr.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                             <td className="py-4 px-6 text-right space-x-4">
                               {emp && (
