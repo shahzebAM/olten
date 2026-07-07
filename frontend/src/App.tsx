@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 
 // ==========================================
-// ENVIRONMENT CONFIG
+// ENVIRONMENT CONFIG (Auto-Sanitized)
 // ==========================================
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+// Strip trailing slash if it exists to prevent 404 double-slash errors
+const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
 
 // ==========================================
 // 1. GLOBAL FORMATTERS & STYLES
