@@ -32,7 +32,8 @@ model Employee {
 model Admin {
   id       Int    @id @default(autoincrement())
   username String @unique
-  password String // This will store the securely hashed password
+  password String
+  role     String @default("Super Admin") // <-- ADD THIS LINE
 }
 
 model Settings {
