@@ -374,19 +374,28 @@ export default function App() {
 // --- AUTHENTICATION LOGIC (Real Database Connection) ---
  // --- AUTHENTICATION LOGIC (Hardcoded Superuser) ---
 // --- AUTHENTICATION LOGIC (Real Database Connection) ---
+// --- AUTHENTICATION & ADMIN LOGIC (REAL DATABASE + HARDCODED SUPER ADMIN) ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
-
     try {
-      const cleanUsername = loginUsername.trim();
+      const cleanUsername = loginUsername.trim().toLowerCase();
+      
+      // 1. FIRST CHECK: Is it the Hardcoded Super Admin?
+      if (cleanUsername === 'admin' && loginPassword === 'admin123') {
+        setIsAuthenticated(true);
+        setActiveTab('dashboard');
+        setIsLoggingIn(false);
+        return; // Stop here! We don't need to ask the database.
+      }
+
+      // 2. SECOND CHECK: If not the super admin, check the database!
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: cleanUsername, password: loginPassword })
       });
-
       if (response.ok) {
         setIsAuthenticated(true);
         setActiveTab('dashboard');
@@ -1847,42 +1856,38 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                         <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th></tr>
                       </thead>
                      <tbody className="divide-y divide-slate-100">
-                      
-                      {/* 1. HARDCODED SUPER ADMIN (Always visible, cannot be deleted) */}
-                      <tr className="hover:bg-slate-50 transition-colors">
-                        <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
-                          admin
-                        </td>
-                        <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
-                        <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
-                        <td className="py-4 px-6 text-right">
-                          <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
-                        </td>
-                      </tr>
-
-                      {/* 2. DYNAMICALLY ADDED ADMINS */}
-                      {adminUsers.map(user => (
-                        <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                        
+                        {/* --- 1. HARDCODED SUPER ADMIN (Cannot be deleted) --- */}
+                        <tr className="hover:bg-slate-50 transition-colors">
                           <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-600 text-white flex items-center justify-center text-xs">
-                              {user.username.charAt(0).toUpperCase()}
-                            </div>
-                            {user.username}
+                            <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
+                            admin
                           </td>
-                          <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
-                          <td className="py-4 px-6">
-                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-                              {user.status}
-                            </span>
-                          </td>
+                          <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
+                          <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
                           <td className="py-4 px-6 text-right">
-                            <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
+                            <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
                           </td>
                         </tr>
-                      ))}
 
-                    </tbody>
+                        {/* --- 2. DYNAMIC DATABASE ADMINS --- */}
+                        {adminUsers.map(user => (
+                          <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-600 text-white flex items-center justify-center text-xs">
+                                {user.username.charAt(0).toUpperCase()}
+                              </div>
+                              {user.username}
+                            </td>
+                            <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
+                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status}</span></td>
+                            <td className="py-4 px-6 text-right">
+                              <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                        
+                      </tbody>
                     </table>
                   </div>
                 </div>
