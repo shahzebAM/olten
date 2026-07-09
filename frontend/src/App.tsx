@@ -343,7 +343,38 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
 
   const [payrollData, setPayrollData] = useState({
     daysWorked: '13', cashAdvance: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false
+    
   });
+
+  // --- DYNAMIC TAX MATRIX STATE ---
+  const [isEditingTax, setIsEditingTax] = useState(false);
+  const [taxBrackets, setTaxBrackets] = useState([
+    { id: 1, min: 0, baseTax: 0, rate: 0, excessOver: 0 },
+    { id: 2, min: 10417, baseTax: 0, rate: 0.15, excessOver: 10417 },
+    { id: 3, min: 16667, baseTax: 937.5, rate: 0.20, excessOver: 16667 },
+    { id: 4, min: 33333, baseTax: 4270.7, rate: 0.25, excessOver: 33333 },
+    { id: 5, min: 83333, baseTax: 16770.7, rate: 0.30, excessOver: 83333 },
+    { id: 6, min: 333333, baseTax: 91770.7, rate: 0.35, excessOver: 333333 },
+  ]);
+
+  // Helper function: Finds the correct bracket and computes the exact tax
+  const calculateDynamicTax = (taxableIncome: number, brackets: any[]) => {
+    if (taxableIncome <= 0) return { tax: 0, bracketMin: 0, rate: 0, minTax: 0, taxBase: 0 };
+    // Sort highest to lowest to catch the top bracket they fall into
+    const sorted = [...brackets].sort((a, b) => b.min - a.min);
+    const applicable = sorted.find(b => taxableIncome >= b.min) || sorted[sorted.length - 1];
+    
+    const taxBase = taxableIncome - applicable.excessOver;
+    const computedTax = applicable.baseTax + (taxBase * applicable.rate);
+    
+    return { 
+      tax: computedTax, 
+      bracketMin: applicable.min, 
+      rate: applicable.rate, 
+      minTax: applicable.baseTax, 
+      taxBase: Math.max(0, taxBase) 
+    };
+  };
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -795,16 +826,13 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     const pagIbigDed = parseFloat(payrollData.pagIbig) || 0;
     const philhealthDed = parseFloat(payrollData.philhealth) || 0;
     const cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
-
-    const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
+const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
     let autoTax = 0;
 
     if (payrollData.isDeclared && taxableIncome > 0) {
-      if (taxableIncome > 333333) autoTax = 91770.70 + 0.35 * (taxableIncome - 333333);
-      else if (taxableIncome >= 83333) autoTax = 16770.70 + 0.30 * (taxableIncome - 83333);
-      else if (taxableIncome >= 33333) autoTax = 4270.70 + 0.25 * (taxableIncome - 33333);
-      else if (taxableIncome >= 16667) autoTax = 937.50 + 0.20 * (taxableIncome - 16667);
-      else if (taxableIncome >= 10417) autoTax = 0 + 0.15 * (taxableIncome - 10417);
+      // Look ma, no hardcoded if/else! It uses the live UI state now.
+      const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
+      autoTax = taxResult.tax;
     }
 
     const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax;
@@ -2046,126 +2074,102 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
 
         {/* TAX COMPUTATION TAB */}
         {activeTab === 'tax' && (
-          <div className="space-y-8">
-            <div className="bg-white shadow-sm border border-slate-300 overflow-hidden">
-              <div className="p-4 border-b border-slate-200 bg-[#4472c4]/10 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-[#4472c4] tracking-wider uppercase">Tax Computation Report</h2>
-              </div>
-              <div className="overflow-x-auto p-4">
-                <table className="w-full text-center border-collapse border border-slate-400 text-sm whitespace-nowrap">
-                  <thead className="bg-[#4472c4] text-white">
-                    <tr>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">Name</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">TAXABLE INCOME</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">INCOME BRACKET</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">TAX BASE</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">TAX RATE</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">TAX</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">MIN W/TAX</th>
-                      <th className="border border-slate-400 py-2.5 px-3 font-semibold tracking-wide">WITHHOLDING TAX</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payrolls.length === 0 ? (
-                      <tr><td colSpan={8} className="py-8 text-slate-400 italic">No payrolls computed yet.</td></tr>
-                    ) : (
-                      (() => {
-                        let totalWithholdingTax = 0;
-                        
-                        // FILTER: Only include declared salary employees who actually trace with withholding tax records
-                        const declaredPayrolls = payrolls.filter(pr => pr.tax > 0);
-
-                        if (declaredPayrolls.length === 0) {
-                          return <tr><td colSpan={8} className="py-8 text-slate-400 italic">No declared salary records matching taxable parameters found.</td></tr>;
-                        }
-
-                        const rows = declaredPayrolls.map((pr) => {
-                          const emp = employees.find(e => e.id === pr.employeeId);
-                          const name = emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown';
-                          
-                          // Taxable Income = Gross Pay - SSS - Pag-IBIG - PhilHealth
-                          const taxableIncome = pr.grossPay - pr.sssDeduction - pr.pagIbigDeduct - pr.philhealthDeduct;
-                          
-                          let bracket = 0; let rate = 0; let minTax = 0;
-                          if (taxableIncome > 333333) { bracket = 333333; rate = 0.35; minTax = 91770.70; }
-                          else if (taxableIncome >= 83333) { bracket = 83333; rate = 0.30; minTax = 16770.70; }
-                          else if (taxableIncome >= 33333) { bracket = 33333; rate = 0.25; minTax = 4270.70; }
-                          else if (taxableIncome >= 16667) { bracket = 16667; rate = 0.20; minTax = 937.50; }
-                          else if (taxableIncome >= 10417) { bracket = 10417; rate = 0.15; minTax = 0; }
-                          
-                          const taxBase = taxableIncome - bracket;
-                          const tax = taxBase * rate;
-                          const withholdingTax = tax + minTax;
-                          totalWithholdingTax += withholdingTax;
-
-                          return (
-                            <tr key={pr.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="border border-slate-400 py-2 px-3 text-left font-bold text-slate-800 uppercase">{name}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxableIncome)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(bracket)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxBase)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{rate.toFixed(2)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(tax)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(minTax)}</td>
-                              <td className="border border-slate-400 py-2 px-3 text-right font-bold text-slate-900">{formatMoney(withholdingTax)}</td>
-                            </tr>
-                          )
-                        });
-
-                        return (
-                          <>
-                            {rows}
-                            <tr className="bg-slate-100 font-bold">
-                              <td className="border border-slate-400 py-2 px-3 text-right" colSpan={7}></td>
-                              <td className="border border-slate-400 py-2 px-3 text-right text-black">{formatMoney(totalWithholdingTax)}</td>
-                            </tr>
-                          </>
-                        );
-                      })()
+              <div className="space-y-8">
+                
+                {/* DYNAMIC TAX SETTINGS PANEL */}
+                <div className="bg-white shadow-sm border border-slate-300 overflow-hidden rounded-xl">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                    <h2 className="text-lg font-bold text-slate-800 tracking-wide">Semi-Monthly Tax Matrix</h2>
+                    {isCurrentUserSuperAdmin && (
+                      <button 
+                        onClick={() => setIsEditingTax(!isEditingTax)} 
+                        className={`px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors ${isEditingTax ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}
+                      >
+                        {isEditingTax ? 'Save & Apply Matrix' : 'Edit Tax Brackets'}
+                      </button>
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                  </div>
+                  
+                  <div className="overflow-x-auto p-4">
+                    <table className="w-full text-center border-collapse text-sm whitespace-nowrap">
+                      <thead className="bg-slate-100 text-slate-600 font-bold">
+                        <tr>
+                          <th className="py-2.5 px-3 border border-slate-200">Level</th>
+                          <th className="py-2.5 px-3 border border-slate-200">Income Over (₱)</th>
+                          <th className="py-2.5 px-3 border border-slate-200">Base Tax (₱)</th>
+                          <th className="py-2.5 px-3 border border-slate-200">+ Tax Rate (%)</th>
+                          <th className="py-2.5 px-3 border border-slate-200">Excess Over (₱)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {taxBrackets.map((bracket, index) => (
+                          <tr key={bracket.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 border border-slate-200 font-bold text-slate-400">{index + 1}</td>
+                            
+                            {isEditingTax ? (
+                              <>
+                                <td className="py-1 px-2 border border-slate-200"><input type="number" value={bracket.min} onChange={(e) => { const newB = [...taxBrackets]; newB[index].min = Number(e.target.value); setTaxBrackets(newB); }} className="w-full px-2 py-1 border border-blue-300 rounded text-center outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                                <td className="py-1 px-2 border border-slate-200"><input type="number" value={bracket.baseTax} onChange={(e) => { const newB = [...taxBrackets]; newB[index].baseTax = Number(e.target.value); setTaxBrackets(newB); }} className="w-full px-2 py-1 border border-blue-300 rounded text-center outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                                <td className="py-1 px-2 border border-slate-200"><input type="number" step="0.01" value={bracket.rate} onChange={(e) => { const newB = [...taxBrackets]; newB[index].rate = Number(e.target.value); setTaxBrackets(newB); }} className="w-full px-2 py-1 border border-blue-300 rounded text-center outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                                <td className="py-1 px-2 border border-slate-200"><input type="number" value={bracket.excessOver} onChange={(e) => { const newB = [...taxBrackets]; newB[index].excessOver = Number(e.target.value); setTaxBrackets(newB); }} className="w-full px-2 py-1 border border-blue-300 rounded text-center outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="py-2.5 px-3 border border-slate-200 font-mono text-slate-700">{formatMoney(bracket.min)}</td>
+                                <td className="py-2.5 px-3 border border-slate-200 font-mono text-slate-700">{formatMoney(bracket.baseTax)}</td>
+                                <td className="py-2.5 px-3 border border-slate-200 font-mono text-slate-700 text-blue-600 font-bold">{(bracket.rate * 100).toFixed(0)}%</td>
+                                <td className="py-2.5 px-3 border border-slate-200 font-mono text-slate-700">{formatMoney(bracket.excessOver)}</td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
 
-            {/* Reference Matrix */}
-            <div className="bg-white shadow-sm border border-slate-300 p-4 w-fit overflow-x-auto">
-              <table className="text-center border-collapse border border-slate-400 text-sm">
-                <thead className="bg-slate-100 font-bold text-slate-800">
-                  <tr>
-                    <td className="border border-slate-400 py-2 px-4 text-left">SEMI-MONTHLY</td>
-                    <td className="border border-slate-400 py-2 px-6">1</td>
-                    <td className="border border-slate-400 py-2 px-6">2</td>
-                    <td className="border border-slate-400 py-2 px-6">3</td>
-                    <td className="border border-slate-400 py-2 px-6">4</td>
-                    <td className="border border-slate-400 py-2 px-6">5</td>
-                    <td className="border border-slate-400 py-2 px-6">6</td>
-                  </tr>
-                </thead>
-                <tbody className="text-xs">
-                  <tr>
-                    <td className="border border-slate-400 py-2.5 px-4 text-left">Compensation Range</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱10,417 and below</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱10,417 - ₱16,666</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱16,667 - ₱33,332</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱33,333 - ₱83,332</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱83,333 - ₱333,332</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱333,333 and above</td>
-                  </tr>
-                  <tr>
-                    <td className="border border-slate-400 py-2.5 px-4 text-left">Prescribed Withholding Tax</td>
-                    <td className="border border-slate-400 py-2.5 px-4">0.00</td>
-                    <td className="border border-slate-400 py-2.5 px-4">0.00 +15% over ₱10,417</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱937.50 +20% over ₱16,667</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱4,270.70 +25% over ₱33,333</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱16,770.70 +30% over ₱83,333</td>
-                    <td className="border border-slate-400 py-2.5 px-4">₱91,770.70 +35% over ₱333,333</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                {/* REPORT TABLE */}
+                <div className="bg-white shadow-sm border border-slate-300 overflow-hidden rounded-xl">
+                  <div className="p-4 border-b border-slate-200 bg-[#4472c4]/10"><h2 className="text-lg font-bold text-[#4472c4] tracking-wider uppercase">Tax Computation Report</h2></div>
+                  <div className="overflow-x-auto p-4">
+                    <table className="w-full text-center border-collapse border border-slate-400 text-sm whitespace-nowrap">
+                      <thead className="bg-[#4472c4] text-white"><tr><th className="border border-slate-400 py-2.5 px-3">Name</th><th className="border border-slate-400 py-2.5 px-3">TAXABLE INCOME</th><th className="border border-slate-400 py-2.5 px-3">INCOME BRACKET</th><th className="border border-slate-400 py-2.5 px-3">TAX BASE</th><th className="border border-slate-400 py-2.5 px-3">TAX RATE</th><th className="border border-slate-400 py-2.5 px-3">TAX</th><th className="border border-slate-400 py-2.5 px-3">MIN W/TAX</th><th className="border border-slate-400 py-2.5 px-3">WITHHOLDING TAX</th></tr></thead>
+                      <tbody>
+                        {payrolls.length === 0 ? ( <tr><td colSpan={8} className="py-8 text-slate-400 italic">No payrolls computed yet.</td></tr> ) : (
+                          (() => {
+                            let totalWithholdingTax = 0; const declaredPayrolls = payrolls.filter(pr => pr.tax > 0);
+                            if (declaredPayrolls.length === 0) return <tr><td colSpan={8} className="py-8 text-slate-400 italic">No declared salary records found.</td></tr>;
+                            
+                            const rows = declaredPayrolls.map((pr) => {
+                              const emp = employees.find(e => e.id === pr.employeeId); const name = emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown';
+                              const taxableIncome = pr.grossPay - pr.sssDeduction - pr.pagIbigDeduct - pr.philhealthDeduct; 
+                              
+                              // Use the live dynamic tax helper
+                              const taxData = calculateDynamicTax(taxableIncome, taxBrackets);
+                              totalWithholdingTax += taxData.tax;
+                              
+                              return ( 
+                                <tr key={pr.id} className="hover:bg-slate-50"> 
+                                  <td className="border border-slate-400 py-2 px-3 text-left font-bold uppercase">{name}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxableIncome)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.bracketMin)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.taxBase)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{taxData.rate.toFixed(2)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.tax - taxData.minTax)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.minTax)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right font-bold">{formatMoney(taxData.tax)}</td> 
+                                </tr> 
+                              )
+                            });
+                            return ( <>{rows}<tr className="bg-slate-100 font-bold"><td className="border border-slate-400 py-2 px-3 text-right" colSpan={7}></td><td className="border border-slate-400 py-2 px-3 text-right text-black">{formatMoney(totalWithholdingTax)}</td></tr></> );
+                          })()
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
 
         {/* DIRECTORY LIST TAB */}
         {activeTab === 'list' && (
