@@ -372,32 +372,25 @@ export default function App() {
   // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
  // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
 // --- AUTHENTICATION LOGIC (Real Database Connection) ---
-  const handleLogin = async (e: React.FormEvent) => {
+ // --- AUTHENTICATION LOGIC (Hardcoded Superuser) ---
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
 
-    try {
-      // .trim() removes any accidental spaces at the end of the username!
-      const cleanUsername = loginUsername.trim();
-
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: cleanUsername, password: loginPassword })
-      });
-
-      if (response.ok) {
+    setTimeout(() => {
+      // Cleans up accidental spaces or capital letters
+      const cleanUsername = loginUsername.trim().toLowerCase();
+      
+      // Checking for our hardcoded superuser!
+      if (cleanUsername === 'admin' && loginPassword === 'admin123') {
         setIsAuthenticated(true);
-        setActiveTab('dashboard'); // Drop user right into the dashboard!
+        setActiveTab('dashboard');
       } else {
         setLoginError('Access Denied: Invalid credentials.');
       }
-    } catch (error) {
-      setLoginError('Network Error: Could not connect to backend. Check console.');
-    } finally {
       setIsLoggingIn(false);
-    }
+    }, 600);
   };
 
   const handleLogout = () => { 
