@@ -1088,7 +1088,7 @@ const handleResetPassword = async (id: number) => {
       <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4 selection:bg-blue-100 font-sans">
         <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="p-8 text-center bg-blue-700 border-b border-slate-200">
-            <h1 className="text-2xl font-extrabold text-white tracking-wider uppercase">Ordent Trading Corp.</h1>
+            <h1 className="text-2xl font-extrabold text-white tracking-wider uppercase">Olten Trading Corp.</h1>
             <p className="text-blue-200 font-medium text-sm mt-2">Secure Payroll Engine v2.0</p>
           </div>
           
@@ -1443,7 +1443,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                       </colgroup>
                       <tbody>
                         <tr>
-                          <td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">ORDENT TRADING CORP.</td>
+                          <td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">Olten TRADING CORP.</td>
                           <td colSpan={4} className="border border-slate-300 border-l-0 bg-white"></td>
                         </tr>
                         <tr>
@@ -1634,7 +1634,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                   return (
                     <div className="w-full">
                       <div className="text-center mb-6">
-                        <h1 className="text-xl font-bold uppercase tracking-wider text-slate-900">ORDENT TRADING CORP.</h1>
+                        <h1 className="text-xl font-bold uppercase tracking-wider text-slate-900">Olten TRADING CORP.</h1>
                         <h2 className="text-md font-semibold text-slate-700 mt-1">PAYROLL SUMMARY REPORT</h2>
                         <p className="text-sm text-slate-500 mt-2">
                           Date Range: <span className="font-bold text-slate-800">{reportFromDate ? formatMDY(reportFromDate) : 'Beginning'}</span> to <span className="font-bold text-slate-800">{reportToDate ? formatMDY(reportToDate) : 'Latest'}</span>
@@ -1811,7 +1811,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
       {/* ========================================================= */}
       <aside className="w-64 bg-slate-900 text-slate-300 hidden md:flex flex-col flex-shrink-0 print-hidden border-r border-slate-800 shadow-2xl relative z-20">
         <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
-          <h1 className="text-xl font-black text-white tracking-wider uppercase">Ordent<span className="text-blue-500">Admin</span></h1>
+          <h1 className="text-xl font-black text-white tracking-wider uppercase">Olten<span className="text-blue-500">Admin</span></h1>
         </div>
         
         <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
