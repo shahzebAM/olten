@@ -373,24 +373,31 @@ export default function App() {
  // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
 // --- AUTHENTICATION LOGIC (Real Database Connection) ---
  // --- AUTHENTICATION LOGIC (Hardcoded Superuser) ---
-  const handleLogin = (e: React.FormEvent) => {
+// --- AUTHENTICATION LOGIC (Real Database Connection) ---
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
 
-    setTimeout(() => {
-      // Cleans up accidental spaces or capital letters
-      const cleanUsername = loginUsername.trim().toLowerCase();
-      
-      // Checking for our hardcoded superuser!
-      if (cleanUsername === 'admin' && loginPassword === 'admin123') {
+    try {
+      const cleanUsername = loginUsername.trim();
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cleanUsername, password: loginPassword })
+      });
+
+      if (response.ok) {
         setIsAuthenticated(true);
         setActiveTab('dashboard');
       } else {
         setLoginError('Access Denied: Invalid credentials.');
       }
+    } catch (error) {
+      setLoginError('Network Error: Could not connect to backend.');
+    } finally {
       setIsLoggingIn(false);
-    }, 600);
+    }
   };
 
   const handleLogout = () => { 
@@ -407,10 +414,23 @@ export default function App() {
       fetchAttendances();
       fetchPayrolls();
       fetchSettings();
+      fetchAdmins();
     }
   }, [isAuthenticated]);
 
   // --- DATA FETCHING ---
+  const fetchAdmins = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins`);
+      if (response.ok) {
+        const data = await response.json();
+        setAdminUsers(data);
+      }
+    } catch (error) { 
+      console.error("Could not fetch admins"); 
+    }
+  };
+
   const fetchSettings = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/settings`);
@@ -930,25 +950,48 @@ export default function App() {
     }
   };
 
-  const handleAddAdmin = (e: React.FormEvent) => {
+const handleAddAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAdminUsername || !newAdminPassword) return;
-    setAdminUsers([...adminUsers, { id: Date.now(), username: newAdminUsername, role: 'Admin', status: 'Active' }]);
-    setNewAdminUsername('');
-    setNewAdminPassword('');
-    showToast("New administrator added successfully!", "success");
+    setIsSaving(true);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: newAdminUsername.trim(), password: newAdminPassword })
+      });
+      
+      if (!response.ok) throw new Error("Username already exists");
+      
+      await fetchAdmins(); // Refresh the list from the database
+      setNewAdminUsername('');
+      setNewAdminPassword('');
+      showToast("New administrator added successfully!", "success");
+    } catch (error) {
+      showToast("Failed to add admin. Username might exist.", "error");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleDeleteAdmin = (id: number, role: string) => {
-    // 1. Protect the Super Admin
-    if (role === 'Super Admin') {
+const handleDeleteAdmin = async (id: number, role: string) => {
+    // Ultimate protection for the original Super Admin
+    if (role === 'Super Admin' || id === 1) {
       showToast("Action Denied: Cannot delete the root Super Admin.", "error");
       return;
     }
-    // 2. Delete standard admins
-    if (window.confirm("Are you sure you want to permanently remove this user?")) {
-      setAdminUsers(adminUsers.filter(user => user.id !== id));
-      showToast("Administrator removed successfully.", "success");
+    
+    if (window.confirm("Are you sure you want to permanently remove this user from the database?")) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error("Failed to delete");
+        
+        await fetchAdmins(); // Refresh the list from the database
+        showToast("Administrator removed successfully.", "success");
+      } catch (error) {
+        showToast("Failed to delete administrator.", "error");
+      }
     }
   };
 
