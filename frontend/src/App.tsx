@@ -1843,7 +1843,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
             )}
 
             {/* MANAGE USERS TAB */}
-           {/* MANAGE USERS TAB */}
+           {/* MANAGE USERS TAB */} 
             {activeTab === 'users' && (
               <div className="space-y-6 print-hidden">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
