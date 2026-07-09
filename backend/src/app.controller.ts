@@ -1,9 +1,8 @@
-import { Controller, Get, Post, Body, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
 import { AppService } from './app.service';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
-// Initialize Prisma directly for our auth checks
 const prisma = new PrismaClient();
 
 @Controller()
@@ -16,55 +15,61 @@ export class AppController {
   }
 
   // ==========================================
-  // AUTHENTICATION ROUTES
+  // AUTHENTICATION & ADMIN ROUTES
   // ==========================================
 
-  // 1. TEMPORARY SETUP ROUTE (To create your first admin)
   @Post('auth/setup')
   async setupAdmin(@Body() body: any) {
     const { username, password } = body;
-    
-    // Check if an admin already exists (we only want ONE admin account)
     const existingAdmin = await prisma.admin.findFirst();
-    if (existingAdmin) {
-      throw new HttpException('An admin account already exists!', HttpStatus.FORBIDDEN);
-    }
-
-    // Hash password and save
+    if (existingAdmin) throw new HttpException('An admin account already exists!', HttpStatus.FORBIDDEN);
+    
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newAdmin = await prisma.admin.create({
-      data: {
-        username: username,
-        password: hashedPassword
-      }
-    });
-
-    return { message: "Admin account successfully created!", username: newAdmin.username };
+    await prisma.admin.create({ data: { username, password: hashedPassword } });
+    return { message: "Admin account successfully created!" };
   }
 
-  // 2. ACTUAL LOGIN ROUTE (What your frontend connects to)
   @Post('auth/login')
   async login(@Body() body: any) {
     const { username, password } = body;
-
-    // Find the user in the database
-    const admin = await prisma.admin.findUnique({
-      where: { username: username }
-    });
-
-    // Check if user exists
-    if (!admin) {
-      throw new HttpException('Invalid username or password', HttpStatus.UNAUTHORIZED);
-    }
-
-    // Compare passwords
+    const admin = await prisma.admin.findUnique({ where: { username } });
+    if (!admin) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
+    
     const isPasswordValid = await bcrypt.compare(password, admin.password);
-
-    if (!isPasswordValid) {
-      throw new HttpException('Invalid username or password', HttpStatus.UNAUTHORIZED);
-    }
-
-    // Success!
+    if (!isPasswordValid) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
+    
     return { message: "Login successful!" };
+  }
+
+  // 👉 THIS IS THE ROUTE THAT LOADS THE USERS TABLE
+  @Get('admins')
+  async getAdmins() {
+    const admins = await prisma.admin.findMany();
+    return admins.map(a => ({
+      id: a.id,
+      username: a.username,
+      role: a.id === 1 ? 'Super Admin' : 'Admin',
+      status: 'Active'
+    }));
+  }
+
+  // 👉 THIS IS THE ROUTE THAT SAVES NEW USERS
+  @Post('admins')
+  async createAdmin(@Body() body: any) {
+    const { username, password } = body;
+    const existing = await prisma.admin.findUnique({ where: { username } });
+    if (existing) throw new HttpException('Username exists', HttpStatus.FORBIDDEN);
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await prisma.admin.create({ data: { username, password: hashedPassword } });
+    return { message: "Admin created" };
+  }
+
+  // 👉 THIS IS THE ROUTE THAT DELETES USERS
+  @Delete('admins/:id')
+  async deleteAdmin(@Param('id') id: string) {
+    if (Number(id) === 1) throw new HttpException('Cannot delete root admin', HttpStatus.FORBIDDEN);
+    await prisma.admin.delete({ where: { id: Number(id) } });
+    return { message: "Admin deleted" };
   }
 }
