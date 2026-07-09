@@ -370,16 +370,19 @@ export default function App() {
   // };
 
   // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
+ // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
 
-    // Simulate a tiny loading delay so it feels real
     setTimeout(() => {
-      // HARDCODED CREDENTIALS HERE:
-      if (loginUsername === 'admin' && loginPassword === 'admin123') {
+      // FIX: .trim() removes accidental spaces, .toLowerCase() ignores capital letters
+      const cleanUsername = loginUsername.trim().toLowerCase();
+      
+      if (cleanUsername === 'admin' && loginPassword === 'admin123') {
         setIsAuthenticated(true);
+        setActiveTab('dashboard'); // Always load dashboard on fresh login
       } else {
         setLoginError('Access Denied: Invalid credentials.');
       }
@@ -931,6 +934,19 @@ export default function App() {
     setNewAdminUsername('');
     setNewAdminPassword('');
     showToast("New administrator added successfully!", "success");
+  };
+
+  const handleDeleteAdmin = (id: number, role: string) => {
+    // 1. Protect the Super Admin
+    if (role === 'Super Admin') {
+      showToast("Action Denied: Cannot delete the root Super Admin.", "error");
+      return;
+    }
+    // 2. Delete standard admins
+    if (window.confirm("Are you sure you want to permanently remove this user?")) {
+      setAdminUsers(adminUsers.filter(user => user.id !== id));
+      showToast("Administrator removed successfully.", "success");
+    }
   };
 
   // --- LOGIN SCREEN RENDER ---
@@ -1785,14 +1801,30 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                         <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th></tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {adminUsers.map(user => (
-                          <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-4 px-6 font-bold text-slate-800">{user.username}</td>
-                            <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
-                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
+                      {adminUsers.map(user => (
+                        <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">
+                              {user.username.charAt(0).toUpperCase()}
+                            </div>
+                            {user.username}
+                          </td>
+                          <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
+                          <td className="py-4 px-6">
+                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                              {user.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            {user.role === 'Super Admin' ? (
+                              <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
+                            ) : (
+                              <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
                     </table>
                   </div>
                 </div>
