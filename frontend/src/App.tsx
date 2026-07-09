@@ -340,28 +340,46 @@ export default function App() {
   };
 
   // --- AUTHENTICATION LOGIC ---
-  const handleLogin = async (e: React.FormEvent) => {
+  // const handleLogin = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   setIsLoggingIn(true);
+  //   setLoginError('');
+
+  //   try {
+  //     const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ username: loginUsername, password: loginPassword })
+  //     });
+
+  //     if (response.ok) {
+  //       setIsAuthenticated(true);
+  //     } else {
+  //       setLoginError('Access Denied: Invalid credentials or backend connection failed.');
+  //     }
+  //   } catch (error) {
+  //     setLoginError('Network Error: Could not connect to the authentication server.');
+  //   } finally {
+  //     setIsLoggingIn(false);
+  //   }
+  // };
+
+  // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUsername, password: loginPassword })
-      });
-
-      if (response.ok) {
+    // Simulate a tiny loading delay so it feels real
+    setTimeout(() => {
+      // HARDCODED CREDENTIALS HERE:
+      if (loginUsername === 'admin' && loginPassword === 'admin123') {
         setIsAuthenticated(true);
       } else {
-        setLoginError('Access Denied: Invalid credentials or backend connection failed.');
+        setLoginError('Access Denied: Invalid credentials.');
       }
-    } catch (error) {
-      setLoginError('Network Error: Could not connect to the authentication server.');
-    } finally {
       setIsLoggingIn(false);
-    }
+    }, 600);
   };
 
 // --- DATA FETCHING (Only runs after login) ---
