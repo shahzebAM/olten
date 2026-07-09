@@ -287,7 +287,9 @@ export default function App() {
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   // --- SUPER ADMIN CAPABILITIES STATE ---
-  const isCurrentUserSuperAdmin = loginUsername.trim().toLowerCase() === 'admin';
+const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
+  const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
+  
   const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
   const [newResetPassword, setNewResetPassword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -379,22 +381,13 @@ export default function App() {
  // --- AUTHENTICATION LOGIC (Hardcoded Superuser) ---
 // --- AUTHENTICATION LOGIC (Real Database Connection) ---
 // --- AUTHENTICATION & ADMIN LOGIC (REAL DATABASE + HARDCODED SUPER ADMIN) ---
+// --- AUTHENTICATION LOGIC (Pure Database) ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
     try {
       const cleanUsername = loginUsername.trim().toLowerCase();
-      
-      // 1. FIRST CHECK: Is it the Hardcoded Super Admin?
-      if (cleanUsername === 'admin' && loginPassword === 'admin123') {
-        setIsAuthenticated(true);
-        setActiveTab('dashboard');
-        setIsLoggingIn(false);
-        return; // Stop here! We don't need to ask the database.
-      }
-
-      // 2. SECOND CHECK: If not the super admin, check the database!
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -989,18 +982,19 @@ const handleAddAdmin = async (e: React.FormEvent) => {
   };
 
 const handleDeleteAdmin = async (id: number, role: string) => {
-    // Ultimate protection for the original Super Admin
-    if (role === 'Super Admin' || id === 1) {
-      showToast("Action Denied: Cannot delete the root Super Admin.", "error");
-      return;
+    if (role === 'Super Admin') {
+      const superAdminCount = adminUsers.filter(u => u.role === 'Super Admin').length;
+      if (superAdminCount <= 1) {
+        showToast("Action Denied: Cannot delete the last Super Admin.", "error");
+        return;
+      }
     }
     
     if (window.confirm("Are you sure you want to permanently remove this user from the database?")) {
       try {
         const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error("Failed to delete");
-        
-        await fetchAdmins(); // Refresh the list from the database
+        if (!response.ok) throw new Error();
+        await fetchAdmins(); 
         showToast("Administrator removed successfully.", "success");
       } catch (error) {
         showToast("Failed to delete administrator.", "error");
@@ -1008,12 +1002,30 @@ const handleDeleteAdmin = async (id: number, role: string) => {
     }
   };
 
-  const handleUpdateRole = (id: number, newRole: string) => {
-    // Updates the role instantly in the frontend UI
+const handleUpdateRole = async (id: number, newRole: string) => {
+    const user = adminUsers.find(u => u.id === id);
+    if (user?.role === 'Super Admin' && newRole !== 'Super Admin') {
+      const superAdminCount = adminUsers.filter(u => u.role === 'Super Admin').length;
+      if (superAdminCount <= 1) {
+        showToast("Action Denied: System requires at least one Super Admin.", "error");
+        return;
+      }
+    }
+
+    // Optimistic UI update
     setAdminUsers(adminUsers.map(u => u.id === id ? { ...u, role: newRole } : u));
-    showToast(`User role successfully changed to ${newRole}`, "success");
-    // Note: To make this permanent across browser refreshes, you will eventually 
-    // need to add a PATCH route to your NestJS backend!
+    
+    try {
+      await fetch(`${API_BASE_URL}/admins/${id}/role`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole })
+      });
+      showToast(`User role changed to ${newRole}`, "success");
+    } catch (e) {
+      showToast("Failed to update role.", "error");
+      fetchAdmins(); // Revert if failed
+    }
   };
 
 const handleResetPassword = async (id: number) => {
@@ -1904,34 +1916,15 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        
-                        {/* --- 1. HARDCODED SUPER ADMIN (Immune to deletion/changes) --- */}
-                        <tr className="hover:bg-slate-50 transition-colors">
-                          <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
-                            admin
-                          </td>
-                          <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
-                          <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
-                          {isCurrentUserSuperAdmin && (
-                            <td className="py-4 px-6 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest">Root Account</td>
-                          )}
-                          <td className="py-4 px-6 text-right">
-                            <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed">Restricted</button>
-                          </td>
-                        </tr>
-
-                        {/* --- 2. ALL DATABASE USERS --- */}
-                        {adminUsers.filter(user => user.username.toLowerCase() !== 'admin').map(user => (
+                        {adminUsers.map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-slate-600 text-white flex items-center justify-center text-xs">
+                              <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs ${user.role === 'Super Admin' ? 'bg-blue-600' : 'bg-slate-600'}`}>
                                 {user.username.charAt(0).toUpperCase()}
                               </div>
                               {user.username}
                             </td>
                             
-                            {/* ROLE DROPDOWN (Only for Super Admins) */}
                             <td className="py-4 px-6 text-sm text-slate-600">
                               {isCurrentUserSuperAdmin ? (
                                 <select 
@@ -1949,7 +1942,6 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
 
                             <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status || 'Active'}</span></td>
                             
-                            {/* PASSWORD RESET (Only for Super Admins) */}
                             {isCurrentUserSuperAdmin && (
                               <td className="py-4 px-6 text-center">
                                 {editingPasswordId === user.id ? (
@@ -1969,7 +1961,6 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                             </td>
                           </tr>
                         ))}
-                        
                       </tbody>
                     </table>
                   </div>
