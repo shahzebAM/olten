@@ -993,7 +993,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen print:min-h-0 print:h-auto bg-slate-50 relative selection:bg-blue-100 selection:text-blue-900 font-sans text-slate-900">
+    <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden print:h-auto print:block selection:bg-blue-100">
       
       {/* --- FOOLPROOF SINGLE-PAGE PRINT CSS --- */}
       <style>{`
