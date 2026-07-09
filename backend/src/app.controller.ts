@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
 import { AppService } from './app.service';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -64,6 +64,23 @@ export class AppController {
     await prisma.admin.create({ data: { username, password: hashedPassword } });
     return { message: "Admin created" };
   }
+  
+  // 👉 THIS IS THE NEW ROUTE THAT RESETS PASSWORDS (SUPER ADMIN)
+  @Patch('admins/:id/password')
+  async resetAdminPassword(@Param('id') id: string, @Body() body: any) {
+    const { password } = body;
+    
+    // Hash the new password securely
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Update the specific user in the database
+    await prisma.admin.update({
+      where: { id: Number(id) },
+      data: { password: hashedPassword }
+    });
+    
+    return { message: "Password updated securely" };
+  }
 
   // 👉 THIS IS THE ROUTE THAT DELETES USERS
   @Delete('admins/:id')
@@ -72,4 +89,5 @@ export class AppController {
     await prisma.admin.delete({ where: { id: Number(id) } });
     return { message: "Admin deleted" };
   }
+  
 }
