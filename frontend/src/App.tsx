@@ -280,7 +280,12 @@ export default function App() {
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report'>('list');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'users'>('dashboard');
+  
+  // State for Managing Users (Mocked for frontend demonstration)
+  const [adminUsers, setAdminUsers] = useState([{ id: 1, username: 'admin', role: 'Super Admin', status: 'Active' }]);
+  const [newAdminUsername, setNewAdminUsername] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
@@ -897,6 +902,29 @@ export default function App() {
     const dateStr = formatMDY(pr.createdAt).toLowerCase();
     return fullName.includes(query) || dateStr.includes(query);
   });
+
+  const getPageTitle = () => {
+    switch(activeTab) {
+      case 'dashboard': return 'System Overview';
+      case 'list': return 'Personnel Directory';
+      case 'add': return 'Register Employee';
+      case 'attendance': return 'Attendance Logs';
+      case 'payroll': return 'Payroll Engine';
+      case 'tax': return 'Tax Reports';
+      case 'report': return 'Summary Reports';
+      case 'users': return 'Manage System Users';
+      default: return 'Admin Panel';
+    }
+  };
+
+  const handleAddAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminUsername || !newAdminPassword) return;
+    setAdminUsers([...adminUsers, { id: Date.now(), username: newAdminUsername, role: 'Admin', status: 'Active' }]);
+    setNewAdminUsername('');
+    setNewAdminPassword('');
+    showToast("New administrator added successfully!", "success");
+  };
 
   // --- LOGIN SCREEN RENDER ---
   if (!isAuthenticated) {
@@ -1622,22 +1650,163 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
         </div>
       )}
 
-      {/* --- MAIN LAYOUT --- */}
-      <div className={`max-w-[1200px] mx-auto p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8 ${(selectedPayslip || isReportModalOpen) ? 'print-hidden' : ''}`}>
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 print-hidden">
-          <div><h1 className="text-2xl sm:text-3xl font-extrabold text-blue-950 tracking-tight">Personnel Directory</h1></div>
-          
-          <div className="flex flex-wrap bg-slate-200/80 p-1 rounded-xl w-fit border border-slate-300/50 gap-1">
-            <button onClick={() => setActiveTab('list')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'list' ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-500 hover:text-blue-900'}`}>Directory List</button>
-            <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); }} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'add' ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-500 hover:text-blue-900'}`}>Register New</button>
-            <button onClick={() => setActiveTab('attendance')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'attendance' ? 'bg-indigo-50 text-indigo-800 shadow-sm' : 'text-slate-500 hover:text-indigo-800'}`}>Log Attendance</button>
-            <button onClick={() => setActiveTab('payroll')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'payroll' ? 'bg-emerald-50 text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-emerald-800'}`}>Compute Payroll</button>
-            <button onClick={() => setActiveTab('tax')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-800'}`}>Tax</button>
-            <button onClick={() => setActiveTab('report')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-500 hover:text-amber-800'}`}>Summary Reports</button>
-          </div>
+{/* ========================================================= */}
+      {/* SIDEBAR NAVIGATION */}
+      {/* ========================================================= */}
+      <aside className="w-64 bg-slate-900 text-slate-300 hidden md:flex flex-col flex-shrink-0 print-hidden border-r border-slate-800 shadow-2xl relative z-20">
+        <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
+          <h1 className="text-xl font-black text-white tracking-wider uppercase">Ordent<span className="text-blue-500">Admin</span></h1>
         </div>
+        
+        <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
+          <div className="px-3 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Main Menu</div>
+          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Dashboard Overview
+          </button>
+          
+          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
+          <button onClick={() => setActiveTab('list')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Directory List
+          </button>
+          <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Register New
+          </button>
+          <button onClick={() => setActiveTab('attendance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Log Attendance
+          </button>
+          
+          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
+          <button onClick={() => setActiveTab('payroll')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Compute Payroll
+          </button>
+          <button onClick={() => setActiveTab('tax')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Tax Reports
+          </button>
+          <button onClick={() => setActiveTab('report')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Summary Reports
+          </button>
+
+          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Settings</div>
+          <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'users' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+             Manage System Users
+          </button>
+        </div>
+      </aside>
+
+      {/* ========================================================= */}
+      {/* MAIN WORKSPACE CANVAS */}
+      {/* ========================================================= */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden print:h-auto print:block">
+        
+        {/* TOP HEADER */}
+        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shadow-sm relative z-10 print-hidden shrink-0">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-extrabold text-blue-950 tracking-tight">{getPageTitle()}</h2>
+            <div className="text-xs font-semibold text-slate-400 mt-1 flex items-center gap-2">
+              <span>Admin Panel</span> <span>/</span> <span className="text-blue-600">{getPageTitle()}</span>
+            </div>
+          </div>
+          <button onClick={handleLogout} className="px-6 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-sm font-bold transition-colors shadow-sm border border-slate-200">
+            Logout
+          </button>
+        </header>
+
+        {/* SCROLLABLE MAIN CONTENT */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible">
+          <div className="max-w-[1400px] mx-auto space-y-6 sm:space-y-8">
 
         {/* SUMMARY REPORTS TAB */}
+        {/* DASHBOARD TAB */}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-6 print-hidden">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Employees</p>
+                    <h3 className="text-4xl font-black text-blue-950 mt-1">{employees.length}</h3>
+                    <p className="text-sm text-slate-500 font-medium mt-4"><span className="text-emerald-500 font-bold">Active</span> in personnel directory</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Net Processed</p>
+                    <h3 className="text-4xl font-black text-emerald-900 mt-1">₱{formatMoney(payrolls.reduce((sum, p) => sum + p.netPay, 0))}</h3>
+                    <p className="text-sm text-slate-500 font-medium mt-4">Across <span className="font-bold text-emerald-600">{payrolls.length}</span> historical records</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Shift Logs</p>
+                    <h3 className="text-4xl font-black text-indigo-950 mt-1">{attendances.length}</h3>
+                    <p className="text-sm text-slate-500 font-medium mt-4">Stored attendance records</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4">Quick Actions</h3>
+                    <div className="space-y-3">
+                      <button onClick={() => setActiveTab('attendance')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 transition-all">Log Today's Attendance</button>
+                      <button onClick={() => setActiveTab('payroll')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-slate-700 transition-all">Process New Payroll</button>
+                      <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); }} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 transition-all">Register New Employee</button>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300 flex flex-col relative overflow-hidden">
+                    <h3 className="text-lg font-bold text-white mb-4 relative z-10">System Configuration</h3>
+                    <div className="space-y-4 flex-1 relative z-10">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">API Connection</p>
+                        <p className="text-sm font-mono text-emerald-400 mt-1">{API_BASE_URL}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current Default Shift</p>
+                        <p className="text-sm font-mono text-blue-400 mt-1 bg-slate-800/50 py-1.5 px-3 rounded-lg border border-slate-700/50 w-fit">{format12Hour(shiftStart)} — {format12Hour(shiftEnd)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* MANAGE USERS TAB */}
+            {activeTab === 'users' && (
+              <div className="space-y-6 print-hidden">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 bg-slate-50/50">
+                    <h2 className="text-lg font-bold text-slate-800">System Administrators</h2>
+                    <p className="text-sm text-slate-500 mt-1">Users with full access to view, edit, and compute payroll data.</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead className="bg-slate-100 border-b border-slate-200">
+                        <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {adminUsers.map(user => (
+                          <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-4 px-6 font-bold text-slate-800">{user.username}</td>
+                            <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
+                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4">Add New Administrator</h3>
+                  <form onSubmit={handleAddAdmin} className="flex flex-col sm:flex-row gap-4 items-end">
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-sm font-medium text-slate-600">Username</label>
+                      <input type="text" required value={newAdminUsername} onChange={(e) => setNewAdminUsername(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="New username" />
+                    </div>
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-sm font-medium text-slate-600">Password</label>
+                      <input type="password" required value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
+                    </div>
+                    <button type="submit" className="w-full sm:w-auto px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-lg whitespace-nowrap">Add User</button>
+                  </form>
+                </div>
+              </div>
+            )}
+
         {activeTab === 'report' && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print-hidden">
             <div className="p-6 border-b border-slate-200 bg-amber-50/30">
@@ -2234,6 +2403,8 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
             </form>
           </div>
         )}
+</div>
+        </main>
       </div>
     </div>
   );
