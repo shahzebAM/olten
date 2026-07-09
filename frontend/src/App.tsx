@@ -387,6 +387,13 @@ export default function App() {
     }, 600);
   };
 
+  const handleLogout = () => { 
+    setIsAuthenticated(false); 
+    setLoginUsername(''); 
+    setLoginPassword(''); 
+    setActiveTab('dashboard'); 
+  };
+
 // --- DATA FETCHING (Only runs after login) ---
   useEffect(() => {
     if (isAuthenticated) {
