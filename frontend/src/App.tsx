@@ -270,6 +270,12 @@ interface SummaryReportRow {
 
 export default function App() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState('');
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   
@@ -333,12 +339,40 @@ export default function App() {
     setTimeout(() => { setToast(null); }, 3500);
   };
 
+  // --- AUTHENTICATION LOGIC ---
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError('');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword })
+      });
+
+      if (response.ok) {
+        setIsAuthenticated(true);
+      } else {
+        setLoginError('Access Denied: Invalid credentials or backend connection failed.');
+      }
+    } catch (error) {
+      setLoginError('Network Error: Could not connect to the authentication server.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+// --- DATA FETCHING (Only runs after login) ---
   useEffect(() => {
-    fetchEmployees();
-    fetchAttendances();
-    fetchPayrolls();
-    fetchSettings();
-  }, []);
+    if (isAuthenticated) {
+      fetchEmployees();
+      fetchAttendances();
+      fetchPayrolls();
+      fetchSettings();
+    }
+  }, [isAuthenticated]);
 
   // --- DATA FETCHING ---
   const fetchSettings = async () => {
@@ -845,6 +879,65 @@ export default function App() {
     const dateStr = formatMDY(pr.createdAt).toLowerCase();
     return fullName.includes(query) || dateStr.includes(query);
   });
+
+  // --- LOGIN SCREEN RENDER ---
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4 selection:bg-blue-100 font-sans">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+          <div className="p-8 text-center bg-blue-700 border-b border-slate-200">
+            <h1 className="text-2xl font-extrabold text-white tracking-wider uppercase">Ordent Trading Corp.</h1>
+            <p className="text-blue-200 font-medium text-sm mt-2">Secure Payroll Engine v2.0</p>
+          </div>
+          
+          <div className="p-8">
+            <form onSubmit={handleLogin} className="flex flex-col gap-5">
+              {loginError && (
+                <div className="bg-rose-50 text-rose-600 text-sm font-bold p-3 rounded-lg border border-rose-200 text-center">
+                  {loginError}
+                </div>
+              )}
+              
+              <div className="flex flex-col gap-1.5 w-full">
+                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Database Username</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={loginUsername} 
+                  onChange={(e) => setLoginUsername(e.target.value)} 
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm"
+                  placeholder="Enter administrator ID"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5 w-full">
+                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Secure Password</label>
+                <input 
+                  type="password" 
+                  required 
+                  value={loginPassword} 
+                  onChange={(e) => setLoginPassword(e.target.value)} 
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={isLoggingIn} 
+                className="mt-4 w-full py-3.5 px-4 rounded-xl font-bold text-white bg-blue-700 hover:bg-blue-800 transition-colors shadow-md disabled:opacity-50 tracking-wide uppercase text-sm"
+              >
+                {isLoggingIn ? 'Authenticating...' : 'Access Database'}
+              </button>
+            </form>
+          </div>
+          <div className="bg-slate-50 p-4 text-center border-t border-slate-200">
+            <p className="text-xs text-slate-400 font-medium">Session is strictly memory-bound. Refreshing will require re-authentication.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen print:min-h-0 print:h-auto bg-slate-50 relative selection:bg-blue-100 selection:text-blue-900 font-sans text-slate-900">
