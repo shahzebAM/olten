@@ -1843,21 +1843,22 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
             )}
 
             {/* MANAGE USERS TAB */}
+           {/* MANAGE USERS TAB */}
             {activeTab === 'users' && (
               <div className="space-y-6 print-hidden">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-6 border-b border-slate-200 bg-slate-50/50">
                     <h2 className="text-lg font-bold text-slate-800">System Administrators</h2>
-                    <p className="text-sm text-slate-500 mt-1">Users with full access to view, edit, and compute payroll data.</p>
+                    <p className="text-sm text-slate-500 mt-1">Users permanently mapped to the database.</p>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[600px]">
                       <thead className="bg-slate-100 border-b border-slate-200">
-                        <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th></tr>
+                        <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th></tr>
                       </thead>
-                     <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-slate-100">
                         
-                        {/* --- 1. HARDCODED SUPER ADMIN (Cannot be deleted) --- */}
+                        {/* --- 1. HARDCODED SUPER ADMIN (Immune to deletion) --- */}
                         <tr className="hover:bg-slate-50 transition-colors">
                           <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
@@ -1866,12 +1867,12 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                           <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
                           <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
                           <td className="py-4 px-6 text-right">
-                            <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
+                            <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed">Restricted</button>
                           </td>
                         </tr>
 
-                        {/* --- 2. DYNAMIC DATABASE ADMINS --- */}
-                        {adminUsers.map(user => (
+                        {/* --- 2. ALL DATABASE USERS (Filtered to prevent duplicating 'admin') --- */}
+                        {adminUsers.filter(user => user.username.toLowerCase() !== 'admin').map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full bg-slate-600 text-white flex items-center justify-center text-xs">
@@ -1879,8 +1880,8 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                               </div>
                               {user.username}
                             </td>
-                            <td className="py-4 px-6 text-sm text-slate-600">{user.role}</td>
-                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status}</span></td>
+                            <td className="py-4 px-6 text-sm text-slate-600">{user.role || 'Admin'}</td>
+                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status || 'Active'}</span></td>
                             <td className="py-4 px-6 text-right">
                               <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
                             </td>
@@ -1903,7 +1904,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                       <label className="text-sm font-medium text-slate-600">Password</label>
                       <input type="password" required value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
                     </div>
-                    <button type="submit" className="w-full sm:w-auto px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-lg whitespace-nowrap">Add User</button>
+                    <button type="submit" disabled={isSaving} className="w-full sm:w-auto px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-lg whitespace-nowrap disabled:opacity-50">{isSaving ? 'Adding...' : 'Add Database User'}</button>
                   </form>
                 </div>
               </div>
