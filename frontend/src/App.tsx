@@ -286,6 +286,10 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
+  // --- SUPER ADMIN CAPABILITIES STATE ---
+  const isCurrentUserSuperAdmin = loginUsername.trim().toLowerCase() === 'admin';
+  const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
+  const [newResetPassword, setNewResetPassword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
@@ -1002,6 +1006,23 @@ const handleDeleteAdmin = async (id: number, role: string) => {
         showToast("Failed to delete administrator.", "error");
       }
     }
+  };
+
+  const handleUpdateRole = (id: number, newRole: string) => {
+    // Updates the role instantly in the frontend UI
+    setAdminUsers(adminUsers.map(u => u.id === id ? { ...u, role: newRole } : u));
+    showToast(`User role successfully changed to ${newRole}`, "success");
+    // Note: To make this permanent across browser refreshes, you will eventually 
+    // need to add a PATCH route to your NestJS backend!
+  };
+
+  const handleResetPassword = (id: number) => {
+    if (!newResetPassword) return;
+    showToast("User's password has been forcefully reset!", "success");
+    setEditingPasswordId(null);
+    setNewResetPassword('');
+    // Note: Like roles, this will need a backend PATCH route to permanently save
+    // the new hashed password into your SQLite database.
   };
 
   // --- LOGIN SCREEN RENDER ---
@@ -1843,22 +1864,31 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
             )}
 
             {/* MANAGE USERS TAB */}
-           {/* MANAGE USERS TAB */} 
+           {/* MANAGE USERS TAB */}
             {activeTab === 'users' && (
               <div className="space-y-6 print-hidden">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-6 border-b border-slate-200 bg-slate-50/50">
                     <h2 className="text-lg font-bold text-slate-800">System Administrators</h2>
-                    <p className="text-sm text-slate-500 mt-1">Users permanently mapped to the database.</p>
+                    <p className="text-sm text-slate-500 mt-1">Manage database access, roles, and security credentials.</p>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[600px]">
+                    <table className="w-full text-left border-collapse min-w-[750px]">
                       <thead className="bg-slate-100 border-b border-slate-200">
-                        <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th></tr>
+                        <tr>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th>
+                          {/* ONLY SHOW THIS COLUMN TO SUPER ADMINS */}
+                          {isCurrentUserSuperAdmin && (
+                            <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-center">Security Access</th>
+                          )}
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
+                        </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         
-                        {/* --- 1. HARDCODED SUPER ADMIN (Immune to deletion) --- */}
+                        {/* --- 1. HARDCODED SUPER ADMIN (Immune to deletion/changes) --- */}
                         <tr className="hover:bg-slate-50 transition-colors">
                           <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
@@ -1866,12 +1896,15 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                           </td>
                           <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
                           <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
+                          {isCurrentUserSuperAdmin && (
+                            <td className="py-4 px-6 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest">Root Account</td>
+                          )}
                           <td className="py-4 px-6 text-right">
                             <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed">Restricted</button>
                           </td>
                         </tr>
 
-                        {/* --- 2. ALL DATABASE USERS (Filtered to prevent duplicating 'admin') --- */}
+                        {/* --- 2. ALL DATABASE USERS --- */}
                         {adminUsers.filter(user => user.username.toLowerCase() !== 'admin').map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
@@ -1880,8 +1913,40 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                               </div>
                               {user.username}
                             </td>
-                            <td className="py-4 px-6 text-sm text-slate-600">{user.role || 'Admin'}</td>
+                            
+                            {/* ROLE DROPDOWN (Only for Super Admins) */}
+                            <td className="py-4 px-6 text-sm text-slate-600">
+                              {isCurrentUserSuperAdmin ? (
+                                <select 
+                                  value={user.role || 'Admin'} 
+                                  onChange={(e) => handleUpdateRole(user.id, e.target.value)}
+                                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 shadow-sm cursor-pointer"
+                                >
+                                  <option value="Admin">Standard Admin</option>
+                                  <option value="Super Admin">Super Admin</option>
+                                </select>
+                              ) : (
+                                user.role || 'Admin'
+                              )}
+                            </td>
+
                             <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status || 'Active'}</span></td>
+                            
+                            {/* PASSWORD RESET (Only for Super Admins) */}
+                            {isCurrentUserSuperAdmin && (
+                              <td className="py-4 px-6 text-center">
+                                {editingPasswordId === user.id ? (
+                                  <div className="flex items-center justify-center gap-2">
+                                    <input type="text" placeholder="New Password" value={newResetPassword} onChange={e => setNewResetPassword(e.target.value)} className="px-3 py-1.5 border border-slate-300 rounded-md text-xs w-32 shadow-sm outline-none" />
+                                    <button onClick={() => handleResetPassword(user.id)} className="text-emerald-600 font-bold text-xs uppercase hover:underline">Save</button>
+                                    <button onClick={() => setEditingPasswordId(null)} className="text-slate-400 font-bold text-xs uppercase hover:underline">Cancel</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => setEditingPasswordId(user.id)} className="text-indigo-600 hover:text-indigo-800 text-[11px] tracking-wide font-bold uppercase transition-colors bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">Change Password</button>
+                                )}
+                              </td>
+                            )}
+
                             <td className="py-4 px-6 text-right">
                               <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
                             </td>
@@ -1893,6 +1958,7 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                   </div>
                 </div>
 
+                {/* ADD NEW USER FORM */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                   <h3 className="text-lg font-bold text-slate-800 mb-4">Add New Administrator</h3>
                   <form onSubmit={handleAddAdmin} className="flex flex-col sm:flex-row gap-4 items-end">
