@@ -29,6 +29,12 @@ model Employee {
   payrolls         Payroll[]
 }
 
+model Admin {
+  id       Int    @id @default(autoincrement())
+  username String @unique
+  password String // This will store the securely hashed password
+}
+
 model Settings {
   id         Int    @id @default(autoincrement())
   shiftStart String @default("08:00")
