@@ -1016,13 +1016,30 @@ const handleDeleteAdmin = async (id: number, role: string) => {
     // need to add a PATCH route to your NestJS backend!
   };
 
-  const handleResetPassword = (id: number) => {
-    if (!newResetPassword) return;
-    showToast("User's password has been forcefully reset!", "success");
-    setEditingPasswordId(null);
-    setNewResetPassword('');
-    // Note: Like roles, this will need a backend PATCH route to permanently save
-    // the new hashed password into your SQLite database.
+const handleResetPassword = async (id: number) => {
+    if (!newResetPassword) {
+      showToast("Please type a new password first.", "error");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins/${id}/password`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newResetPassword })
+      });
+
+      if (!response.ok) throw new Error("Failed to reset password in database.");
+
+      showToast("User's password has been securely reset!", "success");
+      setEditingPasswordId(null);
+      setNewResetPassword('');
+    } catch (error) {
+      showToast("Failed to reset password.", "error");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // --- LOGIN SCREEN RENDER ---
