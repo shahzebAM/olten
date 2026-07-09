@@ -282,8 +282,8 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'users'>('dashboard');
   
-  // State for Managing Users (Mocked for frontend demonstration)
-  const [adminUsers, setAdminUsers] = useState([{ id: 1, username: 'admin', role: 'Super Admin', status: 'Active' }]);
+// State for Managing Users (We leave the hardcoded admin OUT of this state)
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1810,11 +1810,26 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                       <thead className="bg-slate-100 border-b border-slate-200">
                         <tr><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th></tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                     <tbody className="divide-y divide-slate-100">
+                      
+                      {/* 1. HARDCODED SUPER ADMIN (Always visible, cannot be deleted) */}
+                      <tr className="hover:bg-slate-50 transition-colors">
+                        <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">A</div>
+                          admin
+                        </td>
+                        <td className="py-4 px-6 text-sm text-slate-600">Super Admin (All Access)</td>
+                        <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">Active</span></td>
+                        <td className="py-4 px-6 text-right">
+                          <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
+                        </td>
+                      </tr>
+
+                      {/* 2. DYNAMICALLY ADDED ADMINS */}
                       {adminUsers.map(user => (
                         <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">
+                            <div className="w-8 h-8 rounded-full bg-slate-600 text-white flex items-center justify-center text-xs">
                               {user.username.charAt(0).toUpperCase()}
                             </div>
                             {user.username}
@@ -1826,14 +1841,11 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                             </span>
                           </td>
                           <td className="py-4 px-6 text-right">
-                            {user.role === 'Super Admin' ? (
-                              <button disabled className="text-slate-300 text-sm font-bold uppercase cursor-not-allowed" title="Cannot delete root admin">Restricted</button>
-                            ) : (
-                              <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
-                            )}
+                            <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
                           </td>
                         </tr>
                       ))}
+
                     </tbody>
                     </table>
                   </div>
