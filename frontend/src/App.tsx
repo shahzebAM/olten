@@ -807,10 +807,13 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
-    const requiredHrs = days * 8; 
+    const requiredHrs = days * 8; // Keep this for undertime deduction
 
-    // EXACT EXCEL LOGIC FIX: OT is purely calculated as Total Logged Hours vs Required Hours
-    const otHrs = Math.max(0, totalHoursWorked - requiredHrs);
+    // Count actual days present so absences don't wipe out earned OT
+    const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+
+    // EXACT EXCEL LOGIC FIX: OT is purely calculated as Total Logged Hours vs Actual Required Hours
+    const otHrs = Math.max(0, totalHoursWorked - (actualDaysPresentCount * 8));
     const otPay = otHrs * (ratePerHour * 1.25); 
 
     const regularHoursWorked = totalHoursWorked - otHrs;
@@ -1415,7 +1418,8 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                   const ratePerHour = ratePerDay / 8;
                   const requiredHrs = days * 8; 
 
-                  const otHours = Math.max(0, rec.totalHours - requiredHrs); 
+                  // Use the actualDaysPresentCount (which is already declared a few lines above this)
+                  const otHours = Math.max(0, rec.totalHours - (actualDaysPresentCount * 8));
                   const otPay = otHours * (ratePerHour * 1.25); 
 
                   const regularHoursWorked = rec.totalHours - otHours;
