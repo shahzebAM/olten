@@ -2327,16 +2327,22 @@ const handleResetPassword = async (id: number) => {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {attendanceFilter === 'day' && filteredAttendanceEmployees.map((emp) => {
-                    const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0] === attendanceDate);
-                    
-                    const totalHrs = empLogs.reduce((sum, log) => {
-                        if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
-                        return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
-                    }, 0);
-                    
-                    // FIXED: Aggregate OT Calculation for Day View
-                    const daysPresent = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
-                    const totalOtHrs = Math.max(0, totalHrs - (daysPresent * 8));
+                        const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0] === attendanceDate);
+                        
+                        // NEW LOGIC: Explicitly grab exact OT instead of guessing by subtracting 8
+                        let totalHrs = 0;
+                        let totalOtHrs = 0;
+                        empLogs.forEach(log => {
+                          if (!log.timeIn || !log.timeIn.includes(':')) {
+                            totalHrs += log.hours;
+                          } else {
+                            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+                            totalHrs += shiftCalc.total;
+                            totalOtHrs += shiftCalc.ot;
+                          }
+                        });
+                        
+                        // const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
 
                     const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
                     
@@ -2426,20 +2432,22 @@ const handleResetPassword = async (id: number) => {
                   })}
 
                   {attendanceFilter === 'month' && filteredAttendanceEmployees.map((emp) => {
-                    const monthLogs = attendances
-                      .filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(attendanceMonth))
-                      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                    
-                    const totalHrs = monthLogs.reduce((sum, log) => {
-                        if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
-                        return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
-                    }, 0);
-                    
-                    // FIXED: Aggregate OT Calculation for Monthly View
-                    const actualDaysPresentCount = new Set(monthLogs.map(l => l.date && l.date.split('T')[0])).size;
-                    const totalOverallOtHrs = Math.max(0, totalHrs - (actualDaysPresentCount * 8));
+                        const monthLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(attendanceMonth)).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                        
+                        // NEW LOGIC: Explicitly grab exact monthly OT
+                        let totalHrs = 0;
+                        let totalOverallOtHrs = 0;
+                        monthLogs.forEach(log => {
+                          if (!log.timeIn || !log.timeIn.includes(':')) {
+                            totalHrs += log.hours;
+                          } else {
+                            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+                            totalHrs += shiftCalc.total;
+                            totalOverallOtHrs += shiftCalc.ot;
+                          }
+                        });
 
-                    return (
+                        return (
                       <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors">
                         <td className="py-5 px-6 align-top w-1/4"><span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span></td>
                         
