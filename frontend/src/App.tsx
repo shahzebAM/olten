@@ -195,6 +195,13 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
     </div>
 
     <hr className="border-t border-slate-200 my-4" />
+    
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+      <InputField type="number" step="0.01" label="Total Cash Advance Balance (₱)" placeholder="0.00" value={formData.cashAdvanceBalance} onChange={handleChange('cashAdvanceBalance', 'standard')} />
+      <InputField type="number" step="0.01" label="Standard Deduction per Cutoff (₱)" placeholder="0.00" value={formData.cashAdvanceInstallment} onChange={handleChange('cashAdvanceInstallment', 'standard')} />
+    </div>
+
+    <hr className="border-t border-slate-200 my-4" />
 
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
       <InputField label="TIN" placeholder="000-000-000-000" value={formData.tin} onChange={handleChange('tin', 'tin')} />
@@ -224,6 +231,8 @@ interface Employee {
   philhealth: string;
   pagIbig: string;
   bankAccount: string;
+  cashAdvanceBalance: number;
+  cashAdvanceInstallment: number;
 }
 
 interface AttendanceRecord {
@@ -337,7 +346,8 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
   const initialFormState = {
     firstName: '', middleName: '', lastName: '', dateOfBirth: '', 
     civilStatus: 'Single', address: '', employmentStatus: 'Probationary', 
-    baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: ''
+    baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: '',
+    cashAdvanceBalance: '', cashAdvanceInstallment: ''
   };
   const [formData, setFormData] = useState(initialFormState);
 
@@ -382,37 +392,6 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
   };
 
   // --- AUTHENTICATION LOGIC ---
-  // const handleLogin = async (e: React.FormEvent) => {
-  //   e.preventDefault();
-  //   setIsLoggingIn(true);
-  //   setLoginError('');
-
-  //   try {
-  //     const response = await fetch(`${API_BASE_URL}/auth/login`, {
-  //       method: 'POST',
-  //       headers: { 'Content-Type': 'application/json' },
-  //       body: JSON.stringify({ username: loginUsername, password: loginPassword })
-  //     });
-
-  //     if (response.ok) {
-  //       setIsAuthenticated(true);
-  //     } else {
-  //       setLoginError('Access Denied: Invalid credentials or backend connection failed.');
-  //     }
-  //   } catch (error) {
-  //     setLoginError('Network Error: Could not connect to the authentication server.');
-  //   } finally {
-  //     setIsLoggingIn(false);
-  //   }
-  // };
-
-  // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
- // --- AUTHENTICATION LOGIC (Hardcoded for testing) ---
-// --- AUTHENTICATION LOGIC (Real Database Connection) ---
- // --- AUTHENTICATION LOGIC (Hardcoded Superuser) ---
-// --- AUTHENTICATION LOGIC (Real Database Connection) ---
-// --- AUTHENTICATION & ADMIN LOGIC (REAL DATABASE + HARDCODED SUPER ADMIN) ---
-// --- AUTHENTICATION LOGIC (Pure Database) ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -554,6 +533,8 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
       ...formData, baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       middleName: formData.middleName || null, bankAccount: formData.bankAccount || '', tin: formData.tin || null,
       sssNumber: formData.sssNumber || null, philhealth: formData.philhealth || null, pagIbig: formData.pagIbig || null,
+      cashAdvanceBalance: parseFloat(formData.cashAdvanceBalance) || 0,
+      cashAdvanceInstallment: parseFloat(formData.cashAdvanceInstallment) || 0,
     };
     
     const url = editingId ? `${API_BASE_URL}/employees/${editingId}` : `${API_BASE_URL}/employees`;
@@ -586,7 +567,9 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
       dateOfBirth: emp.dateOfBirth ? emp.dateOfBirth.split('T')[0] : '', civilStatus: emp.civilStatus,
       address: emp.address, employmentStatus: emp.employmentStatus, baseRate: emp.baseRate.toString(),
       bankAccount: emp.bankAccount || '', tin: emp.tin || '', sssNumber: emp.sssNumber || '',
-      philhealth: emp.philhealth || '', pagIbig: emp.pagIbig || ''
+      philhealth: emp.philhealth || '', pagIbig: emp.pagIbig || '',
+      cashAdvanceBalance: emp.cashAdvanceBalance ? emp.cashAdvanceBalance.toString() : '',
+      cashAdvanceInstallment: emp.cashAdvanceInstallment ? emp.cashAdvanceInstallment.toString() : ''
     });
     setEditingId(emp.id); setIsEditModalOpen(true); 
   };
@@ -782,7 +765,10 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     const actualDays = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
     const defaultDays = actualDays > 0 ? actualDays.toString() : '13';
 
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: '0', sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false });
+    // Auto-fill deduction safely (never exceed remaining balance)
+    const safeDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
+
+    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false });
     setIsPayrollModalOpen(true);
   };
 
@@ -830,8 +816,14 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     const sssDed = parseFloat(payrollData.sss) || 0;
     const pagIbigDed = parseFloat(payrollData.pagIbig) || 0;
     const philhealthDed = parseFloat(payrollData.philhealth) || 0;
-    const cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
-const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
+    
+    let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
+    // Prevent manual edits from dropping balance below 0
+    if (activeEmployee && cashAdvanceDed > (activeEmployee.cashAdvanceBalance || 0)) {
+        cashAdvanceDed = activeEmployee.cashAdvanceBalance || 0;
+    }
+
+    const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
     let autoTax = 0;
 
     if (payrollData.isDeclared && taxableIncome > 0) {
@@ -845,7 +837,7 @@ const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
 
     return { 
       totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, 
-      grossPay, autoTax, totalDeductions, netPay
+      grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed
     };
   };
 
@@ -858,7 +850,7 @@ const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
       employeeId: activeEmployee.id,
       daysWorked: parseFloat(payrollData.daysWorked) || 0,
       totalHours: computed.totalHoursWorked,
-      cashAdvance: parseFloat(payrollData.cashAdvance) || 0,
+      cashAdvance: computed.cashAdvanceDed,
       sssDeduction: parseFloat(payrollData.sss) || 0,
       pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0,
       philhealthDeduct: parseFloat(payrollData.philhealth) || 0,
@@ -875,7 +867,18 @@ const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
       });
       if (!response.ok) throw new Error("Failed to save payroll to backend");
       
+      // Auto-deduct from employee's total advance balance
+      if (computed.cashAdvanceDed > 0) {
+        const newBalance = Math.max(0, activeEmployee.cashAdvanceBalance - computed.cashAdvanceDed);
+        await fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cashAdvanceBalance: newBalance })
+        });
+      }
+
       await fetchPayrolls(); 
+      await fetchEmployees(); // Refresh employees so the directory shows the new balance
       showToast("Payroll finalized and saved to database!", "success");
       setIsPayrollModalOpen(false);
     } catch (error) { 
@@ -1668,6 +1671,7 @@ const handleResetPassword = async (id: number) => {
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-emerald-800 bg-emerald-50">Gross Pay</th>
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-rose-800 bg-rose-50">Total Ded.</th>
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-indigo-900 bg-indigo-50">Net Pay</th>
+                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-amber-900 bg-amber-50">Advance Bal.</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1682,6 +1686,7 @@ const handleResetPassword = async (id: number) => {
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-700 bg-emerald-50/50">{formatMoney(row.totalGross)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700 bg-rose-50/50">{formatMoney(row.totalDeductions)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-indigo-900 bg-indigo-50/50">{formatMoney(row.totalNet)}</td>
+                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-amber-700 bg-amber-50/50">{(row.emp.cashAdvanceBalance || 0) > 0 ? formatMoney(row.emp.cashAdvanceBalance) : '--'}</td>
                               </tr>
                             ))}
                             {/* Grand Totals */}
@@ -1690,6 +1695,7 @@ const handleResetPassword = async (id: number) => {
                               <td className="py-3 px-3 border border-slate-400 text-right font-mono text-emerald-800 text-sm">{formatMoney(grandGross)}</td>
                               <td className="py-3 px-3 border border-slate-400 text-right font-mono text-rose-800 text-sm">{formatMoney(grandDed)}</td>
                               <td className="py-3 px-3 border border-slate-400 text-right font-mono font-black text-indigo-950 text-[15px]">{formatMoney(grandNet)}</td>
+                              <td className="py-3 px-3 border border-slate-400 bg-slate-200"></td>
                             </tr>
                           </tbody>
                         </table>
@@ -1727,7 +1733,14 @@ const handleResetPassword = async (id: number) => {
                 
                 <h3 className="font-bold text-slate-800 border-b pb-2 mt-6">Deductions</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <InputField type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
+                  <div className="flex flex-col w-full">
+                    <InputField type="number" step="0.01" label="Cash Adv. Deduction" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
+                    {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
+                      <span className="text-[11px] font-bold text-amber-600 mt-1.5 ml-1">
+                        Rem. Bal: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}
+                      </span>
+                    )}
+                  </div>
                   <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
                   <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
@@ -1747,25 +1760,6 @@ const handleResetPassword = async (id: number) => {
                       </div>
                     )}
                   </div>
-                </div>
-
-                <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
-                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                    <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Semi-Monthly Tax Brackets Reference</h4>
-                  </div>
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-100 text-slate-600 font-semibold">
-                      <tr><th className="py-2.5 px-4 border-b border-slate-200">Compensation Range</th><th className="py-2.5 px-4 border-b border-slate-200">Prescribed Withholding Tax</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700 font-mono text-xs sm:text-sm">
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱10,417 and below</td><td className="py-2.5 px-4 hover:bg-slate-50">0.00</td></tr>
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱10,417 - ₱16,666</td><td className="py-2.5 px-4 hover:bg-slate-50">0.00 + 15% over ₱10,417</td></tr>
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱16,667 - ₱33,332</td><td className="py-2.5 px-4 hover:bg-slate-50">₱937.50 + 20% over ₱16,667</td></tr>
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱33,333 - ₱83,332</td><td className="py-2.5 px-4 hover:bg-slate-50">₱4,270.70 + 25% over ₱33,333</td></tr>
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱83,333 - ₱333,332</td><td className="py-2.5 px-4 hover:bg-slate-50">₱16,770.70 + 30% over ₱83,333</td></tr>
-                      <tr><td className="py-2.5 px-4 hover:bg-slate-50">₱333,333 and above</td><td className="py-2.5 px-4 hover:bg-slate-50">₱91,770.70 + 35% over ₱333,333</td></tr>
-                    </tbody>
-                  </table>
                 </div>
               </div>
 
@@ -1883,7 +1877,6 @@ const handleResetPassword = async (id: number) => {
         <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible">
           <div className="max-w-[1400px] mx-auto space-y-6 sm:space-y-8">
 
-        {/* SUMMARY REPORTS TAB */}
         {/* DASHBOARD TAB */}
             {activeTab === 'dashboard' && (
               <div className="space-y-6 print-hidden">
@@ -1933,7 +1926,6 @@ const handleResetPassword = async (id: number) => {
             )}
 
             {/* MANAGE USERS TAB */}
-           {/* MANAGE USERS TAB */}
             {activeTab === 'users' && (
               <div className="space-y-6 print-hidden">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -2024,6 +2016,7 @@ const handleResetPassword = async (id: number) => {
               </div>
             )}
 
+        {/* SUMMARY REPORTS TAB */}
         {activeTab === 'report' && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print-hidden">
             <div className="p-6 border-b border-slate-200 bg-amber-50/30">
@@ -2169,11 +2162,11 @@ const handleResetPassword = async (id: number) => {
                                   <td className="border border-slate-400 py-2 px-3 text-right">{taxData.rate.toFixed(2)}</td> 
                                   <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.tax - taxData.minTax)}</td> 
                                   <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.minTax)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right font-bold">{formatMoney(taxData.tax)}</td> 
+                                  <td className="border border-slate-400 py-2 px-3 text-right font-bold text-slate-900 bg-slate-50">{formatMoney(taxData.tax)}</td> 
                                 </tr> 
                               )
                             });
-                            return ( <>{rows}<tr className="bg-slate-100 font-bold"><td className="border border-slate-400 py-2 px-3 text-right" colSpan={7}></td><td className="border border-slate-400 py-2 px-3 text-right text-black">{formatMoney(totalWithholdingTax)}</td></tr></> );
+                            return ( <>{rows}<tr className="bg-slate-200 font-bold"><td className="border border-slate-400 py-2 px-3 text-right" colSpan={7}>Total Collected:</td><td className="border border-slate-400 py-2 px-3 text-right text-black">{formatMoney(totalWithholdingTax)}</td></tr></> );
                           })()
                         )}
                       </tbody>
@@ -2342,9 +2335,7 @@ const handleResetPassword = async (id: number) => {
                           }
                         });
                         
-                        // const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
-
-                    const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
+                        const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
                     
                     return (
                       <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
