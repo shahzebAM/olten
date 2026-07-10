@@ -796,11 +796,19 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
       a.date.split('T')[0].startsWith(payrollComputeMonth)
     );
     
-    // Dynamically reactive calculations for the ACTIVE payroll compute flow
-    const totalHoursWorked = empLogs.reduce((sum, log) => {
-        if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
-        return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
-    }, 0);
+    // Calculate explicit daily OT rather than aggregating the month
+    let totalHoursWorked = 0;
+    let otHrs = 0;
+
+    empLogs.forEach(log => {
+        if (!log.timeIn || !log.timeIn.includes(':')) {
+            totalHoursWorked += log.hours;
+        } else {
+            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+            totalHoursWorked += shiftCalc.total;
+            otHrs += shiftCalc.ot; // Protects earned OT from being erased by undertime on other days
+        }
+    });
 
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
@@ -808,12 +816,6 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     const requiredHrs = days * 8; // Keep this for undertime deduction
-
-    // Count actual days present so absences don't wipe out earned OT
-    const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
-
-    // EXACT EXCEL LOGIC FIX: OT is purely calculated as Total Logged Hours vs Actual Required Hours
-    const otHrs = Math.max(0, totalHoursWorked - (actualDaysPresentCount * 8));
     const otPay = otHrs * (ratePerHour * 1.25); 
 
     const regularHoursWorked = totalHoursWorked - otHrs;
@@ -1404,22 +1406,28 @@ const handleResetPassword = async (id: number) => {
                   const emp = selectedPayslip.emp;
                   
                   // Lock the days present count strictly to the month the payroll was created
-const payrollMonth = new Date(rec.createdAt).toISOString().slice(0, 7);
-const empLogs = attendances.filter(a => 
-  Number(a.employeeId) === emp.id && 
-  a.date && 
-  a.date.split('T')[0].startsWith(payrollMonth)
-);
-const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+                  const payrollMonth = new Date(rec.createdAt).toISOString().slice(0, 7);
+                  const empLogs = attendances.filter(a => 
+                    Number(a.employeeId) === emp.id && 
+                    a.date && 
+                    a.date.split('T')[0].startsWith(payrollMonth)
+                  );
+                  const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+
+                  // Reconstruct exact daily OT for the payslip
+                  let otHours = 0;
+                  empLogs.forEach(log => {
+                      if (log.timeIn && log.timeIn.includes(':')) {
+                          const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+                          otHours += shiftCalc.ot;
+                      }
+                  });
 
                   const baseSalary = emp.baseRate;
                   const days = rec.daysWorked || 0;
                   const ratePerDay = days > 0 ? baseSalary / days : 0;
                   const ratePerHour = ratePerDay / 8;
-                  const requiredHrs = days * 8; 
-
-                  // Use the actualDaysPresentCount (which is already declared a few lines above this)
-                  const otHours = Math.max(0, rec.totalHours - (actualDaysPresentCount * 8));
+                  const requiredHrs = days * 8;
                   const otPay = otHours * (ratePerHour * 1.25); 
 
                   const regularHoursWorked = rec.totalHours - otHours;
@@ -2502,15 +2510,18 @@ const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('
                         // Filter explicitly by selected computation month
                         const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
                         
-                        const totalLogged = empLogs.reduce((sum, log) => {
-                            if (!log.timeIn || !log.timeIn.includes(':')) return sum + log.hours;
-                            return sum + calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd).total;
-                        }, 0);
-                        
-                        // FIXED: AGGREGATE OT CALCULATION TO USE ACTUAL DAYS PRESENT FOR PREVIEW
-                        const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
-                        const requiredHrs = actualDaysPresentCount * 8;
-                        const totalOtLogged = Math.max(0, totalLogged - requiredHrs);
+                        let totalLogged = 0;
+                        let totalOtLogged = 0;
+
+                        empLogs.forEach(log => {
+                            if (!log.timeIn || !log.timeIn.includes(':')) {
+                                totalLogged += log.hours;
+                            } else {
+                                const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+                                totalLogged += shiftCalc.total;
+                                totalOtLogged += shiftCalc.ot; // Add up exact daily OT
+                            }
+                        });
 
                         return (
                           <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
