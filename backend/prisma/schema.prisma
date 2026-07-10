@@ -27,6 +27,8 @@ model Employee {
 
   attendances      Attendance[]
   payrolls         Payroll[]
+cashAdvanceBalance      Float @default(0)
+  cashAdvanceInstallment  Float @default(0)
 }
 
 model Admin {
