@@ -260,6 +260,8 @@ interface PayrollRecord {
   grossPay: number;
   netPay: number;
   createdAt: string;
+  pagIbigLoan: number;        // <-- Added
+  pagIbigHousingLoan: number; // <-- Added
 }
 
 interface SummaryReportRow {
@@ -351,9 +353,10 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
   };
   const [formData, setFormData] = useState(initialFormState);
 
-  const [payrollData, setPayrollData] = useState({
-    daysWorked: '13', cashAdvance: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false
-    
+const [payrollData, setPayrollData] = useState({
+    daysWorked: '13', cashAdvance: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
+    pagIbigLoan: '0',        // <-- Added
+    pagIbigHousingLoan: '0'  // <-- Added
   });
 
   // --- DYNAMIC TAX MATRIX STATE ---
@@ -768,7 +771,16 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     // Auto-fill deduction safely (never exceed remaining balance)
     const safeDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
 
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false });
+    setPayrollData({ 
+      daysWorked: defaultDays, 
+      cashAdvance: safeDeduction.toString(), 
+      sss: '0', 
+      pagIbig: '0', 
+      philhealth: '0', 
+      isDeclared: false,
+      pagIbigLoan: '0',        // <-- Added
+      pagIbigHousingLoan: '0'  // <-- Added
+    });
     setIsPayrollModalOpen(true);
   };
 
@@ -816,6 +828,8 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
     const sssDed = parseFloat(payrollData.sss) || 0;
     const pagIbigDed = parseFloat(payrollData.pagIbig) || 0;
     const philhealthDed = parseFloat(payrollData.philhealth) || 0;
+    const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0;               // <-- Added
+    const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; // <-- Added
     
     let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
     // Prevent manual edits from dropping balance below 0
@@ -832,12 +846,13 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
       autoTax = taxResult.tax;
     }
 
-    const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax;
+    const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed;
     const netPay = grossPay - totalDeductions;
 
     return { 
       totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, 
-      grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed
+      grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed,
+      pagIbigLoanDed, pagIbigHousingLoanDed // <-- Added
     };
   };
 
@@ -856,7 +871,9 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
       philhealthDeduct: parseFloat(payrollData.philhealth) || 0,
       tax: computed.autoTax,
       grossPay: computed.grossPay,
-      netPay: computed.netPay
+      netPay: computed.netPay,
+      pagIbigLoan: computed.pagIbigLoanDed,               // <-- Added
+      pagIbigHousingLoan: computed.pagIbigHousingLoanDed  // <-- Added
     };
 
     try {
@@ -1553,6 +1570,16 @@ const handleResetPassword = async (id: number) => {
                           <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigDeduct > 0 ? formatMoney(rec.pagIbigDeduct) : '-'}</td>
                         </tr>
                         <tr>
+                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Pag-IBIG MP Loan</td>
+                          <td className="border border-slate-300"></td>
+                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigLoan > 0 ? formatMoney(rec.pagIbigLoan) : '-'}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Pag-IBIG Housing Loan</td>
+                          <td className="border border-slate-300"></td>
+                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigHousingLoan > 0 ? formatMoney(rec.pagIbigHousingLoan) : '-'}</td>
+                        </tr>
+                        <tr>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium uppercase">Tax</td>
                           <td className="border border-slate-300"></td>
                           <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.tax > 0 ? formatMoney(rec.tax) : '-'}</td>
@@ -1731,7 +1758,9 @@ const handleResetPassword = async (id: number) => {
                   <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
                   <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  
+                  <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
+                  <InputField type="number" step="0.01" label="Pag-IBIG MP Loan" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
+                  <InputField type="number" step="0.01" label="Pag-IBIG Housing Loan" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
                   <div className="col-span-2 mt-2 p-4 border border-indigo-100 bg-white rounded-xl shadow-sm">
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600"/>
