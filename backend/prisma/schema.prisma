@@ -72,5 +72,7 @@ model Payroll {
   grossPay         Float
   netPay           Float
   createdAt        DateTime @default(now())
+  pagIbigLoan        Float    @default(0)
+  pagIbigHousingLoan Float    @default(0)
 }
 
