@@ -1408,29 +1408,16 @@ const handleResetPassword = async (id: number) => {
                   const rec = selectedPayslip.record;
                   const emp = selectedPayslip.emp;
                   
-                  // Lock the days present count strictly to the month the payroll was created
-                  const payrollMonth = new Date(rec.createdAt).toISOString().slice(0, 7);
-                  const empLogs = attendances.filter(a => 
-                    Number(a.employeeId) === emp.id && 
-                    a.date && 
-                    a.date.split('T')[0].startsWith(payrollMonth)
-                  );
-                  const actualDaysPresentCount = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
-
-                  // Reconstruct exact daily OT for the payslip
-                  let otHours = 0;
-                  empLogs.forEach(log => {
-                      if (log.timeIn && log.timeIn.includes(':')) {
-                          const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-                          otHours += shiftCalc.ot;
-                      }
-                  });
-
+               // Use ONLY the saved snapshot data from the database. 
+                  // Do not fetch live attendances so historical slips never change!
                   const baseSalary = emp.baseRate;
                   const days = rec.daysWorked || 0;
                   const ratePerDay = days > 0 ? baseSalary / days : 0;
                   const ratePerHour = ratePerDay / 8;
                   const requiredHrs = days * 8;
+                  
+                  // Calculate OT strictly based on the saved total hours snapshot
+                  const otHours = Math.max(0, rec.totalHours - requiredHrs);
                   const otPay = otHours * (ratePerHour * 1.25); 
 
                   const regularHoursWorked = rec.totalHours - otHours;
@@ -1472,7 +1459,7 @@ const handleResetPassword = async (id: number) => {
                         <tr>
                           <td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 uppercase text-slate-600 tracking-wider">Earnings</td>
                           <td colSpan={4} className="border border-slate-300 px-3 py-1.5 font-bold bg-slate-50 text-slate-600">
-                            NO. OF DAYS PRESENT: <span className="font-bold text-indigo-700 ml-1">{actualDaysPresentCount}</span>
+                            NO. OF DAYS PRESENT: <span className="font-bold text-indigo-700 ml-1">{rec.daysWorked}</span>
                           </td>
                         </tr>
                         <tr>
