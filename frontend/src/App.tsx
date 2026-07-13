@@ -290,8 +290,9 @@ export default function App() {
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   
-  const [isSaving, setIsSaving] = useState(false);
+ const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'users'>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- ADDED
   
 // State for Managing Users (We leave the hardcoded admin OUT of this state)
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -1829,43 +1830,53 @@ const handleResetPassword = async (id: number) => {
       )}
 
 {/* ========================================================= */}
-      {/* SIDEBAR NAVIGATION */}
+      {/* SIDEBAR NAVIGATION & OVERLAY */}
       {/* ========================================================= */}
-      <aside className="w-64 bg-slate-900 text-slate-300 hidden md:flex flex-col flex-shrink-0 print-hidden border-r border-slate-800 shadow-2xl relative z-20">
-        <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 md:hidden print-hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        ></div>
+      )}
+      
+      <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
           <h1 className="text-xl font-black text-white tracking-wider uppercase">Olten<span className="text-blue-500">Admin</span></h1>
+          <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
+             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
         </div>
         
         <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
           <div className="px-3 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Main Menu</div>
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Dashboard Overview
           </button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
-          <button onClick={() => setActiveTab('list')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Directory List
           </button>
-          <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Register New
           </button>
-          <button onClick={() => setActiveTab('attendance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Log Attendance
           </button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
-          <button onClick={() => setActiveTab('payroll')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('payroll'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Compute Payroll
           </button>
-          <button onClick={() => setActiveTab('tax')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('tax'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Tax Reports
           </button>
-          <button onClick={() => setActiveTab('report')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('report'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
              Summary Reports
           </button>
 
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Settings</div>
-          <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'users' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+          <button onClick={() => { setActiveTab('users'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'users' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
              Manage System Users
           </button>
         </div>
@@ -1878,13 +1889,21 @@ const handleResetPassword = async (id: number) => {
         
         {/* TOP HEADER */}
         <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shadow-sm relative z-10 print-hidden shrink-0">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-blue-950 tracking-tight">{getPageTitle()}</h2>
-            <div className="text-xs font-semibold text-slate-400 mt-1 flex items-center gap-2">
-              <span>Admin Panel</span> <span>/</span> <span className="text-blue-600">{getPageTitle()}</span>
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsMobileMenuOpen(true)} 
+              className="md:hidden p-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors border border-slate-200"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-extrabold text-blue-950 tracking-tight">{getPageTitle()}</h2>
+              <div className="text-xs font-semibold text-slate-400 mt-1 flex items-center gap-2">
+                <span className="hidden sm:inline">Admin Panel</span> <span className="hidden sm:inline">/</span> <span className="text-blue-600">{getPageTitle()}</span>
+              </div>
             </div>
           </div>
-          <button onClick={handleLogout} className="px-6 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-sm font-bold transition-colors shadow-sm border border-slate-200">
+          <button onClick={handleLogout} className="px-4 sm:px-6 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-sm font-bold transition-colors shadow-sm border border-slate-200">
             Logout
           </button>
         </header>
