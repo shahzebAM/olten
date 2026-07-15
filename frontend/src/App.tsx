@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
-import { toJpeg } from 'html-to-image'; // <-- Modern, OKLCH-friendly library
+import { toPng } from 'html-to-image'; // <-- Modern, OKLCH-friendly library
 
 // ==========================================
 // ENVIRONMENT CONFIG (Auto-Sanitized)
@@ -524,28 +524,26 @@ const handleExportPayrollsZip = async () => {
         // 2. Wait for React to render the modal fully into the DOM
         await new Promise(resolve => setTimeout(resolve, 500)); // Giving it an extra split second to render
 
-        // 3. Find the element and capture it
+       // 3. Find the element and capture it
         const element = document.getElementById('payslip-print-area');
         if (element) {
-          // Get the exact physical pixel dimensions of the payslip
-          const width = element.clientWidth;
-          const height = element.clientHeight;
+          // Use scrollWidth/scrollHeight to capture the FULL document, avoiding cutoffs
+          const width = element.scrollWidth;
+          const height = element.scrollHeight;
 
-          // html-to-image bypasses the oklch error by using the browser's native engine!
-          // We set pixelRatio to 4 (or higher) to force a 4k-quality internal render.
-          const imgData = await toJpeg(element, { 
-            quality: 1.0, 
+          // Switch to PNG for crystal clear, lossless text rendering
+          const imgData = await toPng(element, { 
             backgroundColor: '#ffffff', 
-            pixelRatio: 4, // CRITICAL FIX: This forces high-resolution rendering
+            pixelRatio: 3, // 3x resolution is the sweet spot for crisp PNGs without crashing mobile browsers
+            width: width,
+            height: height,
             style: {
-              transform: 'scale(1)', // Prevent weird CSS scaling issues during capture
-              transformOrigin: 'top left'
+              transform: 'scale(1)',
+              transformOrigin: 'top left',
+              margin: '0'
             }
           });
           
-          // 4. Create PDF and size it perfectly
-          // We tell jsPDF to use the ORIGINAL width/height, but feed it the 4x resolution image.
-          // This creates a "retina" effect in the PDF.
           // 4. Force Standard A4 Paper Size for Perfect Printing
           const pdf = new jsPDF('p', 'mm', 'a4'); 
           
@@ -553,8 +551,8 @@ const handleExportPayrollsZip = async () => {
           const pdfWidth = pdf.internal.pageSize.getWidth();
           const pdfHeight = (height * pdfWidth) / width;
           
-          // Add the high-res image, scaling it safely inside the standard margins
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+          // Add the high-res PNG image. We use 'FAST' compression to keep the PDF file size manageable
+          pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
           
           // 5. Turn into a file and pack into the ZIP
           const pdfBlob = pdf.output('blob');
