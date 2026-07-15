@@ -444,11 +444,11 @@ const [payrollData, setPayrollData] = useState({
       try {
         const text = e.target?.result as string;
         
-        // Robust regex to split rows safely regardless of Windows/Mac formatting
+        // Split by newline and remove empty rows
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
-        if (rows.length < 2) throw new Error("File empty");
+        if (rows.length < 2) throw new Error("File empty or missing data");
 
-        // Clean headers completely of hidden characters
+        // Clean headers to find the right columns dynamically
         const headers = rows[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase().replace(/[^a-z]/g, ''));
         
         const empIdIdx = headers.findIndex(h => h.includes('id') || h.includes('employee'));
@@ -457,44 +457,81 @@ const [payrollData, setPayrollData] = useState({
         const outIdx = headers.findIndex(h => h.includes('out'));
 
         if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
-          showToast("Missing columns! Need: ID, Date, Time In, Time Out", "error");
+          showToast("Missing columns! Need: Employee ID, Date, Time In, Time Out", "error");
           setIsSaving(false);
           return;
         }
 
+        // Helper: Converts "08:00 AM" to "08:00" and "05:00 PM" to "17:00" safely
+        const formatTime24 = (timeStr: string) => {
+          if (!timeStr || ['PAID', 'UNPAID', 'LEAVE'].includes(timeStr.toUpperCase())) return timeStr.toUpperCase();
+          const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
+          if (!match) return timeStr;
+          let [_, h, m, modifier] = match;
+          let hours = parseInt(h, 10);
+          if (modifier) {
+            if (modifier.toUpperCase() === 'PM' && hours < 12) hours += 12;
+            if (modifier.toUpperCase() === 'AM' && hours === 12) hours = 0;
+          }
+          return `${hours.toString().padStart(2, '0')}:${m}`;
+        };
+
+        // Helper: Formats MM/DD/YYYY from Excel into YYYY-MM-DD for the database
+        const formatIsoDate = (dStr: string) => {
+           if (dStr.includes('/')) {
+               const p = dStr.split('/');
+               if (p[2] && p[2].length === 4) return `${p[2]}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;
+           }
+           return dStr;
+        };
+
         let successCount = 0;
         for (let i = 1; i < rows.length; i++) {
-          const cols = rows[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+          // Advanced split that ignores commas inside quotes (e.g. "Last, First")
+          const cols = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(c => c.trim().replace(/^"|"$/g, '')) || [];
           if (cols.length < 4 || !cols[empIdIdx]) continue;
           
-          let tIn = cols[inIdx]; 
-          let tOut = cols[outIdx];
-          let hours = 0;
+          const rawIn = cols[inIdx]; 
+          const rawOut = cols[outIdx];
           
-          if (tIn && tOut && tIn.includes(':') && tOut.includes(':')) { 
+          const tIn = formatTime24(rawIn);
+          const tOut = formatTime24(rawOut);
+          const safeDate = formatIsoDate(cols[dateIdx]);
+
+          let hours = 0;
+          if (tIn.includes(':') && tOut.includes(':')) { 
              hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; 
-          } else if (tOut && tOut.toUpperCase() === 'PAID') { 
+          } else if (tOut === 'PAID') { 
              hours = 8; 
           }
 
           const payload = { 
             employeeId: parseInt(cols[empIdIdx]), 
-            date: cols[dateIdx], 
+            date: safeDate, 
             timeIn: tIn || 'LEAVE', 
             timeOut: tOut || 'UNPAID', 
-            hours, reason: null, shiftStart, shiftEnd 
+            hours, 
+            reason: null, 
+            shiftStart, 
+            shiftEnd 
           };
           
-          const res = await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const res = await fetch(`${API_BASE_URL}/employees/attendance`, { 
+             method: 'POST', 
+             headers: { 'Content-Type': 'application/json' }, 
+             body: JSON.stringify(payload) 
+          });
+          
           if(res.ok) successCount++;
         }
         await fetchAttendances();
         showToast(`Imported ${successCount} logs successfully!`, "success");
       } catch (err) { 
-        showToast("Failed to parse CSV file.", "error"); 
+        console.error(err);
+        showToast("Failed to parse CSV file. Check formatting.", "error"); 
       } finally { 
         setIsSaving(false); 
-        event.target.value = ''; 
+        event.target.value = ''; // Reset file input
       }
     };
     reader.readAsText(file);
