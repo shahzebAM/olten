@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import { toJpeg } from 'html-to-image'; // <-- Modern, OKLCH-friendly library
 
 // ==========================================
 // ENVIRONMENT CONFIG (Auto-Sanitized)
@@ -527,16 +527,24 @@ const handleExportPayrollsZip = async () => {
         // 3. Find the element and capture it
         const element = document.getElementById('payslip-print-area');
         if (element) {
-          const canvas = await html2canvas(element, { scale: 2, useCORS: true });
-          const imgData = canvas.toDataURL('image/jpeg', 1.0);
+          // Get the exact pixel dimensions of the payslip
+          const width = element.clientWidth;
+          const height = element.clientHeight;
+
+          // html-to-image bypasses the oklch error by using the browser's native engine!
+          const imgData = await toJpeg(element, { 
+            quality: 1.0, 
+            backgroundColor: '#ffffff', 
+            pixelRatio: 2 // Keeps the text crisp and high-res
+          });
           
-          // 4. Create PDF and size it perfectly to the captured canvas
+          // 4. Create PDF and size it perfectly
           const pdf = new jsPDF({ 
             orientation: 'portrait', 
             unit: 'px', 
-            format: [canvas.width / 2, canvas.height / 2] 
+            format: [width, height] 
           });
-          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width / 2, canvas.height / 2);
+          pdf.addImage(imgData, 'JPEG', 0, 0, width, height);
           
           // 5. Turn into a file and pack into the ZIP
           const pdfBlob = pdf.output('blob');
