@@ -527,14 +527,13 @@ const handleExportPayrollsZip = async () => {
        // 3. Find the element and capture it
         const element = document.getElementById('payslip-print-area');
         if (element) {
-          // Use scrollWidth/scrollHeight to capture the FULL document, avoiding cutoffs
           const width = element.scrollWidth;
           const height = element.scrollHeight;
 
-          // Switch to PNG for crystal clear, lossless text rendering
+          // Capture a massive, uncompressed PNG
           const imgData = await toPng(element, { 
             backgroundColor: '#ffffff', 
-            pixelRatio: 3, // 3x resolution is the sweet spot for crisp PNGs without crashing mobile browsers
+            pixelRatio: 4, // 4x resolution for maximum clarity
             width: width,
             height: height,
             style: {
@@ -544,17 +543,35 @@ const handleExportPayrollsZip = async () => {
             }
           });
           
-          // 4. Force Standard A4 Paper Size for Perfect Printing
+          // 4. Force Standard A4 Paper Size (210mm x 297mm)
           const pdf = new jsPDF('p', 'mm', 'a4'); 
           
-          // Calculate the exact ratio to fit the payslip onto the A4 paper
-          const pdfWidth = pdf.internal.pageSize.getWidth();
-          const pdfHeight = (height * pdfWidth) / width;
+          // Get the exact dimensions of an A4 page in millimeters
+          const pdfPageWidth = pdf.internal.pageSize.getWidth();
+          const pdfPageHeight = pdf.internal.pageSize.getHeight();
           
-          // Add the high-res PNG image. We use 'FAST' compression to keep the PDF file size manageable
-          pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+          // Calculate the scaling ratio to fit the image width to the A4 width
+          const ratio = pdfPageWidth / width;
           
-          // 5. Turn into a file and pack into the ZIP
+          // Calculate the final image dimensions on the PDF
+          const imgWidthOnPdf = width * ratio;
+          const imgHeightOnPdf = height * ratio;
+          
+          // Optional: If the payslip is somehow taller than an A4 page, scale it down to fit the height instead
+          let finalWidth = imgWidthOnPdf;
+          let finalHeight = imgHeightOnPdf;
+          
+          if (imgHeightOnPdf > pdfPageHeight) {
+             const heightRatio = pdfPageHeight / height;
+             finalWidth = width * heightRatio;
+             finalHeight = height * heightRatio;
+          }
+
+          // 5. Add the image to the PDF using the calculated, crisp dimensions
+          // We pass 'FAST' for compression so the ZIP file doesn't become gigabytes in size
+          pdf.addImage(imgData, 'PNG', 0, 0, finalWidth, finalHeight, undefined, 'FAST');
+          
+          // 6. Turn into a file and pack into the ZIP
           const pdfBlob = pdf.output('blob');
           const safeName = `${emp.lastName}_${emp.firstName}_Payslip_${pr.createdAt.split('T')[0]}.pdf`.replace(/[^a-zA-Z0-9_\-\.]/g, '');
           zip.file(safeName, pdfBlob);
