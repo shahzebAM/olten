@@ -1726,7 +1726,7 @@ const handleResetPassword = async (id: number) => {
 
       {/* --- PAYROLL MODAL (COMPUTE) --- */}
       {isPayrollModalOpen && activeEmployee && computed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
@@ -1747,7 +1747,7 @@ const handleResetPassword = async (id: number) => {
                 </div>
                 
                 <h3 className="font-bold text-slate-800 border-b pb-2 mt-6">Deductions</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col w-full">
                     <InputField type="number" step="0.01" label="Cash Adv. Deduction" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
                     {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
@@ -1762,7 +1762,7 @@ const handleResetPassword = async (id: number) => {
                   <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG MP Loan" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG Housing Loan" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
-                  <div className="col-span-2 mt-2 p-4 border border-indigo-100 bg-white rounded-xl shadow-sm">
+                  <div className="sm:col-span-2 mt-2 p-4 border border-indigo-100 bg-white rounded-xl shadow-sm">
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600"/>
                       <div>
