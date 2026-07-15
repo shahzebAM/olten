@@ -546,13 +546,15 @@ const handleExportPayrollsZip = async () => {
           // 4. Create PDF and size it perfectly
           // We tell jsPDF to use the ORIGINAL width/height, but feed it the 4x resolution image.
           // This creates a "retina" effect in the PDF.
-          const pdf = new jsPDF({ 
-            orientation: width > height ? 'landscape' : 'portrait', 
-            unit: 'px', 
-            format: [width, height] 
-          });
+          // 4. Force Standard A4 Paper Size for Perfect Printing
+          const pdf = new jsPDF('p', 'mm', 'a4'); 
           
-          pdf.addImage(imgData, 'JPEG', 0, 0, width, height);
+          // Calculate the exact ratio to fit the payslip onto the A4 paper
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = (height * pdfWidth) / width;
+          
+          // Add the high-res image, scaling it safely inside the standard margins
+          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
           
           // 5. Turn into a file and pack into the ZIP
           const pdfBlob = pdf.output('blob');
