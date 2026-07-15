@@ -395,6 +395,82 @@ const [payrollData, setPayrollData] = useState({
     setTimeout(() => { setToast(null); }, 3500);
   };
 
+  // --- CSV IMPORT / EXPORT LOGIC ---
+  const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
+    const csvContent = [headers.join(','), ...data.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  const handleExportAttendance = () => {
+    const headers = ['Date', 'Employee ID', 'Employee Name', 'Time In', 'Time Out', 'Total Hours', 'Reason/Type'];
+    const data = attendances.map(a => {
+      const emp = employees.find(e => e.id === a.employeeId);
+      return [formatMDY(a.date), a.employeeId, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.timeIn, a.timeOut, a.hours, a.reason || 'Regular'];
+    });
+    exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
+  };
+
+  const handleExportPayrolls = () => {
+    const headers = ['Date Computed', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
+    const data = payrolls.map(p => {
+      const emp = employees.find(e => e.id === p.employeeId);
+      const totalDeds = p.cashAdvance + p.sssDeduction + p.pagIbigDeduct + p.philhealthDeduct + p.tax + (p.pagIbigLoan || 0) + (p.pagIbigHousingLoan || 0);
+      return [formatMDY(p.createdAt), p.employeeId, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
+    });
+    exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
+  };
+
+  const handleImportAttendance = async (event: any) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    setIsSaving(true);
+    showToast("Importing records...", "success");
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const rows = text.split('\n').map(row => row.split(',').map(cell => cell.trim().replace(/^"|"$/g, '')));
+        const headers = rows[0].map(h => h.toLowerCase());
+        
+        const empIdIdx = headers.findIndex(h => h.includes('id'));
+        const dateIdx = headers.findIndex(h => h.includes('date'));
+        const inIdx = headers.findIndex(h => h.includes('in'));
+        const outIdx = headers.findIndex(h => h.includes('out'));
+
+        if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
+          showToast("CSV must contain columns: 'ID', 'Date', 'Time In', and 'Time Out'", "error");
+          return;
+        }
+
+        for (let i = 1; i < rows.length; i++) {
+          if (rows[i].length < 4 || !rows[i][empIdIdx]) continue;
+          
+          let tIn = rows[i][inIdx]; let tOut = rows[i][outIdx];
+          let hours = 0;
+          if (tIn.includes(':') && tOut.includes(':')) { hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; } 
+          else if (tOut.toUpperCase() === 'PAID') { hours = 8; }
+
+          const payload = { employeeId: parseInt(rows[i][empIdIdx]), date: rows[i][dateIdx], timeIn: tIn || 'LEAVE', timeOut: tOut || 'UNPAID', hours, reason: null, shiftStart, shiftEnd };
+          await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        }
+        await fetchAttendances();
+        showToast("Successfully imported all attendance records!", "success");
+      } catch (err) { showToast("Failed to parse CSV file.", "error"); } finally { setIsSaving(false); event.target.value = ''; }
+    };
+    reader.readAsText(file);
+  };
+
   // --- AUTHENTICATION LOGIC ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2312,6 +2388,16 @@ const handleResetPassword = async (id: number) => {
                 </div>
                 
                 <div className="flex flex-col items-end gap-3 w-full md:w-auto">
+                  {/* DATA CONTROLS */}
+                  <div className="flex gap-2 w-full sm:w-auto mb-1">
+                    <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">
+                      Import CSV
+                      <input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} />
+                    </label>
+                    <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">
+                      Export CSV
+                    </button>
+                  </div>
                   <div className="flex bg-white p-1 rounded-lg border border-indigo-200 w-full sm:w-auto">
                     <button onClick={() => setAttendanceFilter('day')} className={`flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors ${attendanceFilter === 'day' ? 'bg-indigo-100 text-indigo-800' : 'text-slate-500 hover:text-indigo-800'}`}>Daily View</button>
                     <button onClick={() => setAttendanceFilter('month')} className={`flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors ${attendanceFilter === 'month' ? 'bg-indigo-100 text-indigo-800' : 'text-slate-500 hover:text-indigo-800'}`}>Monthly Summary</button>
@@ -2597,7 +2683,12 @@ const handleResetPassword = async (id: number) => {
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8">
               <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-lg font-bold text-slate-800">Saved Payroll History</h2>
-                <input type="text" placeholder="Search by name or date..." value={payrollHistorySearchQuery} onChange={e => setPayrollHistorySearchQuery(e.target.value)} className="w-full sm:w-[250px] px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-slate-600/10 focus:border-slate-500 shadow-sm" />
+                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                  <button onClick={handleExportPayrolls} className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap">
+                    Export All Payrolls
+                  </button>
+                  <input type="text" placeholder="Search by name or date..." value={payrollHistorySearchQuery} onChange={e => setPayrollHistorySearchQuery(e.target.value)} className="w-full sm:w-[250px] px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-slate-600/10 focus:border-slate-500 shadow-sm" />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[900px]">
