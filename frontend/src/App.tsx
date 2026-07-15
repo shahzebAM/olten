@@ -1759,7 +1759,6 @@ const handleResetPassword = async (id: number) => {
                   <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
                   <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG MP Loan" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG Housing Loan" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
                   <div className="sm:col-span-2 mt-2 p-4 border border-indigo-100 bg-white rounded-xl shadow-sm">
