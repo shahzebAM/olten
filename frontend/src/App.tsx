@@ -527,23 +527,31 @@ const handleExportPayrollsZip = async () => {
         // 3. Find the element and capture it
         const element = document.getElementById('payslip-print-area');
         if (element) {
-          // Get the exact pixel dimensions of the payslip
+          // Get the exact physical pixel dimensions of the payslip
           const width = element.clientWidth;
           const height = element.clientHeight;
 
           // html-to-image bypasses the oklch error by using the browser's native engine!
+          // We set pixelRatio to 4 (or higher) to force a 4k-quality internal render.
           const imgData = await toJpeg(element, { 
             quality: 1.0, 
             backgroundColor: '#ffffff', 
-            pixelRatio: 2 // Keeps the text crisp and high-res
+            pixelRatio: 4, // CRITICAL FIX: This forces high-resolution rendering
+            style: {
+              transform: 'scale(1)', // Prevent weird CSS scaling issues during capture
+              transformOrigin: 'top left'
+            }
           });
           
           // 4. Create PDF and size it perfectly
+          // We tell jsPDF to use the ORIGINAL width/height, but feed it the 4x resolution image.
+          // This creates a "retina" effect in the PDF.
           const pdf = new jsPDF({ 
-            orientation: 'portrait', 
+            orientation: width > height ? 'landscape' : 'portrait', 
             unit: 'px', 
             format: [width, height] 
           });
+          
           pdf.addImage(imgData, 'JPEG', 0, 0, width, height);
           
           // 5. Turn into a file and pack into the ZIP
