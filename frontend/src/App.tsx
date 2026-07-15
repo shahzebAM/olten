@@ -601,8 +601,9 @@ const [payrollData, setPayrollData] = useState({
     }
   };
 
-  const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
+const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
     if (!tInStr || !tOutStr || !tInStr.includes(':')) return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
+    
     const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
 
     let tIn = timeToFloat(tInStr);
@@ -610,32 +611,48 @@ const [payrollData, setPayrollData] = useState({
     let sIn = timeToFloat(sInStr);
     let sOut = timeToFloat(sOutStr);
 
+    // Handle overnight shifts if necessary
     if (tOut < tIn) tOut += 24; 
     if (sOut < sIn) sOut += 24;
+    if (tIn < sIn && (sIn - tIn) >= 12) { tIn += 24; tOut += 24; } 
+    else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
 
-    // Detect and align logs mapped to the following/previous day 
-    if (tIn < sIn && (sIn - tIn) >= 12) {
-      tIn += 24;
-      tOut += 24;
-    } else if (tIn > sOut && (tIn - sOut) >= 12) {
-      tIn -= 24;
-      tOut -= 24;
+    // 1. Calculate the TOTAL physical hours the employee was present in the building
+    let totalGrossHours = Math.max(0, tOut - tIn);
+
+    // 2. Auto-deduct 1-hour lunch break if they were there for 5 hours or more
+    if (totalGrossHours >= 5) {
+      totalGrossHours -= 1;
     }
 
-    const regStart = Math.max(tIn, sIn);
-    const regEnd = Math.min(tOut, sOut);
-    let regHrs = Math.max(0, regEnd - regStart);
+    // 3. The "Flexible Core Hours" Logic
+    // They must fulfill up to 8 regular hours first. Anything beyond 8 hours is Overtime.
+    const maxRegularHours = 8;
+    
+    let regHrs = Math.min(totalGrossHours, maxRegularHours);
+    let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
 
-    // Auto-deduct 1-hour unpaid lunch break if the regular shift covers 5 hours or more
-    if (regHrs >= 5) {
-      regHrs -= 1;
+    // 4. Distribute the OT for UI Display purposes (Optional breakdown)
+    // If they came in early, assign that OT to 'early'. Otherwise, assign to 'late'.
+    let earlyOt = 0;
+    let lateOt = 0;
+    
+    if (totalOt > 0) {
+      if (tIn < sIn) {
+        earlyOt = Math.min(totalOt, sIn - tIn);
+        lateOt = totalOt - earlyOt;
+      } else {
+        lateOt = totalOt;
+      }
     }
 
-    const earlyOt = Math.max(0, Math.min(tOut, sIn) - tIn);
-    const lateOt = Math.max(0, tOut - Math.max(tIn, sOut));
-    const totalOt = earlyOt + lateOt;
-
-    return { reg: regHrs, ot: totalOt, earlyOt, lateOt, total: regHrs + totalOt };
+    return { 
+      reg: regHrs, 
+      ot: totalOt, 
+      earlyOt: earlyOt, 
+      lateOt: lateOt, 
+      total: regHrs + totalOt 
+    };
   };
 
   const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
@@ -809,7 +826,7 @@ const [payrollData, setPayrollData] = useState({
         }
     });
 
-    const basicSalary = activeEmployee.baseRate;
+  const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
     const ratePerDay = days > 0 ? basicSalary / days : 0;
@@ -817,10 +834,13 @@ const [payrollData, setPayrollData] = useState({
     const requiredHrs = days * 8; // Keep this for undertime deduction
     const otPay = otHrs * (ratePerHour * 1.25); 
 
+    // Because the daily shift calculator now rigidly separates reg from OT,
+    // the total REGULAR hours worked across the cutoff is simply (totalHoursWorked - otHrs).
     const regularHoursWorked = totalHoursWorked - otHrs;
-    let undertimeDeduction = 0;
     
+    let undertimeDeduction = 0;
     if (regularHoursWorked < requiredHrs) {
+      // Penalty is applied ONLY if their accumulated regular hours fall short of the required total.
       undertimeDeduction = (requiredHrs - regularHoursWorked) * ratePerHour;
     }
 
