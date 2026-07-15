@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 // ==========================================
 // ENVIRONMENT CONFIG (Auto-Sanitized)
@@ -497,7 +500,7 @@ const [payrollData, setPayrollData] = useState({
     reader.readAsText(file);
   };
 
-  const handleExportPayrollsZip = async () => {
+const handleExportPayrollsZip = async () => {
     if (filteredSavedPayrolls.length === 0) {
       showToast("No payroll records found to export.", "error");
       return;
@@ -507,11 +510,6 @@ const [payrollData, setPayrollData] = useState({
     showToast(`Generating ${filteredSavedPayrolls.length} PDFs... Please wait.`, "success");
 
     try {
-      // Dynamically load libraries so the app doesn't crash if they aren't installed
-      const JSZip = (await import('jszip')).default;
-      const { jsPDF } = await import('jspdf');
-      const html2canvas = (await import('html2canvas')).default;
-
       const zip = new JSZip();
 
       // Loop through all currently filtered payrolls
@@ -524,7 +522,7 @@ const [payrollData, setPayrollData] = useState({
         setSelectedPayslip({ record: pr, emp });
         
         // 2. Wait for React to render the modal fully into the DOM
-        await new Promise(resolve => setTimeout(resolve, 400));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Giving it an extra split second to render
 
         // 3. Find the element and capture it
         const element = document.getElementById('payslip-print-area');
@@ -560,8 +558,8 @@ const [payrollData, setPayrollData] = useState({
       showToast("ZIP File generated successfully!", "success");
 
     } catch (err) {
-      console.error(err);
-      showToast("Export failed. Did you run 'npm install jszip jspdf html2canvas'?", "error");
+      console.error("ZIP Generation Error:", err);
+      showToast("Export failed. Check console for details.", "error");
     } finally {
       setIsSaving(false);
       setSelectedPayslip(null); // Failsafe cleanup
