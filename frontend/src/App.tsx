@@ -440,35 +440,132 @@ const [payrollData, setPayrollData] = useState({
     reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
-        const rows = text.split('\n').map(row => row.split(',').map(cell => cell.trim().replace(/^"|"$/g, '')));
-        const headers = rows[0].map(h => h.toLowerCase());
         
-        const empIdIdx = headers.findIndex(h => h.includes('id'));
+        // Robust regex to split rows safely regardless of Windows/Mac formatting
+        const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
+        if (rows.length < 2) throw new Error("File empty");
+
+        // Clean headers completely of hidden characters
+        const headers = rows[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase().replace(/[^a-z]/g, ''));
+        
+        const empIdIdx = headers.findIndex(h => h.includes('id') || h.includes('employee'));
         const dateIdx = headers.findIndex(h => h.includes('date'));
-        const inIdx = headers.findIndex(h => h.includes('in'));
+        const inIdx = headers.findIndex(h => h.includes('in') && !h.includes('min'));
         const outIdx = headers.findIndex(h => h.includes('out'));
 
         if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
-          showToast("CSV must contain columns: 'ID', 'Date', 'Time In', and 'Time Out'", "error");
+          showToast("Missing columns! Need: ID, Date, Time In, Time Out", "error");
+          setIsSaving(false);
           return;
         }
 
+        let successCount = 0;
         for (let i = 1; i < rows.length; i++) {
-          if (rows[i].length < 4 || !rows[i][empIdIdx]) continue;
+          const cols = rows[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+          if (cols.length < 4 || !cols[empIdIdx]) continue;
           
-          let tIn = rows[i][inIdx]; let tOut = rows[i][outIdx];
+          let tIn = cols[inIdx]; 
+          let tOut = cols[outIdx];
           let hours = 0;
-          if (tIn.includes(':') && tOut.includes(':')) { hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; } 
-          else if (tOut.toUpperCase() === 'PAID') { hours = 8; }
+          
+          if (tIn && tOut && tIn.includes(':') && tOut.includes(':')) { 
+             hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; 
+          } else if (tOut && tOut.toUpperCase() === 'PAID') { 
+             hours = 8; 
+          }
 
-          const payload = { employeeId: parseInt(rows[i][empIdIdx]), date: rows[i][dateIdx], timeIn: tIn || 'LEAVE', timeOut: tOut || 'UNPAID', hours, reason: null, shiftStart, shiftEnd };
-          await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const payload = { 
+            employeeId: parseInt(cols[empIdIdx]), 
+            date: cols[dateIdx], 
+            timeIn: tIn || 'LEAVE', 
+            timeOut: tOut || 'UNPAID', 
+            hours, reason: null, shiftStart, shiftEnd 
+          };
+          
+          const res = await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          if(res.ok) successCount++;
         }
         await fetchAttendances();
-        showToast("Successfully imported all attendance records!", "success");
-      } catch (err) { showToast("Failed to parse CSV file.", "error"); } finally { setIsSaving(false); event.target.value = ''; }
+        showToast(`Imported ${successCount} logs successfully!`, "success");
+      } catch (err) { 
+        showToast("Failed to parse CSV file.", "error"); 
+      } finally { 
+        setIsSaving(false); 
+        event.target.value = ''; 
+      }
     };
     reader.readAsText(file);
+  };
+
+  const handleExportPayrollsZip = async () => {
+    if (filteredSavedPayrolls.length === 0) {
+      showToast("No payroll records found to export.", "error");
+      return;
+    }
+    
+    setIsSaving(true);
+    showToast(`Generating ${filteredSavedPayrolls.length} PDFs... Please wait.`, "success");
+
+    try {
+      // Dynamically load libraries so the app doesn't crash if they aren't installed
+      const JSZip = (await import('jszip')).default;
+      const { jsPDF } = await import('jspdf');
+      const html2canvas = (await import('html2canvas')).default;
+
+      const zip = new JSZip();
+
+      // Loop through all currently filtered payrolls
+      for (let i = 0; i < filteredSavedPayrolls.length; i++) {
+        const pr = filteredSavedPayrolls[i];
+        const emp = employees.find(e => e.id === Number(pr.employeeId));
+        if (!emp) continue;
+
+        // 1. Mount the payslip to the screen temporarily
+        setSelectedPayslip({ record: pr, emp });
+        
+        // 2. Wait for React to render the modal fully into the DOM
+        await new Promise(resolve => setTimeout(resolve, 400));
+
+        // 3. Find the element and capture it
+        const element = document.getElementById('payslip-print-area');
+        if (element) {
+          const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+          const imgData = canvas.toDataURL('image/jpeg', 1.0);
+          
+          // 4. Create PDF and size it perfectly to the captured canvas
+          const pdf = new jsPDF({ 
+            orientation: 'portrait', 
+            unit: 'px', 
+            format: [canvas.width / 2, canvas.height / 2] 
+          });
+          pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width / 2, canvas.height / 2);
+          
+          // 5. Turn into a file and pack into the ZIP
+          const pdfBlob = pdf.output('blob');
+          const safeName = `${emp.lastName}_${emp.firstName}_Payslip_${pr.createdAt.split('T')[0]}.pdf`.replace(/[^a-zA-Z0-9_\-\.]/g, '');
+          zip.file(safeName, pdfBlob);
+        }
+      }
+
+      // Close the modal when done
+      setSelectedPayslip(null);
+
+      // Generate the final ZIP file and trigger download
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(zipBlob);
+      link.download = `Batch_Payslips_${new Date().toISOString().split('T')[0]}.zip`;
+      link.click();
+      
+      showToast("ZIP File generated successfully!", "success");
+
+    } catch (err) {
+      console.error(err);
+      showToast("Export failed. Did you run 'npm install jszip jspdf html2canvas'?", "error");
+    } finally {
+      setIsSaving(false);
+      setSelectedPayslip(null); // Failsafe cleanup
+    }
   };
 
   // --- AUTHENTICATION LOGIC ---
@@ -2687,7 +2784,12 @@ const handleResetPassword = async (id: number) => {
                   <button onClick={handleExportPayrolls} className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap">
                     Export All Payrolls
                   </button>
+                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                  <button onClick={handleExportPayrollsZip} disabled={isSaving} className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap disabled:opacity-50">
+                    {isSaving ? 'Processing PDFs...' : 'Export All as ZIP'}
+                  </button>
                   <input type="text" placeholder="Search by name or date..." value={payrollHistorySearchQuery} onChange={e => setPayrollHistorySearchQuery(e.target.value)} className="w-full sm:w-[250px] px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-slate-600/10 focus:border-slate-500 shadow-sm" />
+                </div>
                 </div>
               </div>
               <div className="overflow-x-auto">
