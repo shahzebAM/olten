@@ -521,7 +521,7 @@ const handleImportAttendance = async (event: any) => {
            return '';
         };
 
-        // --- 1. PRE-FLIGHT VALIDATION PASS ---
+// --- 1. PRE-FLIGHT VALIDATION PASS ---
         // We scan every single row BEFORE uploading anything to the database!
         const validPayloads = [];
         
@@ -531,6 +531,7 @@ const handleImportAttendance = async (event: any) => {
           // Skip completely blank/invalid looking rows at the bottom of excel
           if (cols.length < 4 || !cols[empIdIdx] || isNaN(parseInt(cols[empIdIdx]))) continue;
           
+          const parsedEmpId = parseInt(cols[empIdIdx]);
           const tIn = formatTime24(cols[inIdx]);
           const tOut = formatTime24(cols[outIdx]);
           const safeDate = formatIsoDate(cols[dateIdx]);
@@ -538,6 +539,15 @@ const handleImportAttendance = async (event: any) => {
           // CRITICAL CHECK: Reject if Date, Time In, or Time Out is missing!
           if (!safeDate || !tIn || !tOut) {
             showToast(`Import Aborted! Excel Row ${i + 1} is missing a valid Date or Time.`, "error");
+            setIsSaving(false);
+            event.target.value = '';
+            return; // Stop the entire import process immediately
+          }
+
+          // CRITICAL CHECK: Ensure Employee ID actually exists in the database!
+          const employeeExists = employees.some(emp => emp.id === parsedEmpId);
+          if (!employeeExists) {
+            showToast(`Import Aborted! Row ${i + 1} uses an Employee ID (${parsedEmpId}) that does not exist.`, "error");
             setIsSaving(false);
             event.target.value = '';
             return; // Stop the entire import process immediately
@@ -551,7 +561,7 @@ const handleImportAttendance = async (event: any) => {
           }
 
           validPayloads.push({ 
-            employeeId: parseInt(cols[empIdIdx]), 
+            employeeId: parsedEmpId, 
             date: safeDate, 
             timeIn: tIn, 
             timeOut: tOut, 
@@ -2566,6 +2576,7 @@ const handleResetPassword = async (id: number) => {
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead className="bg-slate-100 border-b border-slate-200">
                   <tr>
+                    <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-16">ID No.</th>
                     <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Employee</th>
                     <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th>
                     <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Compensation & Bank</th>
@@ -2579,6 +2590,9 @@ const handleResetPassword = async (id: number) => {
                   ) : (
                     filteredEmployees.map((emp) => (
                       <tr key={emp.id} className="hover:bg-blue-50/30 transition-colors group">
+                        <td className="py-4 px-6 align-top">
+                          <span className="font-mono font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">#{emp.id}</span>
+                        </td>
                         <td className="py-4 px-6 align-top">
                           <div className="font-semibold text-blue-950">{emp.firstName} {emp.middleName ? emp.middleName + ' ' : ''}{emp.lastName}</div>
                           <div className="text-xs text-slate-500 mt-1">{emp.address}</div>
@@ -2649,7 +2663,7 @@ const handleResetPassword = async (id: number) => {
                       {isSaving ? 'Syncing...' : 'Refresh'}
                     </button>
                     <button 
-                      onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', '2026-07-15', '08:00 AM', '05:00 PM'], ['2', '2026-07-15', 'LEAVE', 'PAID']])} 
+                      onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', new Date().toISOString().split('T')[0], '08:00 AM', '05:00 PM'], ['2', new Date().toISOString().split('T')[0], 'LEAVE', 'PAID']])} 
                       className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors"
                       title="Download blank template for importing"
                     >
