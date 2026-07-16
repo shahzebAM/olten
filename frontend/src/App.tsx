@@ -465,11 +465,21 @@ const handleImportAttendance = async (event: any) => {
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
         if (rows.length < 2) throw new Error("File empty or missing data");
 
-        // We only care about the first 4 columns, regardless of what the headers are named
-        // Column 0: Employee ID
-        // Column 1: Date (YYYY-MM-DD or MM/DD/YYYY)
-        // Column 2: Time In (08:00 AM)
-        // Column 3: Time Out (05:00 PM)
+        // Bulletproof CSV Row Parser (Handles spaces and commas inside quotes perfectly)
+        const parseCSVRow = (str: string) => {
+            const result = [];
+            let cell = '';
+            let inQuotes = false;
+            for (let i = 0; i < str.length; i++) {
+                const char = str[i];
+                if (char === '"' && str[i+1] === '"') { cell += '"'; i++; } // Escaped quote
+                else if (char === '"') { inQuotes = !inQuotes; }
+                else if (char === ',' && !inQuotes) { result.push(cell.trim().replace(/^"|"$/g, '')); cell = ''; }
+                else { cell += char; }
+            }
+            result.push(cell.trim().replace(/^"|"$/g, ''));
+            return result;
+        };
 
         // Helper: Converts "08:00 AM" to "08:00" safely
         const formatTime24 = (timeStr: string) => {
@@ -485,7 +495,7 @@ const handleImportAttendance = async (event: any) => {
           return `${hours.toString().padStart(2, '0')}:${m}`;
         };
 
-        // Helper: Formats MM/DD/YYYY from Excel into YYYY-MM-DD for the database
+        // Helper: Formats MM/DD/YYYY from Excel into standard YYYY-MM-DD
         const formatIsoDate = (dStr: string) => {
            if (dStr.includes('/')) {
                const p = dStr.split('/');
@@ -495,19 +505,19 @@ const handleImportAttendance = async (event: any) => {
         };
 
         let successCount = 0;
+        
         // Start at i=1 to skip the header row
         for (let i = 1; i < rows.length; i++) {
-          // Advanced split that ignores commas inside quotes
-          const cols = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(c => c.trim().replace(/^"|"$/g, '')) || [];
+          const cols = parseCSVRow(rows[i]);
           
-          // Ensure we have at least ID, Date, TimeIn, TimeOut
+          // Column 0 = Employee ID | Column 1 = Date | Column 2 = Time In | Column 3 = Time Out
           if (cols.length < 4 || !cols[0] || isNaN(parseInt(cols[0]))) continue;
           
           const tIn = formatTime24(cols[2]);
           const tOut = formatTime24(cols[3]);
           const safeDate = formatIsoDate(cols[1]);
 
-          // Prevent uploading invalid dates which causes "invisible" dashboard logs
+          // Prevent uploading invalid dates which causes invisible logs
           if (!safeDate || safeDate === 'undefined' || safeDate === 'NaN') continue;
 
           let hours = 0;
