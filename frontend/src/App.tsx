@@ -414,12 +414,29 @@ const [payrollData, setPayrollData] = useState({
     }
   };
 
-  const handleExportAttendance = () => {
-    const headers = ['Date', 'Employee ID', 'Employee Name', 'Time In', 'Time Out', 'Total Hours', 'Reason/Type'];
+const handleExportAttendance = () => {
+    // Exact template format used for both Import and Export
+    const headers = ['Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
+    
     const data = attendances.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
-      return [formatMDY(a.date), a.employeeId, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.timeIn, a.timeOut, a.hours, a.reason || 'Regular'];
+      const isLeave = !a.timeIn.includes(':');
+      
+      // Format time out of the database nicely for Excel
+      let niceTimeIn = isLeave ? a.timeIn : format12Hour(a.timeIn);
+      let niceTimeOut = isLeave ? a.timeOut : format12Hour(a.timeOut);
+      
+      return [
+        a.employeeId, 
+        a.date ? a.date.split('T')[0] : '', // Raw YYYY-MM-DD for easy importing
+        niceTimeIn, 
+        niceTimeOut, 
+        emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', 
+        a.hours, 
+        a.reason || 'Regular'
+      ];
     });
+    
     exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
 
@@ -433,7 +450,7 @@ const [payrollData, setPayrollData] = useState({
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
 
-  const handleImportAttendance = async (event: any) => {
+const handleImportAttendance = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsSaving(true);
@@ -448,21 +465,13 @@ const [payrollData, setPayrollData] = useState({
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
         if (rows.length < 2) throw new Error("File empty or missing data");
 
-        // Clean headers to find the right columns dynamically
-        const headers = rows[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase().replace(/[^a-z]/g, ''));
-        
-        const empIdIdx = headers.findIndex(h => h.includes('id') || h.includes('employee'));
-        const dateIdx = headers.findIndex(h => h.includes('date'));
-        const inIdx = headers.findIndex(h => h.includes('in') && !h.includes('min'));
-        const outIdx = headers.findIndex(h => h.includes('out'));
+        // We only care about the first 4 columns, regardless of what the headers are named
+        // Column 0: Employee ID
+        // Column 1: Date (YYYY-MM-DD or MM/DD/YYYY)
+        // Column 2: Time In (08:00 AM)
+        // Column 3: Time Out (05:00 PM)
 
-        if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
-          showToast("Missing columns! Need: Employee ID, Date, Time In, Time Out", "error");
-          setIsSaving(false);
-          return;
-        }
-
-        // Helper: Converts "08:00 AM" to "08:00" and "05:00 PM" to "17:00" safely
+        // Helper: Converts "08:00 AM" to "08:00" safely
         const formatTime24 = (timeStr: string) => {
           if (!timeStr || ['PAID', 'UNPAID', 'LEAVE'].includes(timeStr.toUpperCase())) return timeStr.toUpperCase();
           const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
@@ -486,17 +495,20 @@ const [payrollData, setPayrollData] = useState({
         };
 
         let successCount = 0;
+        // Start at i=1 to skip the header row
         for (let i = 1; i < rows.length; i++) {
-          // Advanced split that ignores commas inside quotes (e.g. "Last, First")
+          // Advanced split that ignores commas inside quotes
           const cols = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(c => c.trim().replace(/^"|"$/g, '')) || [];
-          if (cols.length < 4 || !cols[empIdIdx]) continue;
           
-          const rawIn = cols[inIdx]; 
-          const rawOut = cols[outIdx];
+          // Ensure we have at least ID, Date, TimeIn, TimeOut
+          if (cols.length < 4 || !cols[0] || isNaN(parseInt(cols[0]))) continue;
           
-          const tIn = formatTime24(rawIn);
-          const tOut = formatTime24(rawOut);
-          const safeDate = formatIsoDate(cols[dateIdx]);
+          const tIn = formatTime24(cols[2]);
+          const tOut = formatTime24(cols[3]);
+          const safeDate = formatIsoDate(cols[1]);
+
+          // Prevent uploading invalid dates which causes "invisible" dashboard logs
+          if (!safeDate || safeDate === 'undefined' || safeDate === 'NaN') continue;
 
           let hours = 0;
           if (tIn.includes(':') && tOut.includes(':')) { 
@@ -506,7 +518,7 @@ const [payrollData, setPayrollData] = useState({
           }
 
           const payload = { 
-            employeeId: parseInt(cols[empIdIdx]), 
+            employeeId: parseInt(cols[0]), 
             date: safeDate, 
             timeIn: tIn || 'LEAVE', 
             timeOut: tOut || 'UNPAID', 
@@ -2554,7 +2566,14 @@ const handleResetPassword = async (id: number) => {
                 
                 <div className="flex flex-col items-end gap-3 w-full md:w-auto">
                   {/* DATA CONTROLS */}
-                  <div className="flex gap-2 w-full sm:w-auto mb-1">
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
+                    <button 
+                      onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', '2026-07-15', '08:00 AM', '05:00 PM'], ['2', '2026-07-15', 'LEAVE', 'PAID']])} 
+                      className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors"
+                      title="Download blank template for importing"
+                    >
+                      Template
+                    </button>
                     <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">
                       Import CSV
                       <input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} />
