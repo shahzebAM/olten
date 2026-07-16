@@ -2335,10 +2335,10 @@ const handleResetPassword = async (id: number) => {
                       {/* --- SECRET DEV BUTTON --- */}
                       {/* To use this button, simply delete the curly braces and slash-stars wrapping it */}
                       
-                      <button onClick={handleWipeDirectory} className="mt-4 w-full py-2 border-2 border-dashed border-rose-500/50 text-rose-500 hover:bg-rose-500 hover:text-white font-bold text-xs rounded-lg uppercase tracking-widest transition-colors">
+                      {/* <button onClick={handleWipeDirectory} className="mt-4 w-full py-2 border-2 border-dashed border-rose-500/50 text-rose-500 hover:bg-rose-500 hover:text-white font-bold text-xs rounded-lg uppercase tracking-widest transition-colors">
                         Wipe All Employees
                       </button> 
-                     
+                      */}
                     </div>
                   </div>
                 </div>
