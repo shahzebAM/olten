@@ -733,9 +733,10 @@ const handleExportPayrollsZip = async () => {
     }
   };
 
-  const fetchEmployees = async () => {
+const fetchEmployees = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees`);
+      // Added cache: 'no-store' to force fresh data
+      const response = await fetch(`${API_BASE_URL}/employees`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error("Failed to fetch employees");
       const data = await response.json();
       setEmployees(Array.isArray(data) ? data : []);
@@ -745,9 +746,10 @@ const handleExportPayrollsZip = async () => {
     }
   };
 
-  const fetchAttendances = async () => {
+const fetchAttendances = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance/all`);
+      // Added cache: 'no-store' to force fresh data instantly after imports
+      const response = await fetch(`${API_BASE_URL}/employees/attendance/all`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error("Failed to fetch attendances");
       const data = await response.json();
       setAttendances(Array.isArray(data) ? data : []);
@@ -756,9 +758,10 @@ const handleExportPayrollsZip = async () => {
     }
   };
 
-  const fetchPayrolls = async () => {
+const fetchPayrolls = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/payroll/all`);
+      // Added cache: 'no-store' to force fresh data
+      const response = await fetch(`${API_BASE_URL}/employees/payroll/all`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error("Failed to fetch payrolls");
       const data = await response.json();
       setPayrolls(Array.isArray(data) ? data : []);
