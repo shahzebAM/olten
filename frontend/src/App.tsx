@@ -481,11 +481,28 @@ const handleImportAttendance = async (event: any) => {
             return result;
         };
 
-        // Helper: Converts "08:00 AM" to "08:00" safely
+        // Extremely strict header matching so columns never shift, regardless of order
+        const headers = parseCSVRow(rows[0]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+        
+        const empIdIdx = headers.findIndex(h => h === 'employeeid' || h === 'id');
+        const dateIdx = headers.findIndex(h => h === 'date');
+        const inIdx = headers.findIndex(h => h === 'timein');
+        const outIdx = headers.findIndex(h => h === 'timeout');
+
+        if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
+          showToast("Missing columns! Use the exact Template format.", "error");
+          setIsSaving(false);
+          return;
+        }
+
+        // Helper: Converts "08:00 AM" to "08:00" safely and rejects non-time text (like "ali")
         const formatTime24 = (timeStr: string) => {
-          if (!timeStr || ['PAID', 'UNPAID', 'LEAVE'].includes(timeStr.toUpperCase())) return timeStr.toUpperCase();
-          const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
-          if (!match) return timeStr;
+          if (!timeStr) return '';
+          const clean = timeStr.toUpperCase();
+          if (['PAID', 'UNPAID', 'LEAVE'].includes(clean)) return clean;
+          
+          const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
+          if (!match) return ''; // Actively reject garbage data
           let [_, h, m, modifier] = match;
           let hours = parseInt(h, 10);
           if (modifier) {
@@ -501,7 +518,8 @@ const handleImportAttendance = async (event: any) => {
                const p = dStr.split('/');
                if (p[2] && p[2].length === 4) return `${p[2]}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;
            }
-           return dStr;
+           if (dStr.includes('-')) return dStr;
+           return '';
         };
 
         let successCount = 0;
@@ -510,15 +528,15 @@ const handleImportAttendance = async (event: any) => {
         for (let i = 1; i < rows.length; i++) {
           const cols = parseCSVRow(rows[i]);
           
-          // Column 0 = Employee ID | Column 1 = Date | Column 2 = Time In | Column 3 = Time Out
-          if (cols.length < 4 || !cols[0] || isNaN(parseInt(cols[0]))) continue;
+          // Verify required data exists
+          if (cols.length < 4 || !cols[empIdIdx] || isNaN(parseInt(cols[empIdIdx]))) continue;
           
-          const tIn = formatTime24(cols[2]);
-          const tOut = formatTime24(cols[3]);
-          const safeDate = formatIsoDate(cols[1]);
+          const tIn = formatTime24(cols[inIdx]);
+          const tOut = formatTime24(cols[outIdx]);
+          const safeDate = formatIsoDate(cols[dateIdx]);
 
-          // Prevent uploading invalid dates which causes invisible logs
-          if (!safeDate || safeDate === 'undefined' || safeDate === 'NaN') continue;
+          // Prevent uploading invalid dates or completely broken time fields
+          if (!safeDate || (!tIn && !tOut)) continue;
 
           let hours = 0;
           if (tIn.includes(':') && tOut.includes(':')) { 
@@ -528,7 +546,7 @@ const handleImportAttendance = async (event: any) => {
           }
 
           const payload = { 
-            employeeId: parseInt(cols[0]), 
+            employeeId: parseInt(cols[empIdIdx]), 
             date: safeDate, 
             timeIn: tIn || 'LEAVE', 
             timeOut: tOut || 'UNPAID', 
@@ -546,8 +564,18 @@ const handleImportAttendance = async (event: any) => {
           
           if(res.ok) successCount++;
         }
+        
+        // Add a slight 500ms buffer so the DB finishes committing the rows before fetching
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Fetch the uncached data
         await fetchAttendances();
-        showToast(`Imported ${successCount} logs successfully!`, "success");
+        
+        if (successCount > 0) {
+           showToast(`Imported ${successCount} logs successfully!`, "success");
+        } else {
+           showToast("No valid logs found. Check CSV format.", "error");
+        }
       } catch (err) { 
         console.error(err);
         showToast("Failed to parse CSV file. Check formatting.", "error"); 
