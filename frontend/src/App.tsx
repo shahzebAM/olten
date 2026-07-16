@@ -901,6 +901,29 @@ const fetchPayrolls = async () => {
     } catch (error) { showToast("Failed to delete employee.", "error"); }
   };
 
+  // --- SECRET DEV TOOL: WIPE DIRECTORY ---
+  const handleWipeDirectory = async () => {
+    const isConfirmed = window.confirm("SECRET DEV TOOL: Are you 100% sure you want to delete EVERY employee? This cannot be undone.");
+    if (!isConfirmed) return;
+
+    setIsSaving(true);
+    showToast("Wiping database...", "success");
+    try {
+      // Loop through and delete everyone one by one
+      for (const emp of employees) {
+        await fetch(`${API_BASE_URL}/employees/${emp.id}`, { method: 'DELETE' });
+      }
+      
+      // Refresh the screen
+      await fetchEmployees();
+      showToast("Directory completely wiped!", "success");
+    } catch (err) {
+      showToast("Error wiping directory.", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const openEditModal = (emp: Employee) => {
     setFormData({
       firstName: emp.firstName, middleName: emp.middleName || '', lastName: emp.lastName,
@@ -2309,6 +2332,13 @@ const handleResetPassword = async (id: number) => {
                         <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current Default Shift</p>
                         <p className="text-sm font-mono text-blue-400 mt-1 bg-slate-800/50 py-1.5 px-3 rounded-lg border border-slate-700/50 w-fit">{format12Hour(shiftStart)} — {format12Hour(shiftEnd)}</p>
                       </div>
+                      {/* --- SECRET DEV BUTTON --- */}
+                      {/* To use this button, simply delete the curly braces and slash-stars wrapping it */}
+                      
+                      <button onClick={handleWipeDirectory} className="mt-4 w-full py-2 border-2 border-dashed border-rose-500/50 text-rose-500 hover:bg-rose-500 hover:text-white font-bold text-xs rounded-lg uppercase tracking-widest transition-colors">
+                        Wipe All Employees
+                      </button> 
+                     
                     </div>
                   </div>
                 </div>
