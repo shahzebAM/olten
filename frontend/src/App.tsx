@@ -454,7 +454,7 @@ const handleImportAttendance = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsSaving(true);
-    showToast("Importing records...", "success");
+    showToast("Validating Excel records...", "success");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -465,7 +465,7 @@ const handleImportAttendance = async (event: any) => {
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
         if (rows.length < 2) throw new Error("File empty or missing data");
 
-        // Bulletproof CSV Row Parser (Handles spaces and commas inside quotes perfectly)
+        // Bulletproof CSV Row Parser
         const parseCSVRow = (str: string) => {
             const result = [];
             let cell = '';
@@ -481,7 +481,7 @@ const handleImportAttendance = async (event: any) => {
             return result;
         };
 
-        // Extremely strict header matching so columns never shift, regardless of order
+        // Extremely strict header matching so columns never shift
         const headers = parseCSVRow(rows[0]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
         
         const empIdIdx = headers.findIndex(h => h === 'employeeid' || h === 'id');
@@ -492,17 +492,17 @@ const handleImportAttendance = async (event: any) => {
         if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
           showToast("Missing columns! Use the exact Template format.", "error");
           setIsSaving(false);
+          event.target.value = '';
           return;
         }
 
-        // Helper: Converts "08:00 AM" to "08:00" safely and rejects non-time text (like "ali")
         const formatTime24 = (timeStr: string) => {
           if (!timeStr) return '';
           const clean = timeStr.toUpperCase();
           if (['PAID', 'UNPAID', 'LEAVE'].includes(clean)) return clean;
           
           const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
-          if (!match) return ''; // Actively reject garbage data
+          if (!match) return ''; 
           let [_, h, m, modifier] = match;
           let hours = parseInt(h, 10);
           if (modifier) {
@@ -512,7 +512,6 @@ const handleImportAttendance = async (event: any) => {
           return `${hours.toString().padStart(2, '0')}:${m}`;
         };
 
-        // Helper: Formats MM/DD/YYYY from Excel into standard YYYY-MM-DD
         const formatIsoDate = (dStr: string) => {
            if (dStr.includes('/')) {
                const p = dStr.split('/');
@@ -522,21 +521,27 @@ const handleImportAttendance = async (event: any) => {
            return '';
         };
 
-        let successCount = 0;
+        // --- 1. PRE-FLIGHT VALIDATION PASS ---
+        // We scan every single row BEFORE uploading anything to the database!
+        const validPayloads = [];
         
-        // Start at i=1 to skip the header row
         for (let i = 1; i < rows.length; i++) {
           const cols = parseCSVRow(rows[i]);
           
-          // Verify required data exists
+          // Skip completely blank/invalid looking rows at the bottom of excel
           if (cols.length < 4 || !cols[empIdIdx] || isNaN(parseInt(cols[empIdIdx]))) continue;
           
           const tIn = formatTime24(cols[inIdx]);
           const tOut = formatTime24(cols[outIdx]);
           const safeDate = formatIsoDate(cols[dateIdx]);
 
-          // Prevent uploading invalid dates or completely broken time fields
-          if (!safeDate || (!tIn && !tOut)) continue;
+          // CRITICAL CHECK: Reject if Date, Time In, or Time Out is missing!
+          if (!safeDate || !tIn || !tOut) {
+            showToast(`Import Aborted! Excel Row ${i + 1} is missing a valid Date or Time.`, "error");
+            setIsSaving(false);
+            event.target.value = '';
+            return; // Stop the entire import process immediately
+          }
 
           let hours = 0;
           if (tIn.includes(':') && tOut.includes(':')) { 
@@ -545,37 +550,45 @@ const handleImportAttendance = async (event: any) => {
              hours = 8; 
           }
 
-          const payload = { 
+          validPayloads.push({ 
             employeeId: parseInt(cols[empIdIdx]), 
             date: safeDate, 
-            timeIn: tIn || 'LEAVE', 
-            timeOut: tOut || 'UNPAID', 
+            timeIn: tIn, 
+            timeOut: tOut, 
             hours, 
             reason: null, 
             shiftStart, 
             shiftEnd 
-          };
-          
+          });
+        }
+
+        if (validPayloads.length === 0) {
+           showToast("No valid rows found to import.", "error");
+           setIsSaving(false);
+           event.target.value = '';
+           return;
+        }
+
+        // --- 2. SECURE DATABASE UPLOAD ---
+        showToast(`Uploading ${validPayloads.length} verified logs...`, "success");
+        let successCount = 0;
+        
+        for (const payload of validPayloads) {
           const res = await fetch(`${API_BASE_URL}/employees/attendance`, { 
              method: 'POST', 
              headers: { 'Content-Type': 'application/json' }, 
              body: JSON.stringify(payload) 
           });
-          
           if(res.ok) successCount++;
         }
         
-        // Add a slight 500ms buffer so the DB finishes committing the rows before fetching
+        // Add buffer for the database to catch up
         await new Promise(resolve => setTimeout(resolve, 500));
         
         // Fetch the uncached data
         await fetchAttendances();
+        showToast(`Imported ${successCount} logs successfully!`, "success");
         
-        if (successCount > 0) {
-           showToast(`Imported ${successCount} logs successfully!`, "success");
-        } else {
-           showToast("No valid logs found. Check CSV format.", "error");
-        }
       } catch (err) { 
         console.error(err);
         showToast("Failed to parse CSV file. Check formatting.", "error"); 
@@ -758,6 +771,25 @@ const handleExportPayrollsZip = async () => {
       }
     } catch (error) {
       console.warn("Could not connect to /settings backend endpoint. Using defaults.");
+    }
+  };
+
+// --- MANUAL REFRESH LOGIC ---
+  const handleRefreshData = async () => {
+    setIsSaving(true);
+    showToast("Syncing with database...", "success");
+    try {
+      // Force all data to reload simultaneously
+      await Promise.all([
+        fetchEmployees(),
+        fetchAttendances(),
+        fetchPayrolls()
+      ]);
+      showToast("Data is completely up to date!", "success");
+    } catch (e) {
+      showToast("Failed to refresh data from server.", "error");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -2605,9 +2637,17 @@ const handleResetPassword = async (id: number) => {
                   </div>
                 </div>
                 
-                <div className="flex flex-col items-end gap-3 w-full md:w-auto">
-                  {/* DATA CONTROLS */}
+                {/* DATA CONTROLS */}
                   <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
+                    <button 
+                      onClick={handleRefreshData} 
+                      disabled={isSaving}
+                      className="flex-1 sm:flex-none px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                      title="Sync data manually from the database"
+                    >
+                      <svg className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                      {isSaving ? 'Syncing...' : 'Refresh'}
+                    </button>
                     <button 
                       onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', '2026-07-15', '08:00 AM', '05:00 PM'], ['2', '2026-07-15', 'LEAVE', 'PAID']])} 
                       className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors"
@@ -2623,42 +2663,6 @@ const handleResetPassword = async (id: number) => {
                       Export CSV
                     </button>
                   </div>
-                  <div className="flex bg-white p-1 rounded-lg border border-indigo-200 w-full sm:w-auto">
-                    <button onClick={() => setAttendanceFilter('day')} className={`flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors ${attendanceFilter === 'day' ? 'bg-indigo-100 text-indigo-800' : 'text-slate-500 hover:text-indigo-800'}`}>Daily View</button>
-                    <button onClick={() => setAttendanceFilter('month')} className={`flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors ${attendanceFilter === 'month' ? 'bg-indigo-100 text-indigo-800' : 'text-slate-500 hover:text-indigo-800'}`}>Monthly Summary</button>
-                  </div>
-                  
-                  {/* --- CUSTOM DATE FILTER UI --- */}
-                  {attendanceFilter === 'day' ? (
-                    <div className="relative w-full sm:w-[160px]">
-                      <div className="px-4 py-2 border border-indigo-200 rounded-lg text-sm font-bold text-indigo-900 bg-white shadow-sm flex items-center justify-between w-full pointer-events-none">
-                        <span>{formatMDY(attendanceDate)}</span>
-                        <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                      </div>
-                      <input 
-                        type="date" 
-                        value={attendanceDate} 
-                        onChange={(e) => setAttendanceDate(e.target.value)} 
-                        onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
-                      />
-                    </div>
-                  ) : (
-                    <div className="relative w-full sm:w-[140px]">
-                      <div className="px-4 py-2 border border-indigo-200 rounded-lg text-sm font-bold text-indigo-900 bg-white shadow-sm flex items-center justify-between w-full pointer-events-none">
-                        <span>{formatMonthYear(attendanceMonth)}</span>
-                        <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                      </div>
-                      <input 
-                        type="month" 
-                        value={attendanceMonth} 
-                        onChange={(e) => setAttendanceMonth(e.target.value)} 
-                        onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
-                      />
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
             
