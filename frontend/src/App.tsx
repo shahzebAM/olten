@@ -150,13 +150,15 @@ const InputField = ({ label, required = false, type = "text", placeholder = "", 
 
 const EmployeeFormFields = ({ formData, handleChange }: any) => (
   <>
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+    {/* --- ROW 1: NAMES --- */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
       <InputField required label="First Name" value={formData.firstName} onChange={handleChange('firstName', 'standard')} />
       <InputField label="Middle Name" placeholder="Optional" value={formData.middleName} onChange={handleChange('middleName', 'standard')} />
       <InputField required label="Last Name" value={formData.lastName} onChange={handleChange('lastName', 'standard')} />
     </div>
 
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mt-4 sm:mt-6">
+    {/* --- ROW 2: BIRTH DATE & CIVIL STATUS --- */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mt-4 sm:mt-6">
       <InputField required type="date" label="Birth Date" value={formData.dateOfBirth} onChange={handleChange('dateOfBirth', 'standard')} />
       <div className="flex flex-col gap-1.5 w-full">
         <label className="text-sm font-medium text-slate-600">Civil Status <span className="text-blue-600">*</span></label>
@@ -173,13 +175,15 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
       </div>
     </div>
 
+    {/* --- ROW 3: COMPLETE ADDRESS --- */}
     <div className="mt-4 sm:mt-6">
       <InputField required label="Complete Address" value={formData.address} onChange={handleChange('address', 'standard')} />
     </div>
     
-    <hr className="border-t border-slate-200 my-4" />
+    <hr className="border-t border-slate-200 my-5 sm:my-6" />
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+    {/* --- ROW 4: COMPENSATION & EMPLOYMENT --- */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
       <InputField required type="number" step="0.01" label="Base Salary per Cutoff (₱)" placeholder="0.00" value={formData.baseRate} onChange={handleChange('baseRate', 'standard')} />
       <div className="flex flex-col gap-1.5 w-full">
         <label className="text-sm font-medium text-slate-600">Employment Status <span className="text-blue-600">*</span></label>
@@ -197,16 +201,18 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
       <InputField label="Bank Account No." placeholder="Optional (Numbers only)" value={formData.bankAccount} onChange={handleChange('bankAccount', 'bank')} />
     </div>
 
-    <hr className="border-t border-slate-200 my-4" />
+    <hr className="border-t border-slate-200 my-5 sm:my-6" />
     
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+    {/* --- ROW 5: ADVANCES & DEDUCTIONS --- */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
       <InputField type="number" step="0.01" label="Total Cash Advance Balance (₱)" placeholder="0.00" value={formData.cashAdvanceBalance} onChange={handleChange('cashAdvanceBalance', 'standard')} />
       <InputField type="number" step="0.01" label="Standard Deduction per Cutoff (₱)" placeholder="0.00" value={formData.cashAdvanceInstallment} onChange={handleChange('cashAdvanceInstallment', 'standard')} />
     </div>
 
-    <hr className="border-t border-slate-200 my-4" />
+    <hr className="border-t border-slate-200 my-5 sm:my-6" />
 
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+    {/* --- ROW 6: GOVT IDS --- */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
       <InputField label="TIN" placeholder="000-000-000-000" value={formData.tin} onChange={handleChange('tin', 'tin')} />
       <InputField label="SSS Number" placeholder="00-0000000-0" value={formData.sssNumber} onChange={handleChange('sssNumber', 'sss')} />
       <InputField label="PhilHealth" placeholder="0000-0000-0000" value={formData.philhealth} onChange={handleChange('philhealth', 'philhealth')} />
@@ -1633,21 +1639,48 @@ const handleResetPassword = async (id: number) => {
 
       {/* --- EDIT EMPLOYEE MODAL --- */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-slate-50/50 shrink-0">
-              <div><h2 className="text-xl font-bold text-blue-950">Edit Employee Record</h2></div>
-              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-center p-4 sm:p-6 border-b border-slate-200 bg-slate-50/50 shrink-0">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
+              </div>
+              <button 
+                onClick={() => setIsEditModalOpen(false)} 
+                className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                title="Close Modal"
+              >
+                ✕
+              </button>
             </div>
-            <div className="overflow-y-auto p-6">
-              <form onSubmit={handleSubmitEmployee} className="flex flex-col gap-6">
+
+            {/* Modal Body (Scrollable) */}
+            <div className="overflow-y-auto p-4 sm:p-6 flex-1">
+              <form onSubmit={handleSubmitEmployee} className="flex flex-col gap-4 sm:gap-6">
                 <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
-                <div className="flex gap-3 mt-6 pt-6 border-t border-slate-200 shrink-0">
-                  <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-blue-700 text-white rounded-xl font-semibold shadow-sm">{isSaving ? "Saving..." : "Save Changes"}</button>
-                  <button type="button" onClick={() => setIsEditModalOpen(false)} className="py-3 px-8 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50">Cancel</button>
+                
+                {/* Responsive Footer Buttons (Stacks on Mobile, Side-by-Side on Desktop) */}
+                <div className="flex flex-col-reverse sm:flex-row gap-3 mt-4 sm:mt-6 pt-5 sm:pt-6 border-t border-slate-200 shrink-0">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditModalOpen(false)} 
+                    className="w-full sm:w-auto py-3 px-8 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50 transition-colors text-sm sm:text-base"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={isSaving} 
+                    className="w-full sm:flex-1 py-3 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base"
+                  >
+                    {isSaving ? "Saving..." : "Save Changes"}
+                  </button>
                 </div>
               </form>
             </div>
+
           </div>
         </div>
       )}
