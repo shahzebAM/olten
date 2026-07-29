@@ -1637,49 +1637,50 @@ const handleResetPassword = async (id: number) => {
         </div>
       )}
 
-      {/* --- EDIT EMPLOYEE MODAL --- */}
+{/* --- EDIT EMPLOYEE MODAL --- */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
             
-            {/* Modal Header */}
-            <div className="flex justify-between items-center p-4 sm:p-6 border-b border-slate-200 bg-slate-50/50 shrink-0">
-              <div>
-                <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
-              </div>
+            {/* 1. Fixed Modal Header */}
+            <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 shrink-0">
+              <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
               <button 
+                type="button"
                 onClick={() => setIsEditModalOpen(false)} 
                 className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                title="Close Modal"
               >
                 ✕
               </button>
             </div>
 
-            {/* Modal Body (Scrollable) */}
-            <div className="overflow-y-auto p-4 sm:p-6 flex-1">
-              <form onSubmit={handleSubmitEmployee} className="flex flex-col gap-4 sm:gap-6">
+            {/* Form wraps both the scrollable body AND the pinned footer */}
+            <form onSubmit={handleSubmitEmployee} className="flex flex-col flex-1 overflow-hidden">
+              
+              {/* 2. Scrollable Form Fields Only */}
+              <div className="overflow-y-auto p-4 sm:p-6 flex-1 space-y-6">
                 <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
-                
-                {/* Responsive Footer Buttons (Stacks on Mobile, Side-by-Side on Desktop) */}
-                <div className="flex flex-col-reverse sm:flex-row gap-3 mt-4 sm:mt-6 pt-5 sm:pt-6 border-t border-slate-200 shrink-0">
-                  <button 
-                    type="button" 
-                    onClick={() => setIsEditModalOpen(false)} 
-                    className="w-full sm:w-auto py-3 px-8 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50 transition-colors text-sm sm:text-base"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit" 
-                    disabled={isSaving} 
-                    className="w-full sm:flex-1 py-3 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base"
-                  >
-                    {isSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </form>
-            </div>
+              </div>
+              
+              {/* 3. Pinned Action Footer (Never scrolls, never gets cut off) */}
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 p-4 sm:p-5 border-t border-slate-200 bg-slate-50/80 shrink-0">
+                <button 
+                  type="button" 
+                  onClick={() => setIsEditModalOpen(false)} 
+                  className="w-full sm:w-auto py-2.5 px-6 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-100 transition-colors text-sm sm:text-base shadow-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isSaving} 
+                  className="w-full sm:w-auto py-2.5 px-8 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base"
+                >
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+
+            </form>
 
           </div>
         </div>
