@@ -2649,32 +2649,36 @@ const handleResetPassword = async (id: number) => {
 {/* ATTENDANCE TAB */}
         {activeTab === 'attendance' && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-slate-200 bg-indigo-50/30">
-              <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+            <div className="p-4 sm:p-6 border-b border-slate-200 bg-indigo-50/30">
+              
+              {/* --- TOP ROW: TITLE, SEARCH & VIEW FILTERS --- */}
+              <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 sm:gap-6">
                 
-                {/* Left Side: Titles & Search Bar */}
-                <div className="w-full xl:w-auto">
-                  <h2 className="text-xl font-bold text-indigo-950">Time & Attendance Log</h2>
-                  <p className="text-sm text-indigo-700 mt-1">Logs are bounded by the standard Office Shift parameters.</p>
+                {/* Left Side: Title & Search Bar */}
+                <div className="w-full lg:w-auto flex flex-col gap-3">
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-bold text-indigo-950">Time & Attendance Log</h2>
+                    <p className="text-xs sm:text-sm text-indigo-700 mt-0.5">Logs are bounded by the standard Office Shift parameters.</p>
+                  </div>
                   
-                  <div className="mt-4">
+                  <div className="w-full sm:w-72 md:w-80">
                     <input 
                       type="text" 
                       placeholder="Search employee attendance..." 
                       value={attendanceSearchQuery} 
                       onChange={(e) => setAttendanceSearchQuery(e.target.value)} 
-                      className="w-full sm:w-[350px] px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 outline-none shadow-sm transition-all" 
+                      className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 outline-none shadow-sm transition-all bg-white" 
                     />
                   </div>
                 </div>
 
                 {/* Right Side: Daily / Monthly Toggle & Date Pickers */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto shrink-0">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0 mt-1 lg:mt-0">
                   {/* View Switcher Buttons */}
-                  <div className="flex rounded-xl bg-slate-200/70 p-1.5 border border-slate-300/60 shadow-inner">
+                  <div className="flex rounded-xl bg-slate-200/70 p-1 border border-slate-300/60 shadow-inner w-full sm:w-auto">
                     <button
                       onClick={() => setAttendanceFilter('day')}
-                      className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${
+                      className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
                         attendanceFilter === 'day'
                           ? 'bg-white text-indigo-700 shadow-sm'
                           : 'text-slate-600 hover:text-slate-900'
@@ -2684,7 +2688,7 @@ const handleResetPassword = async (id: number) => {
                     </button>
                     <button
                       onClick={() => setAttendanceFilter('month')}
-                      className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${
+                      className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
                         attendanceFilter === 'month'
                           ? 'bg-white text-indigo-700 shadow-sm'
                           : 'text-slate-600 hover:text-slate-900'
@@ -2696,10 +2700,10 @@ const handleResetPassword = async (id: number) => {
 
                   {/* Dynamic Date/Month Picker */}
                   {attendanceFilter === 'day' ? (
-                    <div className="relative">
-                      <div className="px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
+                    <div className="relative w-full sm:w-auto">
+                      <div className="w-full sm:w-auto px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
                         <span>{formatMDY(attendanceDate)}</span>
-                        <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                       </div>
                       <input
                         type="date"
@@ -2710,10 +2714,10 @@ const handleResetPassword = async (id: number) => {
                       />
                     </div>
                   ) : (
-                    <div className="relative">
-                      <div className="px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
+                    <div className="relative w-full sm:w-auto">
+                      <div className="w-full sm:w-auto px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
                         <span>{formatMonthYear(attendanceMonth)}</span>
-                        <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                       </div>
                       <input
                         type="month"
@@ -2724,22 +2728,25 @@ const handleResetPassword = async (id: number) => {
                       />
                     </div>
                   )}
-                {/* </div> */}
+                </div>
 
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-4 bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-indigo-100 w-full xl:w-fit">
-                    <div className="flex flex-col gap-1 w-full sm:w-auto">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office In</label>
-                      <TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact />
-                    </div>
-                    <div className="hidden sm:block w-px h-8 bg-slate-200"></div>
-                    <div className="flex flex-col gap-1 w-full sm:w-auto">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office Out</label>
-                      <TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact />
-                    </div>
-                    <button onClick={applyShiftSettings} disabled={isSaving} className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-3 sm:py-2.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs sm:text-sm font-bold rounded shadow-sm transition-colors uppercase tracking-wide disabled:opacity-50">
-                      Save Shift
-                    </button>
+              </div>
+
+              {/* --- BOTTOM ROW: SHIFT SETTINGS BAR --- */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 mt-6 pt-5 border-t border-indigo-100">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-indigo-100 w-full xl:w-fit">
+                  <div className="flex flex-col gap-1 w-full sm:w-auto">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office In</label>
+                    <TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact />
                   </div>
+                  <div className="hidden sm:block w-px h-8 bg-slate-200"></div>
+                  <div className="flex flex-col gap-1 w-full sm:w-auto">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office Out</label>
+                    <TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact />
+                  </div>
+                  <button onClick={applyShiftSettings} disabled={isSaving} className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-2.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs sm:text-sm font-bold rounded-lg shadow-sm transition-colors uppercase tracking-wide disabled:opacity-50">
+                    Save Shift
+                  </button>
                 </div>
                 
                 {/* DATA CONTROLS */}
