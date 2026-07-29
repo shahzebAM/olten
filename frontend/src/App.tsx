@@ -1639,10 +1639,10 @@ const handleResetPassword = async (id: number) => {
 
 {/* --- EDIT EMPLOYEE MODAL --- */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm print-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
             
-            {/* 1. Fixed Modal Header */}
+            {/* Fixed Modal Header */}
             <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 shrink-0">
               <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
               <button 
@@ -1654,15 +1654,13 @@ const handleResetPassword = async (id: number) => {
               </button>
             </div>
 
-            {/* Form wraps both the scrollable body AND the pinned footer */}
+            {/* Scrollable Form Body + Pinned Footer */}
             <form onSubmit={handleSubmitEmployee} className="flex flex-col flex-1 overflow-hidden">
-              
-              {/* 2. Scrollable Form Fields Only */}
               <div className="overflow-y-auto p-4 sm:p-6 flex-1 space-y-6">
                 <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
               </div>
               
-              {/* 3. Pinned Action Footer (Never scrolls, never gets cut off) */}
+              {/* Pinned Action Footer (Never gets cut off) */}
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 p-4 sm:p-5 border-t border-slate-200 bg-slate-50/80 shrink-0">
                 <button 
                   type="button" 
@@ -1679,7 +1677,6 @@ const handleResetPassword = async (id: number) => {
                   {isSaving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
-
             </form>
 
           </div>
