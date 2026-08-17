@@ -307,6 +307,8 @@ export default function App() {
  const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'users'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- ADDED
+const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'users'>('none');
+  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false });
   
 // State for Managing Users (We leave the hardcoded admin OUT of this state)
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -755,6 +757,7 @@ const handleLogout = () => {
     setLoginUsername(''); 
     setLoginPassword(''); 
     setActiveTab('dashboard'); 
+    setActiveModule('none'); // <-- ADD THIS LINE
   };
 
   // --- 🚀 WAKE UP PING (Fixes Slow Login Times) ---
@@ -1436,7 +1439,7 @@ const handleAddAdmin = async (e: React.FormEvent) => {
       const response = await fetch(`${API_BASE_URL}/admins`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: newAdminUsername.trim(), password: newAdminPassword })
+        body: JSON.stringify({ username: newAdminUsername.trim(), password: newAdminPassword, modules: newAdminModules })
       });
       
       if (!response.ok) throw new Error("Username already exists");
@@ -1444,6 +1447,7 @@ const handleAddAdmin = async (e: React.FormEvent) => {
       await fetchAdmins(); // Refresh the list from the database
       setNewAdminUsername('');
       setNewAdminPassword('');
+      setNewAdminModules({ payroll: true, ai_docs: false });
       showToast("New administrator added successfully!", "success");
     } catch (error) {
       showToast("Failed to add admin. Username might exist.", "error");
@@ -1461,15 +1465,13 @@ const handleDeleteAdmin = async (id: number, role: string) => {
       }
     }
     
-    if (window.confirm("Are you sure you want to permanently remove this user from the database?")) {
-      try {
-        const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error();
-        await fetchAdmins(); 
-        showToast("Administrator removed successfully.", "success");
-      } catch (error) {
-        showToast("Failed to delete administrator.", "error");
-      }
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error();
+      await fetchAdmins(); 
+      showToast("Administrator removed successfully.", "success");
+    } catch (error) {
+      showToast("Failed to delete administrator.", "error");
     }
   };
 
@@ -1496,6 +1498,30 @@ const handleUpdateRole = async (id: number, newRole: string) => {
     } catch (e) {
       showToast("Failed to update role.", "error");
       fetchAdmins(); // Revert if failed
+    }
+  };
+
+  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs') => {
+    // Safely grab existing or default to false
+    const safeModules = currentModules || { payroll: false, ai_docs: false };
+    // Flip the specific checkbox that was clicked
+    const newModules = { ...safeModules, [toggleModule]: !safeModules[toggleModule] };
+    
+    // Optimistic UI update so it feels instant
+    setAdminUsers(adminUsers.map(u => u.id === id ? { ...u, modules: newModules } : u));
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modules: newModules })
+      });
+      
+      if (!response.ok) throw new Error();
+      showToast("Module access updated!", "success");
+    } catch (e) {
+      showToast("Failed to update module access.", "error");
+      fetchAdmins(); // Revert checkbox if backend fails
     }
   };
 
@@ -1578,6 +1604,266 @@ const handleResetPassword = async (id: number) => {
           </div>
           <div className="bg-slate-50 p-4 text-center border-t border-slate-200">
             <p className="text-xs text-slate-400 font-medium">Session is strictly memory-bound. Refreshing will require re-authentication.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================
+  // MODULE SELECTION GATEWAY 
+  // =========================================================
+  if (activeModule === 'none') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 sm:p-8 font-sans selection:bg-blue-100 relative overflow-hidden">
+        {/* Subtle ambient background glows */}
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-400/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div className="w-full max-w-5xl relative z-10 flex flex-col gap-6 sm:gap-8">
+          
+          {/* Top Control Bar */}
+          <div className="flex justify-between items-center px-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></div>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">System Gateway</span>
+            </div>
+            <button onClick={handleLogout} className="text-xs sm:text-sm font-bold text-slate-500 hover:text-rose-600 transition-colors flex items-center gap-2 bg-white/50 hover:bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200 backdrop-blur-sm">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+              Secure Sign Out
+            </button>
+          </div>
+          
+          {/* Premium Corporate Banner */}
+          <div className="w-full bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-8 sm:p-14 border border-slate-800 flex flex-col md:flex-row items-center justify-between text-center md:text-left gap-8 overflow-hidden relative">
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] pointer-events-none"></div>
+            <div className="relative z-10">
+              <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight drop-shadow-sm">
+                Olten <span className="text-blue-400 font-light tracking-normal">Trading Corp.</span>
+              </h1>
+              <p className="text-blue-200/80 font-medium text-sm sm:text-base mt-3 max-w-lg leading-relaxed">
+                Enterprise Resource Planning Environment. Select a core module below to initialize your secure workspace session.
+              </p>
+            </div>
+            <div className="relative z-10 hidden md:flex items-center justify-center w-24 h-24 bg-white/5 rounded-full border border-white/10 backdrop-blur-md shadow-inner shrink-0">
+              <svg className="w-10 h-10 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+            </div>
+          </div>
+
+ {/* Module Cards Grid */}
+          <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+            
+            {/* Payroll Module Card */}
+            <button 
+              onClick={() => setActiveModule('payroll')} 
+              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="relative z-10 w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-blue-100 group-hover:border-blue-600 shrink-0">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-blue-700 transition-colors tracking-tight">Payroll Engine</h2>
+              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                Process salaries, monitor attendance, calculate taxes, and export detailed corporate payslips.
+              </p>
+            </button>
+
+            {/* AI Documentation Module Card */}
+            <button 
+              onClick={() => setActiveModule('ai_docs')} 
+              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-indigo-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-indigo-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="relative z-10 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-indigo-100 group-hover:border-indigo-600 shrink-0">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-indigo-700 transition-colors tracking-tight">AI Documentation</h2>
+              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                Generate corporate memos, automate manuals, and synthesize records with AI tools.
+              </p>
+            </button>
+
+            {/* NEW: User Management Module Card */}
+            <button 
+              onClick={() => setActiveModule('users')} 
+              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-slate-800 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-slate-100 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="relative z-10 w-12 h-12 bg-slate-100 text-slate-700 rounded-xl flex items-center justify-center mb-4 group-hover:bg-slate-800 group-hover:text-white transition-colors duration-300 shadow-sm border border-slate-200 group-hover:border-slate-800 shrink-0">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+              </div>
+              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-slate-900 transition-colors tracking-tight">Access Control</h2>
+              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                Manage system administrators, assign module permissions, and reset credentials.
+              </p>
+            </button>
+            
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================
+  // AI DOCUMENTATION MODULE (Placeholder)
+  // =========================================================
+  if (activeModule === 'ai_docs') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center selection:bg-indigo-100 relative overflow-hidden">
+        <div className="absolute top-[20%] left-[20%] w-[60%] h-[60%] bg-indigo-400/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="relative z-10 bg-white p-10 sm:p-14 rounded-3xl shadow-xl border border-slate-200 max-w-lg w-full flex flex-col items-center">
+          <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm border border-indigo-100">
+            <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">Documentation Portal</h1>
+          <p className="text-slate-500 mt-3 mb-8 text-sm sm:text-base leading-relaxed">
+            This intelligent documentation portal is currently under active development. Enterprise AI features will be unlocked in the next deployment.
+          </p>
+          <button onClick={() => setActiveModule('none')} className="w-full sm:w-auto px-8 py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+            Return to Gateway
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================
+  // USER ACCESS MANAGEMENT MODULE (Standalone)
+  // =========================================================
+  if (activeModule === 'users') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
+        
+        {/* Module Header */}
+        <div className="w-full max-w-6xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">Access Management</h1>
+            <p className="text-slate-500 text-sm mt-1">Configure administrators, roles, and module access permissions.</p>
+          </div>
+          <button onClick={() => setActiveModule('none')} className="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl shadow-sm font-bold transition-colors flex items-center gap-2 text-sm shrink-0">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+            Return to Gateway
+          </button>
+        </div>
+
+        <div className="w-full max-w-6xl space-y-6 pb-12">
+          {/* Admin Table */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-200 bg-slate-50/50">
+              <h2 className="text-lg font-bold text-slate-800">System Administrators</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead className="bg-slate-100 border-b border-slate-200">
+                  <tr>
+                    <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th>
+                    <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Assigned Modules</th>
+                    <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th>
+                    {isCurrentUserSuperAdmin && <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-center">Security Access</th>}
+                    <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {adminUsers.map(user => (
+                    <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs ${user.role === 'Super Admin' ? 'bg-slate-800' : 'bg-slate-400'}`}>
+                          {user.username.charAt(0).toUpperCase()}
+                        </div>
+                        {user.username}
+                      </td>
+                      
+                      <td className="py-4 px-6">
+                        {isCurrentUserSuperAdmin ? (
+                          <div className="flex flex-col gap-2.5">
+                            <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                              <input type="checkbox" checked={user.modules?.payroll || false} onChange={() => handleUpdateModules(user.id, user.modules, 'payroll')} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600 cursor-pointer" />
+                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Payroll Engine</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                              <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 cursor-pointer" />
+                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI Docs</span>
+                            </label>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2 flex-wrap">
+                            {user.modules?.payroll && <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-blue-200">Payroll</span>}
+                            {user.modules?.ai_docs && <span className="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-indigo-200">AI Docs</span>}
+                            {(!user.modules || (!user.modules.payroll && !user.modules.ai_docs)) && <span className="text-slate-400 text-xs italic">No Access</span>}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="py-4 px-6 text-sm text-slate-600">
+                        {isCurrentUserSuperAdmin ? (
+                          <select value={user.role || 'Admin'} onChange={(e) => handleUpdateRole(user.id, e.target.value)} className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-slate-500 shadow-sm cursor-pointer">
+                            <option value="Admin">Standard Admin</option>
+                            <option value="Super Admin">Super Admin</option>
+                          </select>
+                        ) : (user.role || 'Admin')}
+                      </td>
+
+                      {isCurrentUserSuperAdmin && (
+                        <td className="py-4 px-6 text-center">
+                          {editingPasswordId === user.id ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <input type="text" placeholder="New Password" value={newResetPassword} onChange={e => setNewResetPassword(e.target.value)} className="px-3 py-1.5 border border-slate-300 rounded-md text-xs w-32 shadow-sm outline-none" />
+                              <button onClick={() => handleResetPassword(user.id)} className="text-emerald-600 font-bold text-xs uppercase hover:underline">Save</button>
+                              <button onClick={() => setEditingPasswordId(null)} className="text-slate-400 font-bold text-xs uppercase hover:underline">Cancel</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setEditingPasswordId(user.id)} className="text-slate-600 hover:text-slate-900 text-[11px] tracking-wide font-bold uppercase transition-colors bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm hover:shadow">Change Password</button>
+                          )}
+                        </td>
+                      )}
+
+                      <td className="py-4 px-6 text-right">
+                        <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Add New User Form with Checkboxes */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8">
+            <h3 className="text-lg font-bold text-slate-800 mb-6">Register New Administrator</h3>
+            <form onSubmit={handleAddAdmin} className="flex flex-col gap-6">
+              
+              <div className="flex flex-col sm:flex-row gap-5 items-end">
+                <div className="flex flex-col gap-1.5 w-full">
+                  <label className="text-sm font-medium text-slate-600">Username</label>
+                  <input type="text" required value={newAdminUsername} onChange={(e) => setNewAdminUsername(e.target.value)} className="px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-500 shadow-sm" placeholder="New username" />
+                </div>
+                <div className="flex flex-col gap-1.5 w-full">
+                  <label className="text-sm font-medium text-slate-600">Password</label>
+                  <input type="password" required value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} className="px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-500 shadow-sm" placeholder="••••••••" />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-4 border-t border-slate-100">
+                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
+                <div className="flex flex-wrap gap-5 mt-1">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
+                    <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
+                    <span className="text-sm font-medium text-slate-700">AI Documentation</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button type="submit" disabled={isSaving} className="w-full sm:w-auto px-8 py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl shadow-sm whitespace-nowrap disabled:opacity-50 transition-colors">
+                  {isSaving ? 'Registering...' : 'Save Database User'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       </div>
@@ -2325,10 +2611,7 @@ const handleResetPassword = async (id: number) => {
              Summary Reports
           </button>
 
-          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Settings</div>
-          <button onClick={() => { setActiveTab('users'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'users' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Manage System Users
-          </button>
+       
         </div>
       </aside>
 
@@ -2413,97 +2696,6 @@ const handleResetPassword = async (id: number) => {
                       */}
                     </div>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* MANAGE USERS TAB */}
-            {activeTab === 'users' && (
-              <div className="space-y-6 print-hidden">
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="p-6 border-b border-slate-200 bg-slate-50/50">
-                    <h2 className="text-lg font-bold text-slate-800">System Administrators</h2>
-                    <p className="text-sm text-slate-500 mt-1">Manage database access, roles, and security credentials.</p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[750px]">
-                      <thead className="bg-slate-100 border-b border-slate-200">
-                        <tr>
-                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Username</th>
-                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th>
-                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th>
-                          {/* ONLY SHOW THIS COLUMN TO SUPER ADMINS */}
-                          {isCurrentUserSuperAdmin && (
-                            <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-center">Security Access</th>
-                          )}
-                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {adminUsers.map(user => (
-                          <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs ${user.role === 'Super Admin' ? 'bg-blue-600' : 'bg-slate-600'}`}>
-                                {user.username.charAt(0).toUpperCase()}
-                              </div>
-                              {user.username}
-                            </td>
-                            
-                            <td className="py-4 px-6 text-sm text-slate-600">
-                              {isCurrentUserSuperAdmin ? (
-                                <select 
-                                  value={user.role || 'Admin'} 
-                                  onChange={(e) => handleUpdateRole(user.id, e.target.value)}
-                                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 shadow-sm cursor-pointer"
-                                >
-                                  <option value="Admin">Standard Admin</option>
-                                  <option value="Super Admin">Super Admin</option>
-                                </select>
-                              ) : (
-                                user.role || 'Admin'
-                              )}
-                            </td>
-
-                            <td className="py-4 px-6"><span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{user.status || 'Active'}</span></td>
-                            
-                            {isCurrentUserSuperAdmin && (
-                              <td className="py-4 px-6 text-center">
-                                {editingPasswordId === user.id ? (
-                                  <div className="flex items-center justify-center gap-2">
-                                    <input type="text" placeholder="New Password" value={newResetPassword} onChange={e => setNewResetPassword(e.target.value)} className="px-3 py-1.5 border border-slate-300 rounded-md text-xs w-32 shadow-sm outline-none" />
-                                    <button onClick={() => handleResetPassword(user.id)} className="text-emerald-600 font-bold text-xs uppercase hover:underline">Save</button>
-                                    <button onClick={() => setEditingPasswordId(null)} className="text-slate-400 font-bold text-xs uppercase hover:underline">Cancel</button>
-                                  </div>
-                                ) : (
-                                  <button onClick={() => setEditingPasswordId(user.id)} className="text-indigo-600 hover:text-indigo-800 text-[11px] tracking-wide font-bold uppercase transition-colors bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">Change Password</button>
-                                )}
-                              </td>
-                            )}
-
-                            <td className="py-4 px-6 text-right">
-                              <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-sm font-bold uppercase transition-colors">Delete</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* ADD NEW USER FORM */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4">Add New Administrator</h3>
-                  <form onSubmit={handleAddAdmin} className="flex flex-col sm:flex-row gap-4 items-end">
-                    <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-sm font-medium text-slate-600">Username</label>
-                      <input type="text" required value={newAdminUsername} onChange={(e) => setNewAdminUsername(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="New username" />
-                    </div>
-                    <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-sm font-medium text-slate-600">Password</label>
-                      <input type="password" required value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
-                    </div>
-                    <button type="submit" disabled={isSaving} className="w-full sm:w-auto px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-lg whitespace-nowrap disabled:opacity-50">{isSaving ? 'Adding...' : 'Add Database User'}</button>
-                  </form>
                 </div>
               </div>
             )}
