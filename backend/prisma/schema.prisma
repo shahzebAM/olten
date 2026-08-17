@@ -74,5 +74,10 @@ model Payroll {
   createdAt        DateTime @default(now())
   pagIbigLoan        Float    @default(0)
   pagIbigHousingLoan Float    @default(0)
+  sssProvident         Float    @default(0)
+  sssSalaryLoan        Float    @default(0)
+  sssCalamityLoan      Float    @default(0)
+  pagIbigCalamity      Float    @default(0)
+  pagIbigSalaryLoan    Float    @default(0)
 }
 
