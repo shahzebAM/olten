@@ -118,6 +118,21 @@ export class AppController {
     return { message: "Role updated" };
   }
 
+@Patch('admins/:id/modules')
+async updateAdminModules(
+  @Param('id', ParseIntPipe) id: number,
+  @Body() body: any
+) {
+  try {
+    // @ts-ignore
+    const updatedAdmin = await prisma.admin.update({ where: { id }, data: { modules: body.modules } });
+    return updatedAdmin;
+  } catch (error) {
+    throw new HttpException('Failed to update modules', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+}
+  
+
   @Delete('admins/:id')
   async deleteAdmin(@Param('id', ParseIntPipe) id: number) {
     const targetAdmin = await prisma.admin.findUnique({ where: { id } });
