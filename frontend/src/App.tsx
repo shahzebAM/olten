@@ -269,8 +269,13 @@ interface PayrollRecord {
   grossPay: number;
   netPay: number;
   createdAt: string;
-  pagIbigLoan: number;        // <-- Added
-  pagIbigHousingLoan: number; // <-- Added
+  pagIbigLoan: number;
+  pagIbigHousingLoan: number;
+  sssProvident: number;
+  sssSalaryLoan: number;
+  sssCalamityLoan: number;
+  pagIbigCalamity: number;
+  pagIbigSalaryLoan: number;
 }
 
 interface SummaryReportRow {
@@ -365,8 +370,13 @@ const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsern
 
 const [payrollData, setPayrollData] = useState({
     daysWorked: '13', cashAdvance: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
-    pagIbigLoan: '0',        // <-- Added
-    pagIbigHousingLoan: '0'  // <-- Added
+    pagIbigLoan: '0',
+    pagIbigHousingLoan: '0',
+    sssProvident: '0',
+    sssSalaryLoan: '0',
+    sssCalamityLoan: '0',
+    pagIbigCalamity: '0',
+    pagIbigSalaryLoan: '0'
   });
 
   // --- DYNAMIC TAX MATRIX STATE ---
@@ -740,14 +750,21 @@ const handleExportPayrollsZip = async () => {
     }
   };
 
-  const handleLogout = () => { 
+const handleLogout = () => { 
     setIsAuthenticated(false); 
     setLoginUsername(''); 
     setLoginPassword(''); 
     setActiveTab('dashboard'); 
   };
 
-// --- DATA FETCHING (Only runs after login) ---
+  // --- 🚀 WAKE UP PING (Fixes Slow Login Times) ---
+  // This silently knocks on the backend's door the second the web page loads.
+  // By the time you hit the "Access Database" button, the server is fully awake!
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/settings`).catch(() => {});
+  }, []);
+
+  // --- DATA FETCHING (Only runs after login) ---
   useEffect(() => {
     if (isAuthenticated) {
       fetchEmployees();
@@ -1161,8 +1178,13 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
       pagIbig: '0', 
       philhealth: '0', 
       isDeclared: false,
-      pagIbigLoan: '0',        // <-- Added
-      pagIbigHousingLoan: '0'  // <-- Added
+      pagIbigLoan: '0',
+      pagIbigHousingLoan: '0',
+      sssProvident: '0',
+      sssSalaryLoan: '0',
+      sssCalamityLoan: '0',
+      pagIbigCalamity: '0',
+      pagIbigSalaryLoan: '0'
     });
     setIsPayrollModalOpen(true);
   };
@@ -1211,56 +1233,66 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
 
     const grossPay = (basicSalary + otPay) - undertimeDeduction;
     
-    const sssDed = parseFloat(payrollData.sss) || 0;
-    const pagIbigDed = parseFloat(payrollData.pagIbig) || 0;
-    const philhealthDed = parseFloat(payrollData.philhealth) || 0;
-    const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0;               // <-- Added
-    const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; // <-- Added
-    
-    let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
-    // Prevent manual edits from dropping balance below 0
-    if (activeEmployee && cashAdvanceDed > (activeEmployee.cashAdvanceBalance || 0)) {
-        cashAdvanceDed = activeEmployee.cashAdvanceBalance || 0;
-    }
+   const sssDed = parseFloat(payrollData.sss) || 0;
+        const pagIbigDed = parseFloat(payrollData.pagIbig) || 0;
+        const philhealthDed = parseFloat(payrollData.philhealth) || 0;
+        const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0;
+        const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0;
+        const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0;
+        const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0;
+        const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0;
+        const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0;
+        const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
+        
+        let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
+        // Prevent manual edits from dropping balance below 0
+        if (activeEmployee && cashAdvanceDed > (activeEmployee.cashAdvanceBalance || 0)) {
+            cashAdvanceDed = activeEmployee.cashAdvanceBalance || 0;
+        }
 
-    const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
-    let autoTax = 0;
+        const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
+        let autoTax = 0;
 
-    if (payrollData.isDeclared && taxableIncome > 0) {
-      // Look ma, no hardcoded if/else! It uses the live UI state now.
-      const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
-      autoTax = taxResult.tax;
-    }
+        if (payrollData.isDeclared && taxableIncome > 0) {
+          // Look ma, no hardcoded if/else! It uses the live UI state now.
+          const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
+          autoTax = taxResult.tax;
+        }
 
-    const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed;
-    const netPay = grossPay - totalDeductions;
+        const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed;
+        const netPay = grossPay - totalDeductions;
 
-    return { 
-      totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, 
-      grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed,
-      pagIbigLoanDed, pagIbigHousingLoanDed // <-- Added
-    };
-  };
+        return { 
+          totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, 
+          grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed,
+          pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed
+        };
+      };
 
-  const computed = calculatePayroll();
+      const computed = calculatePayroll();
 
-  const savePayrollToDatabase = async () => {
-    if (!activeEmployee || !computed) return;
-    setIsSaving(true);
-    const payload = {
-      employeeId: activeEmployee.id,
-      daysWorked: parseFloat(payrollData.daysWorked) || 0,
-      totalHours: computed.totalHoursWorked,
-      cashAdvance: computed.cashAdvanceDed,
-      sssDeduction: parseFloat(payrollData.sss) || 0,
-      pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0,
-      philhealthDeduct: parseFloat(payrollData.philhealth) || 0,
-      tax: computed.autoTax,
-      grossPay: computed.grossPay,
-      netPay: computed.netPay,
-      pagIbigLoan: computed.pagIbigLoanDed,               // <-- Added
-      pagIbigHousingLoan: computed.pagIbigHousingLoanDed  // <-- Added
-    };
+      const savePayrollToDatabase = async () => {
+        if (!activeEmployee || !computed) return;
+        setIsSaving(true);
+        const payload = {
+          employeeId: activeEmployee.id,
+          daysWorked: parseFloat(payrollData.daysWorked) || 0,
+          totalHours: computed.totalHoursWorked,
+          cashAdvance: computed.cashAdvanceDed,
+          sssDeduction: parseFloat(payrollData.sss) || 0,
+          pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0,
+          philhealthDeduct: parseFloat(payrollData.philhealth) || 0,
+          tax: computed.autoTax,
+          grossPay: computed.grossPay,
+          netPay: computed.netPay,
+          pagIbigLoan: computed.pagIbigLoanDed,
+          pagIbigHousingLoan: computed.pagIbigHousingLoanDed,
+          sssProvident: computed.sssProvidentDed,
+          sssSalaryLoan: computed.sssSalaryLoanDed,
+          sssCalamityLoan: computed.sssCalamityLoanDed,
+          pagIbigCalamity: computed.pagIbigCalamityDed,
+          pagIbigSalaryLoan: computed.pagIbigSalaryLoanDed
+        };
 
     try {
       const response = await fetch(`${API_BASE_URL}/employees/payroll`, { 
@@ -1951,60 +1983,51 @@ const handleResetPassword = async (id: number) => {
                           <td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Earnings:</td>
                           <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalEarnings)}</td>
                         </tr>
-                        <tr>
-                          <td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 text-slate-600 uppercase tracking-wider">Deductions</td>
-                          <td colSpan={4} rowSpan={9} className="border border-slate-300 bg-white"></td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Advances</td>
-                          <td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.cashAdvance > 0 ? formatMoney(rec.cashAdvance) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SSS</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.sssDeduction > 0 ? formatMoney(rec.sssDeduction) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SSS PROVIDENT FUND</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Philhealth</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.philhealthDeduct > 0 ? formatMoney(rec.philhealthDeduct) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Pag-IBIG</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigDeduct > 0 ? formatMoney(rec.pagIbigDeduct) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Pag-IBIG MP Loan</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigLoan > 0 ? formatMoney(rec.pagIbigLoan) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Pag-IBIG Housing Loan</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.pagIbigHousingLoan > 0 ? formatMoney(rec.pagIbigHousingLoan) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium uppercase">Tax</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.tax > 0 ? formatMoney(rec.tax) : '-'}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Provident Cont.</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">Provident Loan</td>
-                          <td className="border border-slate-300"></td>
-                          <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td>
-                        </tr>
+                      {(() => {
+                          // 1. Gather all possible deductions and filter out the ones that are 0
+                          const activeDeductions = [
+                            { label: 'Advances', value: rec.cashAdvance || 0 },
+                            { label: 'SSS', value: rec.sssDeduction || 0 },
+                            { label: 'PhilHealth', value: rec.philhealthDeduct || 0 },
+                            { label: 'Pag-IBIG', value: rec.pagIbigDeduct || 0 },
+                            { label: 'Pag-IBIG MP Loan', value: rec.pagIbigLoan || 0 },
+                            { label: 'Pag-IBIG Housing Loan', value: rec.pagIbigHousingLoan || 0 },
+                            { label: 'SSS Provident', value: rec.sssProvident || 0 },
+                            { label: 'SSS Salary Loan', value: rec.sssSalaryLoan || 0 },
+                            { label: 'SSS Calamity Loan', value: rec.sssCalamityLoan || 0 },
+                            { label: 'Pag-IBIG Calamity', value: rec.pagIbigCalamity || 0 },
+                            { label: 'Pag-IBIG Salary Loan', value: rec.pagIbigSalaryLoan || 0 },
+                            { label: 'Withholding Tax', value: rec.tax || 0 }
+                          ].filter(d => d.value > 0);
+
+                          // 2. Dynamically calculate the row span for the blank right-side box
+                          const rowSpanCount = activeDeductions.length > 0 ? activeDeductions.length + 1 : 2;
+
+                          return (
+                            <>
+                              <tr>
+                                <td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 text-slate-600 uppercase tracking-wider">Deductions</td>
+                                <td colSpan={4} rowSpan={rowSpanCount} className="border border-slate-300 bg-white"></td>
+                              </tr>
+                              
+                              {activeDeductions.length === 0 ? (
+                                <tr>
+                                  <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-400 italic">No Deductions</td>
+                                  <td className="border border-slate-300 px-1 text-center font-medium text-slate-400"></td>
+                                  <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td>
+                                </tr>
+                              ) : (
+                                activeDeductions.map((ded, idx) => (
+                                  <tr key={idx}>
+                                    <td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">{ded.label}</td>
+                                    <td className="border border-slate-300 px-1 text-center font-medium text-slate-400">{idx === 0 ? '₱' : ''}</td>
+                                    <td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(ded.value)}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </>
+                          );
+                        })()}
                         <tr>
                           <td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td>
                           <td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Deductions:</td>
@@ -2135,57 +2158,75 @@ const handleResetPassword = async (id: number) => {
       )}
 
       {/* --- PAYROLL MODAL (COMPUTE) --- */}
-      {isPayrollModalOpen && activeEmployee && computed && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-emerald-50/50 shrink-0">
-              <div>
-                <h2 className="text-xl font-bold text-emerald-950">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
-                <p className="text-sm text-emerald-700 font-mono mt-1">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
+     {/* --- PAYROLL MODAL (COMPUTE) --- */}
+        {isPayrollModalOpen && activeEmployee && computed && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
+            {/* Increased max-h to 98vh to use the full height of laptop screens */}
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
+              
+              {/* Tightened header padding to pull the content up higher */}
+              <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-emerald-50/50 shrink-0">
+                <div>
+                  <h2 className="text-lg sm:text-xl font-bold text-emerald-950">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
+                  <p className="text-xs sm:text-sm text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
+                </div>
+                <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
               </div>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
-            </div>
-            
-            <div className="overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-              <div className="space-y-6">
-                <h3 className="font-bold text-slate-800 border-b pb-2">Time & Attendance Settings</h3>
+              
+              {/* Tightened body padding to prevent the right side from stretching past the screen */}
+              <div className="overflow-y-auto p-4 sm:p-5 lg:p-6 grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-8 items-start">
+              <div className="space-y-4 sm:space-y-5">
+                <h3 className="font-bold text-slate-800 border-b pb-2 text-sm uppercase tracking-wider">Time & Attendance</h3>
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <InputField type="number" step="0.1" label="Days in Cutoff" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField type="text" disabled label="Total Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField type="text" disabled label="Total OT Hours" value={formatDecToHM(computed.otHrs)} />
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <InputField type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
+                  <InputField type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
+                  <InputField type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
                 </div>
                 
-                <h3 className="font-bold text-slate-800 border-b pb-2 mt-6">Deductions</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <h3 className="font-bold text-slate-800 border-b pb-2 mt-4 text-sm uppercase tracking-wider">Deductions</h3>
+                
+                {/* 3-Column Dense Grid to Prevent Scrolling */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 items-start">
+                  
                   <div className="flex flex-col w-full">
-                    <InputField type="number" step="0.01" label="Cash Adv. Deduction" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
+                    <InputField type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
                     {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
-                      <span className="text-[11px] font-bold text-amber-600 mt-1.5 ml-1">
-                        Rem. Bal: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}
+                      <span className="text-[10px] font-bold text-amber-600 mt-1 ml-1 leading-tight tracking-tight">
+                        Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}
                       </span>
                     )}
                   </div>
+                  
                   <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
                   <InputField type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
+                  
                   <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG MP Loan" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG Housing Loan" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
-                  <div className="sm:col-span-2 mt-2 p-4 border border-indigo-100 bg-white rounded-xl shadow-sm">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600"/>
-                      <div>
-                        <span className="text-sm font-bold text-slate-800 block">Officially Declared Salary</span>
-                        <span className="text-xs text-slate-500">Automatically computes BIR withholding tax based on semi-monthly brackets.</span>
+                  <InputField type="number" step="0.01" label="Pag-IBIG MP" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
+                  <InputField type="number" step="0.01" label="Pag-IBIG Housing" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
+                  
+                  <InputField type="number" step="0.01" label="SSS Provident" value={payrollData.sssProvident} onChange={(e: any) => setPayrollData({...payrollData, sssProvident: e.target.value})} />
+                  <InputField type="number" step="0.01" label="SSS Salary" value={payrollData.sssSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, sssSalaryLoan: e.target.value})} />
+                  <InputField type="number" step="0.01" label="SSS Calamity" value={payrollData.sssCalamityLoan} onChange={(e: any) => setPayrollData({...payrollData, sssCalamityLoan: e.target.value})} />
+                  
+                  <InputField type="number" step="0.01" label="Pag-IBIG Salary" value={payrollData.pagIbigSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigSalaryLoan: e.target.value})} />
+                  <InputField type="number" step="0.01" label="Pag-IBIG Calamity" value={payrollData.pagIbigCalamity} onChange={(e: any) => setPayrollData({...payrollData, pagIbigCalamity: e.target.value})} />
+                  
+                  {/* Compact Tax Box (Slots perfectly into the 12th grid space) */}
+                  <div className="flex flex-col justify-end w-full h-full pb-0.5">
+                    <label className={`flex items-center gap-2.5 p-2.5 border rounded-lg cursor-pointer transition-colors shadow-sm ${payrollData.isDeclared ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
+                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0"/>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-800 leading-none">Declared Salary</span>
+                        {payrollData.isDeclared ? (
+                          <span className="text-[10px] font-mono font-bold text-rose-600 mt-1.5">-₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})} Tax</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 mt-1.5 leading-none">Apply BIR Tax</span>
+                        )}
                       </div>
                     </label>
-                    {payrollData.isDeclared && (
-                      <div className="mt-3 pt-3 border-t border-slate-100 flex justify-between items-center">
-                        <span className="text-sm font-semibold text-slate-600">Calculated Withholding Tax:</span>
-                        <span className="text-sm font-mono font-bold text-rose-600">₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                      </div>
-                    )}
                   </div>
+
                 </div>
               </div>
 
