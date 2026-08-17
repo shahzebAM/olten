@@ -36,6 +36,10 @@ model Admin {
   username String @unique
   password String
   role     String @default("Super Admin") // <-- ADD THIS LINE
+  status   String   @default("Active")
+  
+  // YOU MUST ADD THIS LINE SO THE CHECKBOXES CAN SAVE:
+  modules  Json?
 }
 
 model Settings {
