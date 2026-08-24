@@ -118,19 +118,22 @@ export class AppController {
     return { message: "Role updated" };
   }
 
+
 @Patch('admins/:id/modules')
-async updateAdminModules(
-  @Param('id', ParseIntPipe) id: number,
-  @Body() body: any
-) {
-  try {
-    // @ts-ignore
-    const updatedAdmin = await prisma.admin.update({ where: { id }, data: { modules: body.modules } });
-    return updatedAdmin;
-  } catch (error) {
-    throw new HttpException('Failed to update modules', HttpStatus.INTERNAL_SERVER_ERROR);
+  async updateAdminModules(
+    @Param('id', ParseIntPipe) id: number, 
+    @Body() body: any
+  ) {
+    const targetAdmin = await prisma.admin.findUnique({ where: { id } });
+    if (!targetAdmin) throw new NotFoundException("Admin not found");
+
+    await prisma.admin.update({ 
+      where: { id }, 
+      // @ts-ignore
+      data: { modules: body.modules } 
+    });
+    return { message: "Module access updated" };
   }
-}
   
 
   @Delete('admins/:id')
