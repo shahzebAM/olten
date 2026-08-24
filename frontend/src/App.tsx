@@ -230,6 +230,7 @@ interface Employee {
   firstName: string;
   middleName: string;
   lastName: string;
+  company: string;
   dateOfBirth: string;
   address: string;
   civilStatus: string;
@@ -308,7 +309,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'users'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- ADDED
 const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'users'>('none');
-  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false });
+  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
+  const [selectedCompany, setSelectedCompany] = useState<'Surgicom' | 'Olten' | 'Ordent' | null>(null);
   
 // State for Managing Users (We leave the hardcoded admin OUT of this state)
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -762,7 +764,8 @@ const handleLogout = () => {
     setLoginUsername(''); 
     setLoginPassword(''); 
     setActiveTab('dashboard'); 
-    setActiveModule('none'); // <-- ADD THIS LINE
+    setActiveModule('none');
+    setSelectedCompany(null);
   };
 
   // --- 🚀 WAKE UP PING (Fixes Slow Login Times) ---
@@ -901,7 +904,9 @@ const fetchPayrolls = async () => {
 
     setIsSaving(true);
     const payload = {
-      ...formData, baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+      ...formData, 
+      company: selectedCompany, // <-- THIS TAGS THE EMPLOYEE TO THE ACTIVE COMPANY
+      baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       middleName: formData.middleName || null, bankAccount: formData.bankAccount || '', tin: formData.tin || null,
       sssNumber: formData.sssNumber || null, philhealth: formData.philhealth || null, pagIbig: formData.pagIbig || null,
       cashAdvanceBalance: parseFloat(formData.cashAdvanceBalance) || 0,
@@ -1390,6 +1395,7 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
   };
 
   const filteredEmployees = employees.filter(emp => {
+    if (emp.company !== selectedCompany) return false; // ISOLATION LOCK
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
@@ -1397,6 +1403,7 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
   });
 
   const filteredAttendanceEmployees = employees.filter(emp => {
+    if (emp.company !== selectedCompany) return false; // ISOLATION LOCK
     if (!attendanceSearchQuery) return true;
     const query = attendanceSearchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
@@ -1405,6 +1412,7 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
 
   // Specifically filter Active Employees for the Compute Salary list
   const filteredActiveEmployees = employees.filter(emp => {
+    if (emp.company !== selectedCompany) return false; // ISOLATION LOCK
     if (!payrollActiveSearchQuery) return true;
     const query = payrollActiveSearchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
@@ -1413,10 +1421,12 @@ const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = s
 
   // Specifically filter Saved Payroll History
   const filteredSavedPayrolls = payrolls.filter(pr => {
+    const emp = employees.find(e => e.id === Number(pr.employeeId));
+    if (!emp || emp.company !== selectedCompany) return false; // ISOLATION LOCK
+    
     if (!payrollHistorySearchQuery) return true;
     const query = payrollHistorySearchQuery.toLowerCase();
-    const emp = employees.find(e => e.id === Number(pr.employeeId));
-    const fullName = emp ? `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase() : '';
+    const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
     const dateStr = formatMDY(pr.createdAt).toLowerCase();
     return fullName.includes(query) || dateStr.includes(query);
   });
@@ -1452,7 +1462,7 @@ const handleAddAdmin = async (e: React.FormEvent) => {
       await fetchAdmins(); // Refresh the list from the database
       setNewAdminUsername('');
       setNewAdminPassword('');
-      setNewAdminModules({ payroll: true, ai_docs: false });
+      setNewAdminModules({ payroll: true, ai_docs: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
       showToast("New administrator added successfully!", "success");
     } catch (error) {
       showToast("Failed to add admin. Username might exist.", "error");
@@ -1530,6 +1540,24 @@ const handleUpdateRole = async (id: number, newRole: string) => {
     }
   };
 
+  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: 'Surgicom' | 'Olten' | 'Ordent') => {
+    const safeModules = currentModules || { payroll: false, ai_docs: false, companies: { Surgicom: false, Olten: false, Ordent: false } };
+    const safeCompanies = safeModules.companies || { Surgicom: false, Olten: false, Ordent: false };
+    const newModules = { ...safeModules, companies: { ...safeCompanies, [toggleCompany]: !safeCompanies[toggleCompany] } };
+    
+    setAdminUsers(adminUsers.map(u => u.id === id ? { ...u, modules: newModules } : u));
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modules: newModules })
+      });
+      if (!response.ok) throw new Error();
+      showToast("Company access updated!", "success");
+    } catch (e) {
+      showToast("Failed to update company access.", "error"); fetchAdmins();
+    }
+  };
+
 const handleResetPassword = async (id: number) => {
     if (!newResetPassword) {
       showToast("Please type a new password first.", "error");
@@ -1556,192 +1584,161 @@ const handleResetPassword = async (id: number) => {
     }
   };
 
-  // --- LOGIN SCREEN RENDER ---
+// --- 1. GENERIC LOGIN SCREEN RENDER ---
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4 selection:bg-blue-100 font-sans">
-        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
-          <div className="p-8 text-center bg-blue-700 border-b border-slate-200">
-            <h1 className="text-2xl font-extrabold text-white tracking-wider uppercase">Olten Trading Corp.</h1>
-            <p className="text-blue-200 font-medium text-sm mt-2">Secure Payroll Engine v2.0</p>
+      <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4 selection:bg-blue-100 font-sans relative overflow-hidden">
+        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-400/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10">
+          <div className="p-8 text-center border-b border-slate-200 bg-slate-900">
+            <h1 className="text-2xl font-extrabold text-white tracking-wider uppercase">System Login</h1>
+            <p className="text-slate-400 font-medium text-sm mt-2">Enterprise Resource Planning</p>
           </div>
-          
           <div className="p-8">
             <form onSubmit={handleLogin} className="flex flex-col gap-5">
-              {loginError && (
-                <div className="bg-rose-50 text-rose-600 text-sm font-bold p-3 rounded-lg border border-rose-200 text-center">
-                  {loginError}
-                </div>
-              )}
-              
+              {loginError && <div className="bg-rose-50 text-rose-600 text-sm font-bold p-3 rounded-lg border border-rose-200 text-center">{loginError}</div>}
               <div className="flex flex-col gap-1.5 w-full">
                 <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Database Username</label>
-                <input 
-                  type="text" 
-                  required 
-                  value={loginUsername} 
-                  onChange={(e) => setLoginUsername(e.target.value)} 
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm"
-                  placeholder="Enter administrator ID"
-                />
+                <input type="text" required value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm" placeholder="Enter administrator ID" />
               </div>
-
               <div className="flex flex-col gap-1.5 w-full">
                 <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Secure Password</label>
-                <input 
-                  type="password" 
-                  required 
-                  value={loginPassword} 
-                  onChange={(e) => setLoginPassword(e.target.value)} 
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm"
-                  placeholder="••••••••"
-                />
+                <input type="password" required value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none transition-all text-slate-800 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 font-medium shadow-sm" placeholder="••••••••" />
               </div>
-
-              <button 
-                type="submit" 
-                disabled={isLoggingIn} 
-                className="mt-4 w-full py-3.5 px-4 rounded-xl font-bold text-white bg-blue-700 hover:bg-blue-800 transition-colors shadow-md disabled:opacity-50 tracking-wide uppercase text-sm"
-              >
-                {isLoggingIn ? 'Authenticating...' : 'Access Database'}
+              <button type="submit" disabled={isLoggingIn} className="mt-4 w-full py-3.5 px-4 rounded-xl font-bold text-white shadow-md disabled:opacity-50 tracking-wide uppercase text-sm transition-colors bg-blue-600 hover:bg-blue-700">
+                {isLoggingIn ? 'Authenticating...' : 'Access Systems'}
               </button>
             </form>
-          </div>
-          <div className="bg-slate-50 p-4 text-center border-t border-slate-200">
-            <p className="text-xs text-slate-400 font-medium">Session is strictly memory-bound. Refreshing will require re-authentication.</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // =========================================================
- // =========================================================
-  // MODULE SELECTION GATEWAY (Professional & Elegant)
-  // =========================================================
-if (activeModule === 'none') {
-    const hasAnyModule = hasPayroll || hasAiDocs || hasUsers;
+  // --- 2. GLOBAL ACCESS CONTROL STATE ---
+  const allowedCompanies = isCurrentUserSuperAdmin 
+    ? { Surgicom: true, Olten: true, Ordent: true } 
+    : (currentUser?.modules?.companies || { Surgicom: false, Olten: false, Ordent: false });
 
+  // --- 3. COMPANY SELECTION SCREEN ---
+  if (!selectedCompany && activeModule !== 'users') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 sm:p-12 font-sans selection:bg-blue-100 relative overflow-hidden">
+        <div className="absolute top-4 right-4 sm:top-8 sm:right-8 flex items-center gap-3 z-50">
+          {isCurrentUserSuperAdmin && (
+            <button onClick={() => setActiveModule('users')} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl shadow-sm text-sm font-bold transition-colors flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+              Access Control
+            </button>
+          )}
+          <button onClick={handleLogout} className="px-5 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm text-sm font-bold text-slate-600 hover:text-rose-600 transition-colors">Logout Session</button>
+        </div>
+        
+        <div className="w-full max-w-4xl relative z-10 text-center mb-10">
+          <h1 className="text-3xl sm:text-5xl font-black text-slate-800 tracking-tight drop-shadow-sm">Select Organization</h1>
+          <p className="text-slate-500 font-medium text-sm sm:text-lg mt-3">Choose a company database to access its secure environment.</p>
+        </div>
+
+        <div className="w-full max-w-5xl flex flex-wrap justify-center gap-6 relative z-10">
+          {allowedCompanies.Surgicom && (
+            <button onClick={() => setSelectedCompany('Surgicom')} className="group w-full md:w-[30%] bg-white rounded-3xl p-10 shadow-sm hover:shadow-xl border border-slate-200 hover:border-emerald-300 transition-all duration-300 flex flex-col items-center text-center hover:-translate-y-1.5">
+              <div className="w-20 h-20 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-300 shadow-sm border border-emerald-100">
+                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+              </div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-wider uppercase group-hover:text-emerald-700 transition-colors">Surgicom</h2>
+            </button>
+          )}
+          
+          {allowedCompanies.Olten && (
+            <button onClick={() => setSelectedCompany('Olten')} className="group w-full md:w-[30%] bg-white rounded-3xl p-10 shadow-sm hover:shadow-xl border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center text-center hover:-translate-y-1.5">
+              <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300 shadow-sm border border-blue-100">
+                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
+              </div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-wider uppercase group-hover:text-blue-700 transition-colors">Olten</h2>
+            </button>
+          )}
+
+          {allowedCompanies.Ordent && (
+            <button onClick={() => setSelectedCompany('Ordent')} className="group w-full md:w-[30%] bg-white rounded-3xl p-10 shadow-sm hover:shadow-xl border border-slate-200 hover:border-amber-300 transition-all duration-300 flex flex-col items-center text-center hover:-translate-y-1.5">
+              <div className="w-20 h-20 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-amber-600 group-hover:text-white transition-all duration-300 shadow-sm border border-amber-100">
+                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+              </div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-wider uppercase group-hover:text-amber-700 transition-colors">Ordent</h2>
+            </button>
+          )}
+
+          {(!allowedCompanies.Surgicom && !allowedCompanies.Olten && !allowedCompanies.Ordent) && (
+            <div className="w-full max-w-lg text-center p-12 bg-white rounded-3xl border border-rose-200 shadow-sm">
+              <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+              </div>
+              <h3 className="text-xl font-bold text-slate-800">Access Denied</h3>
+              <p className="text-slate-500 mt-2">You have not been granted access to any companies. Contact your Super Admin.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- 4. MODULE GATEWAY (Professional & Elegant) ---
+  if (activeModule === 'none') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 sm:p-8 font-sans selection:bg-blue-100 relative overflow-hidden">
-        {/* Subtle ambient background glows */}
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-400/10 rounded-full blur-3xl pointer-events-none"></div>
-
         <div className="w-full max-w-5xl relative z-10 flex flex-col gap-6 sm:gap-8">
           
-          {/* Top Control Bar */}
           <div className="flex justify-between items-center px-2">
             <div className="flex items-center gap-3">
               <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
               <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
                 Active Session: <span className="text-slate-800 bg-slate-200/70 px-2 py-0.5 rounded-md">{loginUsername}</span> 
                 {currentUser ? (
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] text-white shadow-sm ${currentUser.role === 'Super Admin' ? 'bg-slate-800' : 'bg-blue-600'}`}>
-                    {currentUser.role}
-                  </span>
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] text-white shadow-sm ${currentUser.role === 'Super Admin' ? 'bg-slate-800' : 'bg-blue-600'}`}>{currentUser.role}</span>
                 ) : (
                   <span className="px-2 py-0.5 rounded-md text-[10px] text-white shadow-sm bg-rose-500 animate-pulse">Loading DB...</span>
                 )}
               </span>
             </div>
-            <button onClick={handleLogout} className="text-xs sm:text-sm font-bold text-slate-500 hover:text-rose-600 transition-colors flex items-center gap-2 bg-white/50 hover:bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200 backdrop-blur-sm">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-              Secure Sign Out
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setSelectedCompany(null)} className="text-xs sm:text-sm font-bold text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-2 bg-white/50 hover:bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">Change Company</button>
+              <button onClick={handleLogout} className="text-xs sm:text-sm font-bold text-slate-500 hover:text-rose-600 transition-colors flex items-center gap-2 bg-white/50 hover:bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">Secure Sign Out</button>
+            </div>
           </div>
           
-          {/* Premium Corporate Banner */}
-          <div className="w-full bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-8 sm:p-14 border border-slate-800 flex flex-col md:flex-row items-center justify-between text-center md:text-left gap-8 overflow-hidden relative">
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] pointer-events-none"></div>
+          <div className={`w-full bg-gradient-to-br rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-8 sm:p-14 border flex flex-col md:flex-row items-center justify-between text-center md:text-left gap-8 overflow-hidden relative ${selectedCompany === 'Surgicom' ? 'from-emerald-900 to-slate-900 border-emerald-800' : selectedCompany === 'Ordent' ? 'from-amber-900 to-slate-900 border-amber-800' : 'from-slate-900 via-blue-950 to-slate-900 border-slate-800'}`}>
             <div className="relative z-10">
               <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight drop-shadow-sm">
-                Olten <span className="text-blue-400 font-light tracking-normal">Trading Corp.</span>
+                {selectedCompany} <span className={`font-light tracking-normal ${selectedCompany === 'Surgicom' ? 'text-emerald-400' : selectedCompany === 'Ordent' ? 'text-amber-400' : 'text-blue-400'}`}>Trading Corp.</span>
               </h1>
-              <p className="text-blue-200/80 font-medium text-sm sm:text-base mt-3 max-w-lg leading-relaxed">
-                Enterprise Resource Planning Environment. Select a core module below to initialize your secure workspace session.
-              </p>
-            </div>
-            <div className="relative z-10 hidden md:flex items-center justify-center w-24 h-24 bg-white/5 rounded-full border border-white/10 backdrop-blur-md shadow-inner shrink-0">
-              <svg className="w-10 h-10 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+              <p className="text-white/70 font-medium text-sm sm:text-base mt-3 max-w-lg leading-relaxed">Enterprise Resource Planning Environment. Select a core module below to initialize your secure workspace session.</p>
             </div>
           </div>
 
-          {/* Module Cards Grid */}
-          {hasAnyModule ? (
-            <div className="w-full flex flex-wrap justify-center md:justify-start gap-4 sm:gap-6">
-              
-              {/* Payroll Module Card (ONLY RENDERS IF ALLOWED) */}
-              {hasPayroll && (
-                <button 
-                  onClick={() => setActiveModule('payroll')} 
-                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-                >
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                  <div className="relative z-10 w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-blue-100 group-hover:border-blue-600 shrink-0">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-blue-700 transition-colors tracking-tight">Payroll Engine</h2>
-                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                    Process salaries, monitor attendance logs, auto-calculate withholdings, and export detailed corporate tax reports.
-                  </p>
-                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-blue-600 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                  </div>
-                </button>
-              )}
+          <div className="w-full flex flex-wrap justify-center md:justify-start gap-4 sm:gap-6">
+            {hasPayroll && (
+              <button onClick={() => setActiveModule('payroll')} className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                <div className="relative z-10 w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-blue-100 shrink-0">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </div>
+                <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-blue-700 tracking-tight">Payroll Engine</h2>
+                <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">Process salaries, monitor attendance logs, auto-calculate withholdings, and export detailed corporate tax reports.</p>
+              </button>
+            )}
 
-              {/* AI Documentation Module Card (ONLY RENDERS IF ALLOWED) */}
-              {hasAiDocs && (
-                <button 
-                  onClick={() => setActiveModule('ai_docs')} 
-                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-indigo-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-                >
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-indigo-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                  <div className="relative z-10 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-indigo-100 group-hover:border-indigo-600 shrink-0">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                  </div>
-                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-indigo-700 transition-colors tracking-tight">AI Documentation</h2>
-                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                    Generate corporate memos, automate system manuals, and synthesize meeting records with integrated AI tools.
-                  </p>
-                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                  </div>
-                </button>
-              )}
+            {hasAiDocs && (
+              <button onClick={() => setActiveModule('ai_docs')} className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-indigo-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-indigo-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                <div className="relative z-10 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-indigo-100 shrink-0">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                </div>
+                <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-indigo-700 tracking-tight">AI Documentation</h2>
+                <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">Generate corporate memos, automate system manuals, and synthesize meeting records with integrated AI tools.</p>
+              </button>
+            )}
 
-              {/* User Management Module Card (ONLY RENDERS FOR SUPER ADMIN) */}
-              {hasUsers && (
-                <button 
-                  onClick={() => setActiveModule('users')} 
-                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-slate-800 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-                >
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-slate-100 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                  <div className="relative z-10 w-12 h-12 bg-slate-100 text-slate-700 rounded-xl flex items-center justify-center mb-4 group-hover:bg-slate-800 group-hover:text-white transition-colors duration-300 shadow-sm border border-slate-200 group-hover:border-slate-800 shrink-0">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                  </div>
-                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-slate-900 transition-colors tracking-tight">Access Control</h2>
-                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                    Manage system administrators, assign module permissions, and reset credentials.
-                  </p>
-                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-slate-700 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                  </div>
-                </button>
-              )}
-
-            </div>
-          ) : (
-            <div className="w-full bg-white rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
-              <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
-                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-              </div>
-              <h3 className="text-2xl font-bold text-slate-800 tracking-tight">No Access Granted</h3>
-              <p className="text-slate-500 mt-2 text-lg">Your account has not been assigned to any system modules yet.<br/>Please contact a Super Administrator.</p>
-            </div>
-          )}
-
+           
+          </div>
         </div>
       </div>
     );
@@ -1786,7 +1783,7 @@ if (activeModule === 'none') {
           </div>
           <button onClick={() => setActiveModule('none')} className="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl shadow-sm font-bold transition-colors flex items-center gap-2 text-sm shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-            Return to Gateway
+            Back to Organizations
           </button>
         </div>
 
@@ -1821,15 +1818,33 @@ if (activeModule === 'none') {
                         {user.role === 'Super Admin' ? (
                           <span className="bg-slate-800 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest shadow-sm">Full System Access</span>
                         ) : isCurrentUserSuperAdmin ? (
-                          <div className="flex flex-col gap-2.5">
-                            <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
-                              <input type="checkbox" checked={user.modules?.payroll || false} onChange={() => handleUpdateModules(user.id, user.modules, 'payroll')} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600 cursor-pointer" />
-                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Payroll Engine</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
-                              <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 cursor-pointer" />
-                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI Docs</span>
-                            </label>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Modules</span>
+                              <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.payroll || false} onChange={() => handleUpdateModules(user.id, user.modules, 'payroll')} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600 cursor-pointer" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Payroll Engine</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 cursor-pointer" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI Docs</span>
+                              </label>
+                            </div>
+                            <div className="flex flex-col gap-2 border-t border-slate-100 pt-2">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Companies</span>
+                              <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.companies?.Surgicom || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Surgicom')} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Surgicom</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.companies?.Olten || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Olten')} className="w-4 h-4 text-blue-600 rounded border-slate-300 cursor-pointer" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Olten</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.companies?.Ordent || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Ordent')} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Ordent</span>
+                              </label>
+                            </div>
                           </div>
                         ) : (
                           <div className="flex gap-2 flex-wrap">
@@ -1889,17 +1904,36 @@ if (activeModule === 'none') {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 pt-4 border-t border-slate-100">
-                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
-                <div className="flex flex-wrap gap-5 mt-1">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
-                    <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
-                  </label>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
-                    <span className="text-sm font-medium text-slate-700">AI Documentation</span>
-                  </label>
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
+                  <div className="flex flex-col gap-3 mt-1">
+                    <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
+                      <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800" />
+                      <span className="text-sm font-medium text-slate-700">AI Documentation</span>
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Company Access</label>
+                  <div className="flex flex-col gap-3 mt-1">
+                    <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.companies.Surgicom} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Surgicom: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600" />
+                      <span className="text-sm font-medium text-slate-700">Surgicom</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.companies.Olten} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Olten: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-600" />
+                      <span className="text-sm font-medium text-slate-700">Olten</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.companies.Ordent} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Ordent: e.target.checked}})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600" />
+                      <span className="text-sm font-medium text-slate-700">Ordent</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -2236,7 +2270,7 @@ if (activeModule === 'none') {
                       </colgroup>
                       <tbody>
                         <tr>
-                          <td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">Olten TRADING CORP.</td>
+                          <td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">{selectedCompany?.toUpperCase()} TRADING CORP.</td>
                           <td colSpan={4} className="border border-slate-300 border-l-0 bg-white"></td>
                         </tr>
                         <tr>
@@ -2428,7 +2462,7 @@ if (activeModule === 'none') {
                   return (
                     <div className="w-full">
                       <div className="text-center mb-6">
-                        <h1 className="text-xl font-bold uppercase tracking-wider text-slate-900">Olten TRADING CORP.</h1>
+                        <h1 className="text-xl font-bold uppercase tracking-wider text-slate-900">{selectedCompany?.toUpperCase()} TRADING CORP.</h1>
                         <h2 className="text-md font-semibold text-slate-700 mt-1">PAYROLL SUMMARY REPORT</h2>
                         <p className="text-sm text-slate-500 mt-2">
                           Date Range: <span className="font-bold text-slate-800">{reportFromDate ? formatMDY(reportFromDate) : 'Beginning'}</span> to <span className="font-bold text-slate-800">{reportToDate ? formatMDY(reportToDate) : 'Latest'}</span>
@@ -2622,7 +2656,7 @@ if (activeModule === 'none') {
       
      <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
-          <h1 className="text-xl font-black text-white tracking-wider uppercase">Olten<span className="text-blue-500">Admin</span></h1>
+          <h1 className="text-xl font-black text-white tracking-wider uppercase">{selectedCompany}<span className="text-blue-500">Admin</span></h1>
           <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
@@ -2694,9 +2728,18 @@ if (activeModule === 'none') {
               </div>
             </div>
           </div>
-          <button onClick={handleLogout} className="px-4 sm:px-6 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-sm font-bold transition-colors shadow-sm border border-slate-200">
-            Logout
-          </button>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setActiveModule('none')} 
+              className="hidden sm:flex px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm font-bold transition-colors shadow-sm border border-blue-200 items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+              Gateway
+            </button>
+            <button onClick={handleLogout} className="px-4 sm:px-6 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-sm font-bold transition-colors shadow-sm border border-slate-200">
+              Logout
+            </button>
+          </div>
         </header>
 
         {/* SCROLLABLE MAIN CONTENT */}
@@ -2706,23 +2749,38 @@ if (activeModule === 'none') {
         {/* DASHBOARD TAB */}
             {activeTab === 'dashboard' && (
               <div className="space-y-6 print-hidden">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
-                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Employees</p>
-                    <h3 className="text-4xl font-black text-blue-950 mt-1">{employees.length}</h3>
-                    <p className="text-sm text-slate-500 font-medium mt-4"><span className="text-emerald-500 font-bold">Active</span> in personnel directory</p>
-                  </div>
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
-                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Net Processed</p>
-                    <h3 className="text-4xl font-black text-emerald-900 mt-1">₱{formatMoney(payrolls.reduce((sum, p) => sum + p.netPay, 0))}</h3>
-                    <p className="text-sm text-slate-500 font-medium mt-4">Across <span className="font-bold text-emerald-600">{payrolls.length}</span> historical records</p>
-                  </div>
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
-                    <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Shift Logs</p>
-                    <h3 className="text-4xl font-black text-indigo-950 mt-1">{attendances.length}</h3>
-                    <p className="text-sm text-slate-500 font-medium mt-4">Stored attendance records</p>
-                  </div>
-                </div>
+                {(() => {
+                  // Isolate dashboard metrics strictly to the selected company
+                  const companyEmployees = employees.filter(emp => emp.company === selectedCompany);
+                  const companyPayrolls = payrolls.filter(pr => {
+                    const emp = employees.find(e => e.id === Number(pr.employeeId));
+                    return emp && emp.company === selectedCompany;
+                  });
+                  const companyAttendances = attendances.filter(a => {
+                    const emp = employees.find(e => e.id === Number(a.employeeId));
+                    return emp && emp.company === selectedCompany;
+                  });
+
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Employees</p>
+                        <h3 className="text-4xl font-black text-blue-950 mt-1">{companyEmployees.length}</h3>
+                        <p className="text-sm text-slate-500 font-medium mt-4"><span className="text-emerald-500 font-bold">Active</span> in personnel directory</p>
+                      </div>
+                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Net Processed</p>
+                        <h3 className="text-4xl font-black text-emerald-900 mt-1">₱{formatMoney(companyPayrolls.reduce((sum, p) => sum + p.netPay, 0))}</h3>
+                        <p className="text-sm text-slate-500 font-medium mt-4">Across <span className="font-bold text-emerald-600">{companyPayrolls.length}</span> historical records</p>
+                      </div>
+                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Shift Logs</p>
+                        <h3 className="text-4xl font-black text-indigo-950 mt-1">{companyAttendances.length}</h3>
+                        <p className="text-sm text-slate-500 font-medium mt-4">Stored attendance records</p>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
