@@ -44,7 +44,10 @@ export class AppController {
   @Post('auth/login')
   async login(@Body() body: any) {
     const { username, password } = body;
-    const admin = await prisma.admin.findUnique({ where: { username } });
+    
+    // FIXED: Fetch all and match case-insensitively so "Ali" and "ali" both work perfectly!
+    const admins = await prisma.admin.findMany();
+    const admin = admins.find(a => a.username.toLowerCase() === username.toLowerCase());
     
     if (!admin) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
     
@@ -62,21 +65,34 @@ export class AppController {
       username: a.username,
       // @ts-ignore
       role: a.role || 'Admin', // Pulls the real role from the database!
+      // FIXED: Actually return the modules to the frontend so checkboxes stay checked!
+      // @ts-ignore
+      modules: a.modules || { payroll: false, ai_docs: false }, 
       status: 'Active'
     }));
   }
 
   @Post('admins')
   async createAdmin(@Body() body: any) {
-    const { username, password } = body;
-    const existing = await prisma.admin.findUnique({ where: { username } });
+    // FIXED: Extract the modules from the frontend payload
+    const { username, password, modules } = body; 
+    
+    // FIXED: Case-insensitive check to prevent duplicate names like "admin" and "Admin"
+    const admins = await prisma.admin.findMany();
+    const existing = admins.find(a => a.username.toLowerCase() === username.toLowerCase());
     
     if (existing) throw new HttpException('Username exists', HttpStatus.FORBIDDEN);
     
     const hashedPassword = await bcrypt.hash(password, 10);
     await prisma.admin.create({ 
       // @ts-ignore
-      data: { username, password: hashedPassword, role: 'Admin' } 
+      data: { 
+        username, 
+        password: hashedPassword, 
+        role: 'Admin',
+        // FIXED: Save the modules to the database when adding a user!
+        modules: modules || { payroll: false, ai_docs: false } 
+      } 
     });
     
     return { message: "Admin created" };
@@ -118,8 +134,7 @@ export class AppController {
     return { message: "Role updated" };
   }
 
-
-@Patch('admins/:id/modules')
+  @Patch('admins/:id/modules')
   async updateAdminModules(
     @Param('id', ParseIntPipe) id: number, 
     @Body() body: any
@@ -135,7 +150,6 @@ export class AppController {
     return { message: "Module access updated" };
   }
   
-
   @Delete('admins/:id')
   async deleteAdmin(@Param('id', ParseIntPipe) id: number) {
     const targetAdmin = await prisma.admin.findUnique({ where: { id } });
