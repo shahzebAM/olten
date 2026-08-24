@@ -314,9 +314,14 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
-  // --- SUPER ADMIN CAPABILITIES STATE ---
-const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
+// --- SUPER ADMIN CAPABILITIES STATE ---
+  const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
   const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
+  
+  // --- GLOBAL ACCESS CONTROL ---
+  const hasPayroll = isCurrentUserSuperAdmin || currentUser?.modules?.payroll === true;
+  const hasAiDocs = isCurrentUserSuperAdmin || currentUser?.modules?.ai_docs === true;
+  const hasUsers = isCurrentUserSuperAdmin;
   
   const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
   const [newResetPassword, setNewResetPassword] = useState('');
@@ -1611,9 +1616,12 @@ const handleResetPassword = async (id: number) => {
   }
 
   // =========================================================
-  // MODULE SELECTION GATEWAY 
+ // =========================================================
+  // MODULE SELECTION GATEWAY (Professional & Elegant)
   // =========================================================
-  if (activeModule === 'none') {
+if (activeModule === 'none') {
+    const hasAnyModule = hasPayroll || hasAiDocs || hasUsers;
+
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 sm:p-8 font-sans selection:bg-blue-100 relative overflow-hidden">
         {/* Subtle ambient background glows */}
@@ -1624,9 +1632,18 @@ const handleResetPassword = async (id: number) => {
           
           {/* Top Control Bar */}
           <div className="flex justify-between items-center px-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></div>
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">System Gateway</span>
+            <div className="flex items-center gap-3">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                Active Session: <span className="text-slate-800 bg-slate-200/70 px-2 py-0.5 rounded-md">{loginUsername}</span> 
+                {currentUser ? (
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] text-white shadow-sm ${currentUser.role === 'Super Admin' ? 'bg-slate-800' : 'bg-blue-600'}`}>
+                    {currentUser.role}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] text-white shadow-sm bg-rose-500 animate-pulse">Loading DB...</span>
+                )}
+              </span>
             </div>
             <button onClick={handleLogout} className="text-xs sm:text-sm font-bold text-slate-500 hover:text-rose-600 transition-colors flex items-center gap-2 bg-white/50 hover:bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200 backdrop-blur-sm">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
@@ -1650,55 +1667,81 @@ const handleResetPassword = async (id: number) => {
             </div>
           </div>
 
- {/* Module Cards Grid */}
-          <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
-            
-            {/* Payroll Module Card */}
-            <button 
-              onClick={() => setActiveModule('payroll')} 
-              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="relative z-10 w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-blue-100 group-hover:border-blue-600 shrink-0">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              </div>
-              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-blue-700 transition-colors tracking-tight">Payroll Engine</h2>
-              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                Process salaries, monitor attendance, calculate taxes, and export detailed corporate payslips.
-              </p>
-            </button>
+          {/* Module Cards Grid */}
+          {hasAnyModule ? (
+            <div className="w-full flex flex-wrap justify-center md:justify-start gap-4 sm:gap-6">
+              
+              {/* Payroll Module Card (ONLY RENDERS IF ALLOWED) */}
+              {hasPayroll && (
+                <button 
+                  onClick={() => setActiveModule('payroll')} 
+                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-blue-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                  <div className="relative z-10 w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-blue-100 group-hover:border-blue-600 shrink-0">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-blue-700 transition-colors tracking-tight">Payroll Engine</h2>
+                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                    Process salaries, monitor attendance logs, auto-calculate withholdings, and export detailed corporate tax reports.
+                  </p>
+                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-blue-600 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                  </div>
+                </button>
+              )}
 
-            {/* AI Documentation Module Card */}
-            <button 
-              onClick={() => setActiveModule('ai_docs')} 
-              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-indigo-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-indigo-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="relative z-10 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-indigo-100 group-hover:border-indigo-600 shrink-0">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              </div>
-              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-indigo-700 transition-colors tracking-tight">AI Documentation</h2>
-              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                Generate corporate memos, automate manuals, and synthesize records with AI tools.
-              </p>
-            </button>
+              {/* AI Documentation Module Card (ONLY RENDERS IF ALLOWED) */}
+              {hasAiDocs && (
+                <button 
+                  onClick={() => setActiveModule('ai_docs')} 
+                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-indigo-300 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-indigo-50 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                  <div className="relative z-10 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300 shadow-sm border border-indigo-100 group-hover:border-indigo-600 shrink-0">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  </div>
+                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-indigo-700 transition-colors tracking-tight">AI Documentation</h2>
+                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                    Generate corporate memos, automate system manuals, and synthesize meeting records with integrated AI tools.
+                  </p>
+                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                  </div>
+                </button>
+              )}
 
-            {/* NEW: User Management Module Card */}
-            <button 
-              onClick={() => setActiveModule('users')} 
-              className="group relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-slate-800 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-slate-100 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="relative z-10 w-12 h-12 bg-slate-100 text-slate-700 rounded-xl flex items-center justify-center mb-4 group-hover:bg-slate-800 group-hover:text-white transition-colors duration-300 shadow-sm border border-slate-200 group-hover:border-slate-800 shrink-0">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+              {/* User Management Module Card (ONLY RENDERS FOR SUPER ADMIN) */}
+              {hasUsers && (
+                <button 
+                  onClick={() => setActiveModule('users')} 
+                  className="group relative bg-white w-full md:w-[32%] rounded-2xl p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-slate-200 hover:border-slate-800 transition-all duration-300 flex flex-col items-center sm:items-start text-center sm:text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-slate-100 to-transparent rounded-tr-2xl rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                  <div className="relative z-10 w-12 h-12 bg-slate-100 text-slate-700 rounded-xl flex items-center justify-center mb-4 group-hover:bg-slate-800 group-hover:text-white transition-colors duration-300 shadow-sm border border-slate-200 group-hover:border-slate-800 shrink-0">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                  </div>
+                  <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-slate-900 transition-colors tracking-tight">Access Control</h2>
+                  <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
+                    Manage system administrators, assign module permissions, and reset credentials.
+                  </p>
+                  <div className="relative z-10 mt-5 flex items-center gap-1.5 text-sm font-bold text-slate-700 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+                    Launch Module <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                  </div>
+                </button>
+              )}
+
+            </div>
+          ) : (
+            <div className="w-full bg-white rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
+              <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
+                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
               </div>
-              <h2 className="relative z-10 text-lg font-bold text-slate-800 group-hover:text-slate-900 transition-colors tracking-tight">Access Control</h2>
-              <p className="relative z-10 text-slate-500 mt-1.5 text-sm leading-relaxed max-w-sm">
-                Manage system administrators, assign module permissions, and reset credentials.
-              </p>
-            </button>
-            
-          </div>
+              <h3 className="text-2xl font-bold text-slate-800 tracking-tight">No Access Granted</h3>
+              <p className="text-slate-500 mt-2 text-lg">Your account has not been assigned to any system modules yet.<br/>Please contact a Super Administrator.</p>
+            </div>
+          )}
+
         </div>
       </div>
     );
@@ -1774,8 +1817,10 @@ const handleResetPassword = async (id: number) => {
                         {user.username}
                       </td>
                       
-                      <td className="py-4 px-6">
-                        {isCurrentUserSuperAdmin ? (
+                     <td className="py-4 px-6">
+                        {user.role === 'Super Admin' ? (
+                          <span className="bg-slate-800 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest shadow-sm">Full System Access</span>
+                        ) : isCurrentUserSuperAdmin ? (
                           <div className="flex flex-col gap-2.5">
                             <label className="flex items-center gap-2 cursor-pointer group hover:opacity-80">
                               <input type="checkbox" checked={user.modules?.payroll || false} onChange={() => handleUpdateModules(user.id, user.modules, 'payroll')} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600 cursor-pointer" />
@@ -2575,7 +2620,7 @@ const handleResetPassword = async (id: number) => {
         ></div>
       )}
       
-      <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+     <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
           <h1 className="text-xl font-black text-white tracking-wider uppercase">Olten<span className="text-blue-500">Admin</span></h1>
           <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
@@ -2589,29 +2634,42 @@ const handleResetPassword = async (id: number) => {
              Dashboard Overview
           </button>
           
-          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
-          <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Directory List
-          </button>
-          <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Register New
-          </button>
-          <button onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Log Attendance
-          </button>
-          
-          <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
-          <button onClick={() => { setActiveTab('payroll'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Compute Payroll
-          </button>
-          <button onClick={() => { setActiveTab('tax'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Tax Reports
-          </button>
-          <button onClick={() => { setActiveTab('report'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-             Summary Reports
-          </button>
+          {/* PAYROLL ENGINE LOCK */}
+          {hasPayroll && (
+            <>
+              <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
+              <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Directory List
+              </button>
+              <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Register New
+              </button>
+              <button onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Log Attendance
+              </button>
+              
+              <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
+              <button onClick={() => { setActiveTab('payroll'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Compute Payroll
+              </button>
+              <button onClick={() => { setActiveTab('tax'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Tax Reports
+              </button>
+              <button onClick={() => { setActiveTab('report'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Summary Reports
+              </button>
+            </>
+          )}
 
-       
+          {/* ACCESS CONTROL LOCK */}
+          {hasUsers && (
+            <>
+              <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Settings</div>
+              <button onClick={() => { setActiveTab('users'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'users' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                 Manage System Users
+              </button>
+            </>
+          )}
         </div>
       </aside>
 
