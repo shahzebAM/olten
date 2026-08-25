@@ -6,6 +6,8 @@ interface AiDocsProps {
   onBack: () => void;
 }
 
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+
 interface DriveItem {
   id: string;
   name: string;
@@ -40,7 +42,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
   const fetchDirectory = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/docs/directory', {
+      const res = await fetch(\${API_URL}/api/docs/directory``, {
         headers: { 'x-company': selectedCompany },
       });
       const data = await res.json();
@@ -73,7 +75,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
     }
 
     try {
-      const res = await fetch('http://localhost:3000/api/docs/upload', {
+      const res = await fetch(\${API_URL}/api/docs/upload``, {
         method: 'POST',
         headers: {
           'x-company': selectedCompany,
@@ -128,7 +130,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
     setAiAnswer(null);
 
     try {
-      const res = await fetch('http://localhost:3000/api/docs/search', {
+      const res = await fetch(\${API_URL}/api/docs/search``, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
