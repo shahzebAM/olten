@@ -86,3 +86,30 @@ model Payroll {
   pagIbigSalaryLoan    Float    @default(0)
 }
 
+model Document {
+  id           Int      @id @default(autoincrement())
+  filename     String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  company      String   // "Surgicom", "Olten", or "Ordent"
+  geminiFileUri String? // The URI provided by Google AI Studio
+  geminiFileId  String? // The unique ID from Google
+  status       String   @default("PROCESSING") // PROCESSING, ACTIVE, FAILED
+  uploadedBy   String   // Username of the admin
+  createdAt    DateTime @default(now())
+
+  @@index([company])
+}
+
+model SearchHistory {
+  id           Int      @id @default(autoincrement())
+  username     String
+  company      String
+  query        String
+  response     String
+  modelUsed    String
+  promptTokens Int      @default(0)
+  completionTokens Int  @default(0)
+  createdAt    DateTime @default(now())
+}
