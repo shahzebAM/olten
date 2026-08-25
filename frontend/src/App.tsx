@@ -3184,7 +3184,7 @@ const handleResetPassword = async (id: number) => {
                           }
                         });
                         
-                        const currentLog = dailyTimeLogs[emp.id] || { timeIn: '', timeOut: '', type: 'regular', reason: '' };
+                        const currentLog = dailyTimeLogs[emp.id] || { timeIn: shiftStart, timeOut: shiftEnd, type: 'regular', reason: '' };
                     
                     return (
                       <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
@@ -3231,7 +3231,7 @@ const handleResetPassword = async (id: number) => {
                         </td>
 
                         <td className="py-5 px-6 align-top">
-                          <div className="flex flex-col gap-2 w-full min-w-[200px] max-w-full sm:max-w-[320px]">
+                          <div className="flex flex-col gap-2 w-full min-w-[200px] max-w-full sm:max-w-[400px]">
                             <select value={currentLog.type} onChange={(e) => handleTimeChange(emp.id, 'type', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:border-indigo-500 bg-white w-full shadow-sm">
                               <option value="regular">Standard Office Shift</option>
                               <option value="paid_leave">Paid Leave (8 hrs)</option>
@@ -3240,11 +3240,27 @@ const handleResetPassword = async (id: number) => {
                             
                             <div className="flex flex-col gap-2 mt-1 w-full">
                               {currentLog.type === 'regular' ? (
-                                <>
-                                  <TimePicker12h value={currentLog.timeIn} onChange={(val: string) => handleTimeChange(emp.id, 'timeIn', val)} compact />
-                                  <TimePicker12h value={currentLog.timeOut} onChange={(val: string) => handleTimeChange(emp.id, 'timeOut', val)} compact />
-                                </>
-                              ) : (
+  /* --- NEW HORIZONTAL UI --- */
+  <div className="flex items-center gap-2 w-full bg-slate-50 p-2 rounded-xl border border-slate-200 shadow-inner">
+    <div className="flex-1 min-w-0">
+      <TimePicker12h 
+        value={currentLog.timeIn} 
+        onChange={(val: string) => handleTimeChange(emp.id, 'timeIn', val)} 
+        compact 
+      />
+    </div>
+    
+    <span className="text-slate-300 font-bold text-lg shrink-0">→</span>
+    
+    <div className="flex-1 min-w-0">
+      <TimePicker12h 
+        value={currentLog.timeOut} 
+        onChange={(val: string) => handleTimeChange(emp.id, 'timeOut', val)} 
+        compact 
+      />
+    </div>
+  </div>
+) : (
                                 <input 
                                   type="text" 
                                   placeholder="Reason (Optional)" 
