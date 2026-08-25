@@ -42,7 +42,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
   const fetchDirectory = async () => {
     try {
       setLoading(true);
-      const res = await fetch(\${API_URL}/api/docs/directory``, {
+      const res = await fetch(`${API_URL}/api/docs/directory`, {
         headers: { 'x-company': selectedCompany },
       });
       const data = await res.json();
@@ -75,7 +75,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
     }
 
     try {
-      const res = await fetch(\${API_URL}/api/docs/upload``, {
+      const res = await fetch(`${API_URL}/api/docs/upload`, {
         method: 'POST',
         headers: {
           'x-company': selectedCompany,
@@ -103,7 +103,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
     if (!newFolderName.trim()) return;
 
     try {
-      const res = await fetch('http://localhost:3000/api/docs/folder', {
+      const res = await fetch(`${API_URL}/api/docs/folder`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -130,7 +130,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
     setAiAnswer(null);
 
     try {
-      const res = await fetch(\${API_URL}/api/docs/search``, {
+      const res = await fetch(`${API_URL}/api/docs/search`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -190,7 +190,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
       {/* Main Content Area (Figma Grid Layout) */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-8 py-10 flex flex-col items-center">
         {/* Search Bar matching Figma */}
-        {/* Search Bar matching Figma */}
         <form onSubmit={handleSearchSubmit} className="w-full max-w-2xl mb-12">
           <div className="relative flex items-center">
             <input
@@ -214,7 +213,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
             </button>
           </div>
 
-          {/* NEW: Elegant Animated Progress Bar */}
+          {/* Elegant Animated Progress Bar */}
           {isSearching && (
             <div className="w-full h-1 mt-4 bg-indigo-50 rounded-full overflow-hidden flex">
               <div className="w-1/3 h-full bg-indigo-500 rounded-full animate-[ping_1.5s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
