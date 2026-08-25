@@ -895,7 +895,9 @@ const fetchPayrolls = async () => {
       } else if (type === 'bank') { digits = digits.slice(0, 20); val = digits; }
     }
     setFormData(prev => ({ ...prev, [field]: val }));
-  };
+  };   
+
+  
 
   const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
