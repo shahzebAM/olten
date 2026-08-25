@@ -440,21 +440,31 @@ const [payrollData, setPayrollData] = useState({
     }
   };
 
-const handleExportAttendance = () => {
-    // Exact template format used for both Import and Export
+const handleExportAttendance = (specificEmpId?: number) => {
     const headers = ['Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
     
-    const data = attendances.map(a => {
+    // ISOLATION LOCK: Only export attendances for the selected company and/or specific employee
+    const filteredData = attendances.filter(a => {
+      const emp = employees.find(e => e.id === a.employeeId);
+      if (!emp || emp.company !== selectedCompany) return false;
+      if (specificEmpId && emp.id !== specificEmpId) return false;
+      return true;
+    });
+
+    if (filteredData.length === 0) {
+      showToast("No attendance records found to export.", "error");
+      return;
+    }
+
+    const data = filteredData.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
       const isLeave = !a.timeIn.includes(':');
-      
-      // Format time out of the database nicely for Excel
       let niceTimeIn = isLeave ? a.timeIn : format12Hour(a.timeIn);
       let niceTimeOut = isLeave ? a.timeOut : format12Hour(a.timeOut);
       
       return [
         a.employeeId, 
-        a.date ? a.date.split('T')[0] : '', // Raw YYYY-MM-DD for easy importing
+        a.date ? a.date.split('T')[0] : '', 
         niceTimeIn, 
         niceTimeOut, 
         emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', 
@@ -463,7 +473,11 @@ const handleExportAttendance = () => {
       ];
     });
     
-    exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
+    const fileName = specificEmpId 
+      ? `Attendance_${employees.find(e => e.id === specificEmpId)?.lastName}_${new Date().toISOString().split('T')[0]}.csv`
+      : `Attendance_Export_${selectedCompany}_${new Date().toISOString().split('T')[0]}.csv`;
+      
+    exportToCSV(fileName, headers, data);
   };
 
   const handleExportPayrolls = () => {
@@ -570,10 +584,10 @@ const handleImportAttendance = async (event: any) => {
             return; // Stop the entire import process immediately
           }
 
-          // CRITICAL CHECK: Ensure Employee ID actually exists in the database!
-          const employeeExists = employees.some(emp => emp.id === parsedEmpId);
-          if (!employeeExists) {
-            showToast(`Import Aborted! Row ${i + 1} uses an Employee ID (${parsedEmpId}) that does not exist.`, "error");
+// CRITICAL CHECK: Ensure Employee ID exists AND belongs to the active company!
+          const emp = employees.find(e => e.id === parsedEmpId);
+          if (!emp || emp.company !== selectedCompany) {
+            showToast(`Import Aborted! Row ${i + 1} uses Employee ID (${parsedEmpId}) which doesn't belong to ${selectedCompany}.`, "error");
             setIsSaving(false);
             event.target.value = '';
             return; // Stop the entire import process immediately
@@ -2070,20 +2084,31 @@ const handleResetPassword = async (id: number) => {
         </div>
       )}
 
-      {/* --- MONTHLY LOGS MODAL --- */}
+{/* --- MONTHLY LOGS MODAL --- */}
       {monthLogsModalEmp && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-indigo-50/50 shrink-0">
+            
+            {/* Modal Header with Specific Import/Export Buttons */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-6 border-b border-slate-200 bg-indigo-50/50 shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-indigo-950">
                   Monthly Logs: {monthLogsModalEmp.firstName} {monthLogsModalEmp.lastName}
                 </h2>
                 <p className="text-sm text-indigo-700 font-medium mt-1">
-                  {formatMonthYear(attendanceMonth)}
+                  {formatMonthYear(attendanceMonth)} | Employee ID: #{monthLogsModalEmp.id}
                 </p>
               </div>
-              <button onClick={() => setMonthLogsModalEmp(null)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="cursor-pointer px-4 py-2 bg-white text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 hover:bg-indigo-50 transition-colors">
+                  Import CSV
+                  <input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} />
+                </label>
+                <button onClick={() => handleExportAttendance(monthLogsModalEmp.id)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">
+                  Export CSV
+                </button>
+                <button onClick={() => setMonthLogsModalEmp(null)} className="text-slate-400 hover:text-slate-600 p-2 ml-2 transition-colors">✕</button>
+              </div>
             </div>
             <div className="overflow-y-auto p-6 bg-slate-50 flex flex-col gap-3">
               {(() => {
@@ -3141,7 +3166,7 @@ const handleResetPassword = async (id: number) => {
                       Import CSV
                       <input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} />
                     </label>
-                    <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">
+                    <button onClick={() => handleExportAttendance()} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">
                       Export CSV
                     </button>
                   </div>
