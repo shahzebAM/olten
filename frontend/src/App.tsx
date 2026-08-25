@@ -3189,7 +3189,7 @@ const handleResetPassword = async (id: number) => {
                     return (
                       <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
                         <td className="py-5 px-6 align-top w-1/4"><span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span></td>
-                        
+                         
                         <td className="py-5 px-6 align-top">
                           <div className="flex flex-col gap-3">
                             {empLogs.length === 0 ? <span className="text-sm text-slate-400 italic mt-1.5">No logs recorded</span> : 
