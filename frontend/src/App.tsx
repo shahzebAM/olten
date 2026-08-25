@@ -1795,6 +1795,20 @@ const handleResetPassword = async (id: number) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
+                  {/* --- EMPTY STATE FALLBACK --- */}
+  {filteredAttendanceEmployees.length === 0 && (
+    <tr>
+      <td colSpan={5} className="py-16 text-center">
+        <div className="flex flex-col items-center justify-center gap-2 text-slate-400">
+          <svg className="w-10 h-10 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <span className="font-bold text-sm text-slate-500">No personnel found in {selectedCompany}</span>
+          <span className="text-xs italic">Register employees in the Directory to start logging attendance.</span>
+        </div>
+      </td>
+    </tr>
+  )}
                   {adminUsers.map(user => (
                     <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-4 px-6 font-bold text-slate-800 flex items-center gap-3">
