@@ -1,31 +1,41 @@
-import { Controller, Post, Get, Body, Headers, UseInterceptors, UploadedFile, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, Headers, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { DocumentService } from './document.service';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
 
 @Controller('api/docs')
 export class DocumentController {
-  constructor(private readonly docService: DocumentService) {}
+  constructor(private readonly documentService: DocumentService) {}
+
+  @Get('directory')
+  async getDirectory(@Headers('x-company') company: string) {
+    if (!company) throw new BadRequestException('Company header missing');
+    return this.documentService.getCompanyDirectory(company);
+  }
+
+  @Post('folder')
+  async createFolder(
+    @Headers('x-company') company: string,
+    @Body('folderName') folderName: string,
+  ) {
+    if (!company || !folderName) throw new BadRequestException('Company and Folder Name are required');
+    return this.documentService.createFolder(company, folderName);
+  }
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploads',
-      filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        cb(null, uniqueSuffix + extname(file.originalname));
-      }
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(), // Completely eliminates the local 'uploads' folder!
     }),
-    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
-  }))
-  async uploadDoc(
-    @UploadedFile() file: Express.Multer.File,
+  )
+  async uploadFile(
+    @UploadedFile() file: any,
     @Headers('x-company') company: string,
     @Headers('x-username') username: string,
+    @Body('targetFolderId') targetFolderId?: string,
   ) {
-    if (!company) throw new HttpException('Company header required', HttpStatus.BAD_REQUEST);
-    return this.docService.processNewDocument(file, company, username);
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.documentService.processNewDocument(file, company, username, targetFolderId);
   }
 
   @Post('search')
@@ -34,7 +44,7 @@ export class DocumentController {
     @Headers('x-company') company: string,
     @Headers('x-username') username: string,
   ) {
-    if (!company) throw new HttpException('Company header required', HttpStatus.BAD_REQUEST);
-    return this.docService.searchDocuments(query, company, username);
+    if (!query) throw new BadRequestException('Query cannot be empty');
+    return this.documentService.searchDocuments(query, company, username);
   }
 }

@@ -95,6 +95,7 @@ model Document {
   company      String   // "Surgicom", "Olten", or "Ordent"
   geminiFileUri String? // The URI provided by Google AI Studio
   geminiFileId  String? // The unique ID from Google
+  googleDriveLink String?
   status       String   @default("PROCESSING") // PROCESSING, ACTIVE, FAILED
   uploadedBy   String   // Username of the admin
   createdAt    DateTime @default(now())
