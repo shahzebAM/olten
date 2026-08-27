@@ -71,7 +71,7 @@ export class DocumentService {
     return doc;
   }
 
-  async routeQuery(query: string): Promise<'gemini-1.5-flash' | 'gemini-1.5-pro'> {
+async routeQuery(query: string): Promise<'gemini-2.5-flash' | 'gemini-2.5-pro'> {
     const classificationPrompt = `
       Classify the complexity of this user query into "EASY" or "HARD".
       EASY: Extracting basic facts, names, dates, simple lookups, or single document summaries.
@@ -80,9 +80,12 @@ export class DocumentService {
       Reply ONLY with "EASY" or "HARD".
     `;
 
-    const response = await this.geminiService.askQuestion(classificationPrompt, [], 'gemini-1.5-flash');
+    // 1. Change the classification model to the active gemini-2.5-flash
+    const response = await this.geminiService.askQuestion(classificationPrompt, [], 'gemini-2.5-flash');
     const text = response.text || '';
-    return text.trim().toUpperCase().includes('HARD') ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    
+    // 2. Change the return models to the 2.5 versions
+    return text.trim().toUpperCase().includes('HARD') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   }
 
   async searchDocuments(query: string, company: string, username: string) {
