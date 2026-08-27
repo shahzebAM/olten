@@ -16,7 +16,6 @@ export class GeminiService {
     try {
       const uploadResult = await this.ai.files.upload({
         file: filePath,
-        // FIXED: mimeType and displayName must be wrapped inside config
         config: {
           mimeType: mimeType,
           displayName: displayName,
@@ -26,16 +25,16 @@ export class GeminiService {
         fileUri: uploadResult.uri,
         fileId: uploadResult.name,
       };
-    } catch (error: any) { // FIXED: Added 'any' so TypeScript allows .message
+    } catch (error: any) { 
       this.logger.error(`Gemini Upload Failed: ${error.message}`);
       throw error;
     }
   }
 
-  // 2. Check Indexing Status (PDFs need time to process)
+  // 2. Check Indexing Status
   async checkFileStatus(fileId: string): Promise<string> {
     const file = await this.ai.files.get({ name: fileId });
-    return file.state as string; // returns 'PROCESSING', 'ACTIVE', or 'FAILED'
+    return file.state as string; 
   }
 
   // 3. Delete File from Gemini
@@ -43,23 +42,32 @@ export class GeminiService {
     await this.ai.files.delete({ name: fileId });
   }
 
-  // 4. The RAG Query Engine
-  async askQuestion(query: string, fileUris: string[], model: string) {
-    // Create the content payload mapping the retrieved URIs
-    const contents = [
-      ...fileUris.map(uri => ({
-        role: 'user',
-        parts: [{ fileData: { fileUri: uri } }]
-      })),
-      { role: 'user', parts: [{ text: query }] }
-    ];
+  // 4. The RAG Query Engine (UPDATED)
+  // Changed the signature to accept both URI and MIME Type
+  async askQuestion(query: string, filesData: { uri: string, mimeType: string }[], model: string) {
+    
+    // Combine all files and the text prompt into a SINGLE array of 'parts'
+    const parts: any[] = filesData.map(file => ({
+      fileData: { 
+        fileUri: file.uri, 
+        mimeType: file.mimeType 
+      }
+    }));
+
+    // Add the user's typed question to the very end of the files
+    parts.push({ text: query });
 
     const response = await this.ai.models.generateContent({
       model: model,
-      contents: contents,
+      contents: [
+        { 
+          role: 'user', 
+          parts: parts // Everything is sent inside one single user message!
+        }
+      ],
       config: {
         systemInstruction: "You are an ERP assistant. Base your answers ONLY on the provided documents. If the answer is not in the documents, say so. Always cite the exact source document name and page number if available in format [Source: filename, Page: X].",
-        temperature: 0.1, // Keep it factual
+        temperature: 0.1, 
       }
     });
 
