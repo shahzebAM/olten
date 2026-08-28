@@ -13,13 +13,58 @@ interface DriveItem {
   name: string;
   mimeType?: string;
   webViewLink?: string;
+  parents?: string[];
 }
+
+interface FolderCardProps {
+  name: string;
+  fileCount?: number;
+  onClick: () => void;
+}
+
+const FolderCard = ({ name, fileCount = 0, onClick }: FolderCardProps) => {
+  const hasFiles = fileCount > 0;
+
+  return (
+    <button
+      onClick={onClick}
+      className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 text-center w-full"
+    >
+      <div className="relative w-24 h-20 mb-3 flex items-center justify-center">
+        {/* Back Flap */}
+        <div className="absolute top-0 left-2 w-8 h-4 bg-amber-400 rounded-t-lg"></div>
+        <div className="absolute top-2 inset-x-0 bottom-0 bg-gradient-to-b from-amber-400 to-amber-500 rounded-xl shadow-sm"></div>
+
+        {/* Paper Sheets (Only visible if folder has files) */}
+        {hasFiles && (
+          <div className="absolute top-0 inset-x-3.5 flex flex-col items-center z-10 transition-transform duration-300 group-hover:-translate-y-2">
+            <div className="w-14 h-8 bg-slate-200 rounded-t border border-slate-300 -mb-5 opacity-70"></div>
+            <div className="w-16 h-10 bg-slate-100 rounded-t border border-slate-300 -mb-6 opacity-90"></div>
+            <div className="w-17 h-12 bg-white rounded-t border border-slate-300 shadow-sm"></div>
+          </div>
+        )}
+
+        {/* Front Pocket */}
+        <div className="absolute bottom-0 inset-x-0 h-14 bg-gradient-to-b from-amber-300 to-amber-400 rounded-xl shadow-md z-20 border-t border-amber-200/50 flex items-center justify-center">
+        </div>
+      </div>
+
+      <span className="font-bold text-sm text-slate-800 truncate max-w-[140px] group-hover:text-amber-800">
+        {name}
+      </span>
+      <span className="text-[11px] font-semibold text-slate-400 mt-0.5">
+        {hasFiles ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : 'Empty'}
+      </span>
+    </button>
+  );
+};
 
 export default function AiDocsModule({ selectedCompany, loginUsername, onBack }: AiDocsProps) {
   const [folders, setFolders] = useState<DriveItem[]>([]);
   const [files, setFiles] = useState<DriveItem[]>([]);
   const [companyFolderId, setCompanyFolderId] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
 
   // Upload Modal State
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -233,70 +278,115 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
           </div>
         )}
 
-        {/* Folder Explorer Grid (Exact Figma Style) */}
+{/* --- DYNAMIC FOLDER EXPLORER --- */}
         <div className="w-full">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 mb-6">Drive Directory</h2>
+          {/* Breadcrumb Navigation */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2 text-sm">
+              <button
+                onClick={() => setCurrentFolder(null)}
+                className={`font-bold transition-colors ${
+                  currentFolder ? 'text-indigo-600 hover:underline' : 'text-slate-800 uppercase tracking-widest text-sm'
+                }`}
+              >
+                Drive Directory
+              </button>
+              
+              {currentFolder && (
+                <>
+                  <span className="text-slate-400 font-bold">/</span>
+                  <span className="font-extrabold text-slate-800 flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-md text-xs">
+                    📁 {currentFolder.name}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {currentFolder && (
+              <button
+                onClick={() => setCurrentFolder(null)}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition-colors shadow-sm"
+              >
+                ← Back
+              </button>
+            )}
+          </div>
 
           {loading ? (
-            <div className="text-center py-20 text-slate-400 font-medium">Loading folders from Google Drive...</div>
+            <div className="text-center py-20 text-slate-400 font-medium">Loading Drive workspace...</div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-8">
-              {/* Default Root Company Folder Card */}
-              <div className="flex items-center gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-400 bg-white hover:shadow-md transition-all cursor-pointer group">
-                <div className="text-amber-500">
-                  <svg className="w-12 h-12 stroke-current fill-amber-50" viewBox="0 0 24 24" strokeWidth="1.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                  </svg>
-                </div>
-                <div>
-                  <span className="font-semibold text-slate-800 text-sm block group-hover:text-amber-600 transition-colors">Company Root</span>
-                  <span className="text-[11px] text-slate-400">/{selectedCompany}</span>
-                </div>
-              </div>
+            <div className="space-y-8">
+              {/* === ROOT VIEW === */}
+              {!currentFolder ? (
+                /* Folders Grid */
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {/* 1. The Dynamic "Company Root" Folder */}
+                  {(() => {
+                    const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
+                    return (
+                      <FolderCard
+                        name={`${selectedCompany} Root`}
+                        fileCount={rootFiles.length}
+                        onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })}
+                      />
+                    );
+                  })()}
 
-              {/* Dynamic Google Drive Subfolders */}
-              {folders.map((folder) => (
-                <div key={folder.id} className="flex items-center gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-400 bg-white hover:shadow-md transition-all cursor-pointer group">
-                  <div className="text-amber-500">
-                    <svg className="w-12 h-12 stroke-current fill-amber-50" viewBox="0 0 24 24" strokeWidth="1.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-800 text-sm block truncate max-w-[120px] group-hover:text-amber-600 transition-colors">{folder.name}</span>
-                    <span className="text-[11px] text-slate-400">Folder</span>
-                  </div>
+                  {/* 2. All other created subfolders (like Docs) */}
+                  {folders.map((folder) => {
+                    const count = files.filter(f => f.parents?.includes(folder.id)).length;
+                    return (
+                      <FolderCard
+                        key={folder.id}
+                        name={folder.name}
+                        fileCount={count}
+                        onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })}
+                      />
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          )}
+              ) : (
+                /* === SUBFOLDER VIEW (Shows files when a folder is clicked) === */
+                (() => {
+                  let folderFiles = [];
+                  
+                  if (currentFolder.id === 'root') {
+                    // Filter for files that do NOT belong to any of the subfolders
+                    folderFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
+                  } else {
+                    // Filter for files belonging to the specific clicked subfolder
+                    folderFiles = files.filter(f => f.parents?.includes(currentFolder.id));
+                  }
+                  
+                  if (folderFiles.length === 0) {
+                    return (
+                      <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-200">
+                        <span className="text-4xl opacity-50">📂</span>
+                        <p className="font-bold text-slate-500 mt-3">This folder is empty</p>
+                      </div>
+                    );
+                  }
 
-          {/* Files List Section */}
-          {files.length > 0 && (
-            <div className="mt-14">
-              <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 mb-4">Files in {selectedCompany}</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {files.map((file) => (
-                  <a
-                    key={file.id}
-                    href={file.webViewLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 truncate">
-                      <svg className="w-6 h-6 text-red-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                      </svg>
-                      <span className="text-xs font-semibold text-slate-700 truncate">{file.name}</span>
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {folderFiles.map(file => (
+                        <a key={file.id} href={file.webViewLink} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-sm hover:shadow transition-all">
+                          <div className="flex items-center gap-3 truncate">
+                            <span className="text-xl shrink-0">📄</span>
+                            <span className="text-xs font-semibold text-slate-700 truncate">{file.name}</span>
+                          </div>
+                          <span className="text-[10px] text-indigo-600 font-bold shrink-0">Open ↗</span>
+                        </a>
+                      ))}
                     </div>
-                    <span className="text-[10px] text-indigo-600 font-bold shrink-0">Open ↗</span>
-                  </a>
-                ))}
-              </div>
+                  );
+                })()
+              )}
             </div>
           )}
         </div>
+      {/* </main> */}
+      {/* </main> */}
       </main>
 
       {/* --- UPLOAD MODAL WITH FOLDER CHOICE --- */}
