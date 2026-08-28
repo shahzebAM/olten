@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
@@ -10,6 +10,11 @@ const prisma = new PrismaClient();
 
 @Injectable()
 export class DocumentService {
+  private readonly logger = new Logger(DocumentService.name);
+  
+  // Maps each company to its active Google Cache Session
+  private companyCache: Map<string, { cacheName: string, expiresAt: number }> = new Map();
+
   constructor(
     private geminiService: GeminiService,
     private driveService: DriveService,
@@ -24,7 +29,6 @@ export class DocumentService {
   }
 
   async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
-    // 1. Upload directly to Drive from RAM
     const driveLink = await this.driveService.uploadFileToDrive(
       file.buffer, 
       file.mimetype, 
@@ -33,7 +37,6 @@ export class DocumentService {
       targetFolderId
     );
 
-    // 2. Safely upload to Gemini
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
@@ -45,13 +48,11 @@ export class DocumentService {
         file.originalname
       );
     } finally {
-      // Deletes the temporary file instantly
       if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
       }
     }
 
-    // 3. Save Record to Database
     // @ts-ignore
     const doc = await prisma.document.create({
       data: {
@@ -68,25 +69,13 @@ export class DocumentService {
       },
     });
 
+    // IMPORTANT: Clear the old cache so the new document gets included in the next search!
+    this.companyCache.delete(company);
+
     return doc;
   }
 
-async routeQuery(query: string): Promise<'gemini-3.6-flash' | 'gemini-3.6-pro'> {
-    const classificationPrompt = `
-      Classify the complexity of this user query into "EASY" or "HARD".
-      EASY: Extracting basic facts, names, dates, simple lookups, or single document summaries.
-      HARD: Comparing multiple documents, deep financial analysis, finding contradictions, logical multi-step reasoning.
-      Query: "${query}"
-      Reply ONLY with "EASY" or "HARD".
-    `;
-
-    // 1. Classification using gemini-3.6-flash
-    const response = await this.geminiService.askQuestion(classificationPrompt, [], 'gemini-3.6-flash');
-    const text = response.text || '';
-
-    // 2. Return the appropriate target model
-    return text.trim().toUpperCase().includes('HARD') ? 'gemini-3.6-pro' : 'gemini-3.6-flash';
-  }
+  // NOTE: routeQuery has been deleted entirely to eliminate double-call lag
 
   async searchDocuments(query: string, company: string, username: string) {
     // @ts-ignore
@@ -98,20 +87,39 @@ async routeQuery(query: string): Promise<'gemini-3.6-flash' | 'gemini-3.6-pro'> 
       throw new BadRequestException(`No active documents found for ${company}. Please upload documents first.`);
     }
 
-    // Prepare both the URI and MIME type for Gemini RAG
-    const filesData: { uri: string; mimeType: string }[] = docs
+    const filesData: { uri: string; mimeType: string; name: string; driveLink: string }[] = docs
       .filter((d: any) => typeof d.geminiFileUri === 'string' && d.geminiFileUri.length > 0)
       .map((d: any) => ({
         uri: d.geminiFileUri,
         mimeType: d.mimeType || 'application/pdf',
+        name: d.filename || 'Unknown Document',
+        driveLink: d.googleDriveLink || 'No link available',
       }));
 
     if (filesData.length === 0) {
       throw new BadRequestException('Documents exist, but have not finished indexing in Gemini.');
     }
 
-    const targetModel = await this.routeQuery(query);
-    const answer = await this.geminiService.askQuestion(query, filesData, targetModel);
+    let cacheName: string | null = null;
+    let cacheInfo = this.companyCache.get(company);
+
+    // If cache does not exist or expired (after 55 mins), create a fresh one
+    if (!cacheInfo || Date.now() > cacheInfo.expiresAt) {
+      this.logger.log(`Attempting to generate global Context Cache for ${company}...`);
+      
+      const newCacheName = await this.geminiService.createDocumentCache(filesData);
+      
+      if (newCacheName) {
+        cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000) };
+        this.companyCache.set(company, cacheInfo);
+        cacheName = newCacheName;
+      }
+    } else {
+      cacheName = cacheInfo.cacheName;
+    }
+
+    const targetModel = 'gemini-3.6-flash';
+    const answer = await this.geminiService.askQuestion(query, filesData, cacheName);
     const responseText = answer.text || 'No response generated.';
 
     // @ts-ignore
@@ -131,6 +139,7 @@ async routeQuery(query: string): Promise<'gemini-3.6-flash' | 'gemini-3.6-pro'> 
       answer: responseText,
       model: targetModel,
       sourcesSearched: filesData.length,
+      cached: !!cacheName
     };
   }
 }
