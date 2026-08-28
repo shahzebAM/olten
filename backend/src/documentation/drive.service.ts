@@ -61,19 +61,34 @@ export class DriveService {
     }
   }
 
+  // UPDATED: Now fetches subfolders and requests the 'parents' property
   async getCompanyDirectory(companyName: string) {
     const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
 
-    const query = `'${companyFolderId}' in parents and trashed = false`;
-    const res = await this.drive.files.list({
-      q: query,
-      fields: 'files(id, name, mimeType, webViewLink, createdTime, size)',
+    // 1. First, fetch all the subfolders inside the Company Root
+    const folderQuery = `'${companyFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const folderRes = await this.drive.files.list({
+      q: folderQuery,
+      fields: 'files(id, name, mimeType, parents)',
       spaces: 'drive',
     });
+    const folders = folderRes.data.files || [];
 
-    const items = res.data.files || [];
-    const folders = items.filter((item: any) => item.mimeType === 'application/vnd.google-apps.folder');
-    const files = items.filter((item: any) => item.mimeType !== 'application/vnd.google-apps.folder');
+    // 2. Build a query to search inside the Root AND inside all Subfolders simultaneously
+    const subfolderIds = folders.map((f: any) => `'${f.id}' in parents`).join(' or ');
+    const parentQuery = subfolderIds 
+      ? `('${companyFolderId}' in parents or ${subfolderIds})` 
+      : `('${companyFolderId}' in parents)`;
+      
+    const fileQuery = `${parentQuery} and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
+
+    // 3. Fetch the files AND explicitly ask Google for the 'parents' field so React can sort them
+    const fileRes = await this.drive.files.list({
+      q: fileQuery,
+      fields: 'files(id, name, mimeType, webViewLink, createdTime, size, parents)',
+      spaces: 'drive',
+    });
+    const files = fileRes.data.files || [];
 
     return { companyFolderId, folders, files };
   }
