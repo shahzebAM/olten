@@ -41,22 +41,6 @@ export class AppController {
     return { message: "Setup complete!" };
   }
 
-  @Get('create-temp-admin')
-async createTempAdmin() {
-  const prisma = new PrismaClient();
-  // Hashes the plain-text password "123456" 
-  const hashedPassword = await bcrypt.hash('123456', 10);
-
-  await prisma.admin.create({
-    data: {
-      username: 'admin', // You can change this to 'ali' if testing staff conditional access
-      password: hashedPassword,
-    }
-  });
-
-  return "Success! You can now log in with username: admin and password: 123456";
-}
-
   @Post('auth/login')
   async login(@Body() body: any) {
     const { username, password } = body;
@@ -67,7 +51,8 @@ async createTempAdmin() {
     
     if (!admin) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
     
-    const isPasswordValid = await bcrypt.compare(password, admin.password);
+    // const isPasswordValid = await bcrypt.compare(password, admin.password);
+    const isPasswordValid = password === admin.password;
     if (!isPasswordValid) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
     
     return { message: "Login successful!" };
