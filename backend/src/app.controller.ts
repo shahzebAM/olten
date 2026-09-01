@@ -21,7 +21,8 @@ export class AppController {
   // AUTHENTICATION & ADMIN ROUTES
   // ==========================================
 
-  @Post('auth/setup')
+  // Catches requests to /auth/setup, /api/auth/setup, or /setup
+  @Post(['auth/setup', 'api/auth/setup', 'setup', 'api/setup'])
   async setupAdmin(@Body() body: any) {
     const { username, password } = body;
     const existingAdmin = await prisma.admin.findFirst();
@@ -41,7 +42,8 @@ export class AppController {
     return { message: "Setup complete!" };
   }
 
-  @Post('auth/login')
+  // Catches requests to /auth/login, /api/auth/login, /login, or /api/login
+  @Post(['auth/login', 'api/auth/login', 'login', 'api/login'])
   async login(@Body() body: any) {
     const { username, password } = body;
     
@@ -58,7 +60,8 @@ export class AppController {
     return { message: "Login successful!" };
   }
 
-  @Get('admins')
+  // Catches requests to /admins or /api/admins
+  @Get(['admins', 'api/admins'])
   async getAdmins() {
     const admins = await prisma.admin.findMany();
     return admins.map(a => ({
@@ -73,7 +76,7 @@ export class AppController {
     }));
   }
 
-  @Post('admins')
+  @Post(['admins', 'api/admins'])
   async createAdmin(@Body() body: any) {
     // FIXED: Extract the modules from the frontend payload
     const { username, password, modules } = body; 
@@ -99,7 +102,7 @@ export class AppController {
     return { message: "Admin created" };
   }
   
-  @Patch('admins/:id/password')
+  @Patch(['admins/:id/password', 'api/admins/:id/password'])
   async resetAdminPassword(
     @Param('id', ParseIntPipe) id: number, 
     @Body() body: any
@@ -112,7 +115,7 @@ export class AppController {
     return { message: "Password updated" };
   }
 
-  @Patch('admins/:id/role')
+  @Patch(['admins/:id/role', 'api/admins/:id/role'])
   async updateAdminRole(
     @Param('id', ParseIntPipe) id: number, 
     @Body() body: any
@@ -135,7 +138,7 @@ export class AppController {
     return { message: "Role updated" };
   }
 
-  @Patch('admins/:id/modules')
+  @Patch(['admins/:id/modules', 'api/admins/:id/modules'])
   async updateAdminModules(
     @Param('id', ParseIntPipe) id: number, 
     @Body() body: any
@@ -151,7 +154,7 @@ export class AppController {
     return { message: "Module access updated" };
   }
   
-  @Delete('admins/:id')
+  @Delete(['admins/:id', 'api/admins/:id'])
   async deleteAdmin(@Param('id', ParseIntPipe) id: number) {
     const targetAdmin = await prisma.admin.findUnique({ where: { id } });
     if (!targetAdmin) throw new NotFoundException("Admin not found");
