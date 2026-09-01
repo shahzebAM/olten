@@ -5,7 +5,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
   app.enableCors({
-    origin: true, // Automatically mirrors the origin (perfect for Vercel's dynamic links)
+    origin: 'https://olten.vercel.app', // Automatically mirrors the origin (perfect for Vercel's dynamic links)
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
