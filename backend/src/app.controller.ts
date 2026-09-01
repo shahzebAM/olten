@@ -1,6 +1,6 @@
 import { 
   Controller, Get, Post, Delete, Patch, Body, Param, 
-  HttpException, HttpStatus, ParseIntPipe, NotFoundException 
+  HttpException, HttpStatus, ParseIntPipe, NotFoundException, UnauthorizedException 
 } from '@nestjs/common';
 import { AppService } from './app.service';
 import { PrismaClient } from '@prisma/client';
@@ -42,29 +42,27 @@ export class AppController {
     return { message: "Setup complete!" };
   }
 
-
-
   // Catches requests to /auth/login, /api/auth/login, /login, or /api/login
   @Post(['auth/login', 'api/auth/login', 'login', 'api/login'])
   async login(@Body() body: any) {
     const { username, password } = body;
+    
+    // 1. Find the user (using the globally instantiated 'prisma', NOT 'this.prisma')
+    const admin = await prisma.admin.findFirst({
+      where: { username: username.toLowerCase() }
+    });
 
-      // TEMPORARY MASTER KEY - Bypasses the database entirely
-    if (username === 'admin' && password === 'admin') {
-      return { message: "Login successful!" };
+    if (!admin) {
+      throw new UnauthorizedException('Access Denied: Invalid credentials.');
     }
+
+    // 2. Securely compare the provided password against the database hash
+    const isPasswordValid = await bcrypt.compare(password, admin.password);
     
-    
-    // FIXED: Fetch all and match case-insensitively so "Ali" and "ali" both work perfectly!
-    const admins = await prisma.admin.findMany();
-    const admin = admins.find(a => a.username.toLowerCase() === username.toLowerCase());
-    
-    if (!admin) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
-    
-    // const isPasswordValid = await bcrypt.compare(password, admin.password);
-    const isPasswordValid = password === admin.password;
-    if (!isPasswordValid) throw new HttpException('Invalid credentials', HttpStatus.UNAUTHORIZED);
-    
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Access Denied: Invalid credentials.');
+    }
+
     return { message: "Login successful!" };
   }
 
