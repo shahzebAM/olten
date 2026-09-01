@@ -318,14 +318,8 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
 // --- SUPER ADMIN CAPABILITIES STATE ---
- // --- SUPER ADMIN CAPABILITIES STATE ---
-const dbUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
-
-// TEMPORARY MASTER KEY: Force the frontend to grant full access to 'admin'
-const currentUser = loginUsername.trim().toLowerCase() === 'admin' 
-  ? { username: 'admin', role: 'Super Admin' } 
-  : dbUser;
-
+// --- SUPER ADMIN CAPABILITIES STATE ---
+const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
 const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
   
   // --- GLOBAL ACCESS CONTROL ---
