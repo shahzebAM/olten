@@ -42,19 +42,18 @@ export class AppController {
     return { message: "Setup complete!" };
   }
 
-  @Post(['auth/login', 'api/auth/login', 'login', 'api/login'])
-  async login(@Body() body: any) {
-    const { username, password } = body;
-    
-    // TEMPORARY MASTER KEY - Bypasses the database entirely
-    if (username === 'admin' && password === 'admin') {
-      return { message: "Login successful!" };
-    }
+
 
   // Catches requests to /auth/login, /api/auth/login, /login, or /api/login
   @Post(['auth/login', 'api/auth/login', 'login', 'api/login'])
   async login(@Body() body: any) {
     const { username, password } = body;
+
+      // TEMPORARY MASTER KEY - Bypasses the database entirely
+    if (username === 'admin' && password === 'admin') {
+      return { message: "Login successful!" };
+    }
+    
     
     // FIXED: Fetch all and match case-insensitively so "Ali" and "ali" both work perfectly!
     const admins = await prisma.admin.findMany();
