@@ -300,8 +300,6 @@ export default function App() {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
-  const [showLogin, setShowLogin] = useState(false);
-  const isPrivacyRoute = window.location.pathname === '/privacy';
   const [loginPassword, setLoginPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -426,36 +424,6 @@ const [payrollData, setPayrollData] = useState({
     setToast({ message, type });
     setTimeout(() => { setToast(null); }, 3500);
   };
-
-  // --- GOOGLE COMPLIANCE: HIDDEN PRIVACY ROUTE ---
-  if (isPrivacyRoute) {
-    return (
-      <div style={{ padding: '40px', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto', lineHeight: '1.6', color: '#333' }}>
-        <h1 style={{ borderBottom: '2px solid #eaeaea', paddingBottom: '10px' }}>Privacy Policy & Terms of Service</h1>
-        <p><strong>Effective Date:</strong> September 2, 2026</p>
-
-        <h2 style={{ marginTop: '30px' }}>1. Introduction</h2>
-        <p>This Privacy Policy applies to the Olten Enterprise Resource Planning (ERP) application ("the App"). The App is intended for internal corporate use to manage personnel, payroll, attendance, and administrative documentation. This policy outlines how we collect, use, and protect your information to comply with Google Play Developer Policies.</p>
-
-        <h2 style={{ marginTop: '30px' }}>2. Information We Collect</h2>
-        <p>To provide necessary human resources and payroll services, the App collects Personal & Contact Information, Financial & Government Identifiers, Attendance & Device Data, and Authentication Data via bcrypt.</p>
-
-        <h2 style={{ marginTop: '30px' }}>3. How We Use Your Information</h2>
-        <p>We use the collected data strictly for internal corporate functions: calculating gross/net pay, tracking attendance, generating payslips, and managing administrative access control.</p>
-
-        <h2 style={{ marginTop: '30px' }}>4. Data Sharing and Disclosure</h2>
-        <p>We do not sell, rent, or trade your personal information. Data is stored on secure cloud servers necessary to operate the App. The App utilizes the Google Drive API strictly for uploading generated AI documents to the corporate workspace.</p>
-
-        <h2 style={{ marginTop: '30px' }}>5. Data Security & Retention</h2>
-        <p>We implement robust security measures to protect your data. We retain employee and payroll data as long as the employee is active or as required by corporate tax laws.</p>
-        
-        <hr style={{ marginTop: '40px', marginBottom: '40px', borderColor: '#eaeaea' }} />
-        
-        <h1 style={{ borderBottom: '2px solid #eaeaea', paddingBottom: '10px' }}>Terms and Conditions</h1>
-        <p>By accessing the Olten ERP App, you agree to be bound by these Terms and Conditions. We grant you a limited, non-exclusive license strictly for authorized corporate administrative duties. You are responsible for maintaining the confidentiality of your credentials. You agree not to reverse engineer the App or circumvent its security mechanisms.</p>
-      </div>
-    );
-  }
 
   // --- CSV IMPORT / EXPORT LOGIC ---
   const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
@@ -1570,14 +1538,19 @@ const handleDeleteAdmin = async (id: number, role: string) => {
     const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error();
 
-    // If the currently logged-in user deleted their own account
+    // 1. Show your original success toast FIRST
+    showToast("Administrator removed successfully.", "success");
+
+    // 2. Check if the currently logged-in user deleted their own account
     if (targetUser?.username.toLowerCase() === loginUsername.trim().toLowerCase()) {
-      handleLogout();
+      // Delay the logout by 1.5 seconds so they can read the toast
+      setTimeout(() => {
+        handleLogout();
+      }, 1500);
       return;
     }
 
     await fetchAdmins(); 
-    showToast("Administrator removed successfully.", "success");
   } catch (error) {
     showToast("Failed to delete administrator.", "error");
   }
@@ -1679,30 +1652,6 @@ const handleResetPassword = async (id: number) => {
 
 // --- 1. GENERIC LOGIN SCREEN RENDER ---
   if (!isAuthenticated) {
-
-    // --- GOOGLE COMPLIANCE: PUBLIC SPLASH SCREEN ---
-    if (!showLogin) {
-      return (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center font-sans">
-          <h1 className="text-4xl font-black text-blue-950 mb-4">Surgicom Trading Corporation</h1>
-          <p className="text-slate-600 max-w-2xl mb-8">
-            This is an internal Enterprise Resource Planning (ERP) application utilized by authorized personnel to securely manage corporate payroll processing, attendance logging, and automated administrative documentation.
-          </p>
-          <button 
-            onClick={() => setShowLogin(true)} 
-            className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-sm hover:bg-blue-700"
-          >
-            Proceed to Login
-          </button>
-          <div className="mt-12">
-            <a href="/privacy" className="text-sm font-bold text-slate-500 hover:underline">
-              Privacy Policy & Terms of Service
-            </a>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4 selection:bg-blue-100 font-sans relative overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-400/10 rounded-full blur-3xl pointer-events-none"></div>
