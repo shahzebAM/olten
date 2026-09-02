@@ -820,6 +820,54 @@ const handleLogout = () => {
     }
   }, [isAuthenticated]);
 
+  // --- LIVE ACCESS ENFORCER & AUTO-LOGOUT ---
+useEffect(() => {
+  if (!isAuthenticated) return;
+
+  // Poll database every 3 seconds to catch changes from other tabs/admins
+  const interval = setInterval(() => {
+    fetchAdmins();
+  }, 3000);
+
+  return () => clearInterval(interval);
+}, [isAuthenticated]);
+
+useEffect(() => {
+  if (!isAuthenticated || adminUsers.length === 0) return;
+
+  // 1. Check if the logged-in user still exists in the database
+  const activeAccount = adminUsers.find(
+    (u) => u.username.toLowerCase() === loginUsername.trim().toLowerCase()
+  );
+
+  // If deleted, instantly kick them out to the login screen
+  if (!activeAccount) {
+    showToast("Session expired: Your account has been removed.", "error");
+    handleLogout();
+    return;
+  }
+
+  // Super Admins retain full bypass
+  if (activeAccount.role === 'Super Admin') return;
+
+  // 2. Instant Module Revocation (kick back to Gateway if module was unticked)
+  if (activeModule === 'payroll' && !activeAccount.modules?.payroll) {
+    showToast("Access revoked: Payroll module has been disabled for your account.", "error");
+    setActiveModule('none');
+  }
+
+  if (activeModule === 'ai_docs' && !activeAccount.modules?.ai_docs) {
+    showToast("Access revoked: AI Docs module has been disabled for your account.", "error");
+    setActiveModule('none');
+  }
+
+  // 3. Instant Company Revocation (kick back to Organization picker if company was unticked)
+  if (selectedCompany && !activeAccount.modules?.companies?.[selectedCompany]) {
+    showToast(`Access revoked: You no longer have access to ${selectedCompany}.`, "error");
+    setSelectedCompany(null);
+  }
+}, [adminUsers, isAuthenticated, loginUsername, activeModule, selectedCompany]);
+
   // --- DATA FETCHING ---
   const fetchAdmins = async () => {
     try {
@@ -1508,23 +1556,32 @@ const handleAddAdmin = async (e: React.FormEvent) => {
   };
 
 const handleDeleteAdmin = async (id: number, role: string) => {
-    if (role === 'Super Admin') {
-      const superAdminCount = adminUsers.filter(u => u.role === 'Super Admin').length;
-      if (superAdminCount <= 1) {
-        showToast("Action Denied: Cannot delete the last Super Admin.", "error");
-        return;
-      }
+  if (role === 'Super Admin') {
+    const superAdminCount = adminUsers.filter(u => u.role === 'Super Admin').length;
+    if (superAdminCount <= 1) {
+      showToast("Action Denied: Cannot delete the last Super Admin.", "error");
+      return;
     }
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error();
-      await fetchAdmins(); 
-      showToast("Administrator removed successfully.", "success");
-    } catch (error) {
-      showToast("Failed to delete administrator.", "error");
+  }
+
+  const targetUser = adminUsers.find(u => u.id === id);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error();
+
+    // If the currently logged-in user deleted their own account
+    if (targetUser?.username.toLowerCase() === loginUsername.trim().toLowerCase()) {
+      handleLogout();
+      return;
     }
-  };
+
+    await fetchAdmins(); 
+    showToast("Administrator removed successfully.", "success");
+  } catch (error) {
+    showToast("Failed to delete administrator.", "error");
+  }
+};
 
 const handleUpdateRole = async (id: number, newRole: string) => {
     const user = adminUsers.find(u => u.id === id);
