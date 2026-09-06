@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 
 export default function DeveloperModule({ onLogout, globalModules, setGlobalModules }: any) {
-  const [localConfig, setLocalConfig] = useState(globalModules);
+  // Merged defaults in case 'products' key doesn't exist in old localStorage yet
+  const [localConfig, setLocalConfig] = useState({ payroll: true, ai_docs: true, products: true, ...globalModules });
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -10,10 +11,7 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
   };
 
   const handleToggle = (module: string) => {
-    setLocalConfig((prev: any) => ({
-      ...prev,
-      [module]: !prev[module]
-    }));
+    setLocalConfig((prev: any) => ({ ...prev, [module]: !prev[module] }));
   };
 
   const saveConfiguration = () => {
@@ -52,25 +50,23 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
             </h2>
 
             <div className="flex flex-col gap-4 sm:gap-5 w-full">
+              
+              {/* Product Manager Added */}
+              <label className="flex flex-row items-center justify-between cursor-pointer group bg-slate-950 px-4 sm:px-6 py-4 sm:py-5 border border-slate-800 hover:border-slate-700 transition-colors w-full">
+                <span className="text-sm sm:text-lg font-black text-slate-300 group-hover:text-emerald-400 transition-colors tracking-widest uppercase">Product Manager</span>
+                <input type="checkbox" checked={localConfig.products} onChange={() => handleToggle('products')} className="w-5 h-5 sm:w-6 sm:h-6 accent-emerald-500 bg-slate-800 border-slate-700 cursor-pointer shrink-0 ml-4" />
+              </label>
+
               <label className="flex flex-row items-center justify-between cursor-pointer group bg-slate-950 px-4 sm:px-6 py-4 sm:py-5 border border-slate-800 hover:border-slate-700 transition-colors w-full">
                 <span className="text-sm sm:text-lg font-black text-slate-300 group-hover:text-emerald-400 transition-colors tracking-widest uppercase">Payroll Engine</span>
-                <input 
-                  type="checkbox" 
-                  checked={localConfig.payroll} 
-                  onChange={() => handleToggle('payroll')}
-                  className="w-5 h-5 sm:w-6 sm:h-6 accent-emerald-500 bg-slate-800 border-slate-700 cursor-pointer shrink-0 ml-4"
-                />
+                <input type="checkbox" checked={localConfig.payroll} onChange={() => handleToggle('payroll')} className="w-5 h-5 sm:w-6 sm:h-6 accent-emerald-500 bg-slate-800 border-slate-700 cursor-pointer shrink-0 ml-4" />
               </label>
 
               <label className="flex flex-row items-center justify-between cursor-pointer group bg-slate-950 px-4 sm:px-6 py-4 sm:py-5 border border-slate-800 hover:border-slate-700 transition-colors w-full">
                 <span className="text-sm sm:text-lg font-black text-slate-300 group-hover:text-emerald-400 transition-colors tracking-widest uppercase">AI Documentation</span>
-                <input 
-                  type="checkbox" 
-                  checked={localConfig.ai_docs} 
-                  onChange={() => handleToggle('ai_docs')}
-                  className="w-5 h-5 sm:w-6 sm:h-6 accent-emerald-500 bg-slate-800 border-slate-700 cursor-pointer shrink-0 ml-4"
-                />
+                <input type="checkbox" checked={localConfig.ai_docs} onChange={() => handleToggle('ai_docs')} className="w-5 h-5 sm:w-6 sm:h-6 accent-emerald-500 bg-slate-800 border-slate-700 cursor-pointer shrink-0 ml-4" />
               </label>
+
             </div>
           </div>
 

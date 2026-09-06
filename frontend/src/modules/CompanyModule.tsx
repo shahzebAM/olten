@@ -2,7 +2,8 @@ import React from 'react';
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
-  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, onChangeCompany, onSelectModule
+  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts,
+  onChangeCompany, onSelectModule
 }: any) {
 
   // --- VIEW 1: COMPANY SELECTION ---
@@ -90,8 +91,23 @@ export default function CompanyModule({
         </div>
       </div>
 
-      <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-        {hasPayroll ? (
+      <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        
+        {/* PRODUCT MODULE (Only renders if active) */}
+        {hasProducts && (
+          <button onClick={() => onSelectModule('products')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-purple-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-purple-950">Product Manager</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Master database of inventory items.</p>
+            </div>
+          </button>
+        )}
+
+        {/* PAYROLL ENGINE (Only renders if active) */}
+        {hasPayroll && (
           <button onClick={() => onSelectModule('payroll')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
               <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -101,17 +117,10 @@ export default function CompanyModule({
               <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage personnel, attendance, & salaries.</p>
             </div>
           </button>
-        ) : (
-          <div className="bg-slate-50 p-6 sm:p-8 rounded-2xl border border-slate-200 flex flex-col justify-between min-h-[160px] sm:min-h-[180px] opacity-60">
-            <div>
-              <div className="w-10 h-10 bg-slate-200 rounded-xl flex items-center justify-center mb-4"><svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-400">Payroll Engine</h2>
-              <p className="text-xs sm:text-sm text-slate-400 mt-2 font-medium">Access restricted by administrator.</p>
-            </div>
-          </div>
         )}
 
-        {hasAiDocs ? (
+        {/* AI DOCS (Only renders if active) */}
+        {hasAiDocs && (
           <button onClick={() => onSelectModule('ai_docs')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
               <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -121,13 +130,16 @@ export default function CompanyModule({
               <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Generate letters and corporate documents.</p>
             </div>
           </button>
-        ) : (
-          <div className="bg-slate-50 p-6 sm:p-8 rounded-2xl border border-slate-200 flex flex-col justify-between min-h-[160px] sm:min-h-[180px] opacity-60">
-            <div>
-              <div className="w-10 h-10 bg-slate-200 rounded-xl flex items-center justify-center mb-4"><svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-400">AI Documentation</h2>
-              <p className="text-xs sm:text-sm text-slate-400 mt-2 font-medium">Access restricted by administrator.</p>
+        )}
+
+        {/* EMPTY STATE FALLBACK (If all modules are disabled/hidden) */}
+        {(!hasProducts && !hasPayroll && !hasAiDocs) && (
+          <div className="col-span-full bg-white p-10 sm:p-16 rounded-2xl shadow-sm border border-slate-200 border-dashed flex flex-col items-center justify-center text-center">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
             </div>
+            <h2 className="text-xl font-bold text-slate-700">No Access Granted</h2>
+            <p className="text-sm text-slate-500 mt-2 max-w-sm">You currently do not have permission to view any modules in this workspace. Please contact your Super Admin or Developer.</p>
           </div>
         )}
       </div>
