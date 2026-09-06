@@ -20,12 +20,21 @@ interface Product {
   deletedAt: string | null;
 }
 
+// 1. IN-MEMORY CACHE (Survives component unmounts!)
+let cachedProducts: Record<string, Product[]> = {};
+
 export default function ProductModule({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
-  const [products, setProducts] = useState<Product[]>([]);
+  
+  // 2. Initialize state directly from the cache if it exists
+  const [products, setProducts] = useState<Product[]>(cachedProducts[selectedCompany] || []);
+  
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'low_stock'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  
+  // Image Preview Modal State
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,11 +57,36 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Image Upload Handler (Converts File to Base64 String Link)
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setFormData(prev => ({ ...prev, imageUrl: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 3. Custom setter to keep the cache perfectly synced with the UI
+  const syncProducts = (updater: (prev: Product[]) => Product[]) => {
+    setProducts((prev) => {
+      const next = updater(prev);
+      cachedProducts[selectedCompany] = next;
+      return next;
+    });
+  };
+
   const fetchProducts = async () => {
+    // 4. BLOCK UNNECESSARY FETCHES: If we already have the data, stop here!
+    if (cachedProducts[selectedCompany]) return;
+
     try {
       const response = await fetch(`${API_BASE_URL}/products?company=${selectedCompany}`);
       if (response.ok) {
         const data = await response.json();
+        cachedProducts[selectedCompany] = data; // Save to cache
         setProducts(data);
       }
     } catch (error) {
@@ -89,10 +123,11 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
       
       showToast(editingId ? "Product updated successfully." : "New product added to master list.", "success");
       
+      // Update local UI and Cache simultaneously
       if (!editingId) {
-        setProducts(prev => [...prev, { ...finalData, id: Date.now(), currentStock: 0 } as Product]);
+        syncProducts(prev => [...prev, { ...finalData, id: Date.now(), currentStock: 0 } as Product]);
       } else {
-        setProducts(prev => prev.map(p => p.id === editingId ? { ...p, ...finalData } as Product : p));
+        syncProducts(prev => prev.map(p => p.id === editingId ? { ...p, ...finalData } as Product : p));
       }
 
       setFormData(initialForm);
@@ -117,13 +152,13 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     const newDeletedAt = currentStatus ? today : null;
     
     try {
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, isActive: !currentStatus, deletedAt: newDeletedAt } : p));
+      syncProducts(prev => prev.map(p => p.id === id ? { ...p, isActive: !currentStatus, deletedAt: newDeletedAt } : p));
       await fetch(`${API_BASE_URL}/products/${id}/status`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: !currentStatus, deletedAt: newDeletedAt })
       });
       showToast(currentStatus ? "Product deactivated (marked deleted)." : "Product reactivated.", "success");
     } catch (e) {
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, isActive: currentStatus, deletedAt: currentStatus ? null : today } : p));
+      syncProducts(prev => prev.map(p => p.id === id ? { ...p, isActive: currentStatus, deletedAt: currentStatus ? null : today } : p));
       showToast("Failed to update status.", "error");
     }
   };
@@ -163,6 +198,29 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden selection:bg-purple-100">
       
+      {/* RESTORED AND ENLARGED FLOATING LIGHTBOX */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-[200] flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-7xl max-h-[90vh] flex flex-col items-center justify-center">
+            <button 
+              className="absolute -top-12 right-0 text-slate-400 hover:text-white transition-colors bg-slate-800 hover:bg-slate-700 rounded-full p-2 shadow-lg"
+              onClick={() => setPreviewImage(null)}
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <img 
+              src={previewImage} 
+              alt="Preview" 
+              className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-slate-700/50"
+              onClick={(e) => e.stopPropagation()} 
+            />
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 slide-in-from-bottom-2 fade-in duration-300 ease-out border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
@@ -229,7 +287,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative z-0">
           <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-12">
 
             {/* DASHBOARD TAB */}
@@ -321,7 +379,10 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                           <tr key={p.id} className={`hover:bg-purple-50/30 transition-colors ${!p.isActive ? 'opacity-60 grayscale-[50%]' : ''}`}>
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                                <div 
+                                  className={`w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 ${p.imageUrl ? 'cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all' : ''}`}
+                                  onClick={() => p.imageUrl && setPreviewImage(p.imageUrl)}
+                                >
                                   {p.imageUrl ? <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" /> : <svg className="w-6 h-6 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
                                 </div>
                                 <div>
@@ -398,7 +459,10 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                           <tr key={p.id} className="hover:bg-rose-50/30 transition-colors">
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                                <div 
+                                  className={`w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 ${p.imageUrl ? 'cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all' : ''}`}
+                                  onClick={() => p.imageUrl && setPreviewImage(p.imageUrl)}
+                                >
                                   {p.imageUrl ? <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" /> : <svg className="w-5 h-5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
                                 </div>
                                 <div>
@@ -452,7 +516,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                         <input type="text" required value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-600 shadow-sm" placeholder="e.g. Instruments" />
                       </div>
                       <div className="flex flex-col gap-1.5 w-full">
-                        <label className="text-sm font-medium text-slate-700">SKU / Item Code <span className="text-rose-500">*</span></label>
+                        <label className="text-sm font-medium text-slate-700">SKU / Product Code <span className="text-rose-500">*</span></label>
                         <input type="text" required value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} className="px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-600 shadow-sm uppercase font-mono" placeholder="SURG-001" />
                       </div>
                       <div className="flex flex-col gap-1.5 w-full">
@@ -509,9 +573,29 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                     </div>
                   </div>
 
+                  {/* IMAGE UPLOAD SECTION */}
                   <div className="flex flex-col gap-1.5 w-full">
-                    <label className="text-sm font-medium text-slate-700">Image URL (Optional)</label>
-                    <input type="text" value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-600 shadow-sm" placeholder="https://example.com/image.jpg" />
+                    <label className="text-sm font-medium text-slate-700">Product Image (Upload File or Paste Link)</label>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                      <label className="cursor-pointer px-5 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl text-sm font-bold text-slate-700 transition-colors whitespace-nowrap shadow-sm">
+                        Choose File
+                        <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                      </label>
+                      <span className="text-slate-400 text-xs font-bold uppercase hidden sm:block">OR</span>
+                      <input 
+                        type="text" 
+                        value={formData.imageUrl} 
+                        onChange={e => setFormData({...formData, imageUrl: e.target.value})} 
+                        className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-600 shadow-sm" 
+                        placeholder="https://example.com/image.jpg" 
+                      />
+                    </div>
+                    {/* Live Form Image Preview */}
+                    {formData.imageUrl && (
+                      <div className="mt-3 w-32 h-32 rounded-xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm">
+                        <img src={formData.imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-4 border-t border-slate-200">
