@@ -137,7 +137,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
 
   const companyProducts = products.filter(p => p.company === selectedCompany);
   
-  // Dynamic Low Stock Counter (Blinks in Sidebar)
   const lowStockProducts = companyProducts.filter(p => p.currentStock <= p.reorderLevel && p.isActive);
   const lowStockCount = lowStockProducts.length;
 
@@ -156,7 +155,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
 
   const getPageTitle = () => {
     if (activeTab === 'dashboard') return 'Inventory Overview';
-    if (activeTab === 'list') return 'Item Master List';
+    if (activeTab === 'list') return 'Product Master List';
     if (activeTab === 'low_stock') return 'Low Stock Alerts';
     return editingId ? 'Edit Product' : 'Register New Product';
   };
@@ -176,7 +175,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
       
       <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950 shrink-0">
-          <h1 className="text-xl font-black text-white tracking-wider uppercase">{selectedCompany}<span className="text-purple-500">Items</span></h1>
+          <h1 className="text-xl font-black text-white tracking-wider uppercase">{selectedCompany} <span className="text-purple-500">Products</span></h1>
           <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
@@ -187,7 +186,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
           <button onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Overview</button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Master Data</div>
-          <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Item Records</button>
+          <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Product Records</button>
           <button onClick={() => { setActiveTab('add'); setFormData(initialForm); setEditingId(null); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Register Product</button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Inventory Management</div>
@@ -238,7 +237,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
               <div className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Active Items</p>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Active Products</p>
                     <h3 className="text-4xl font-black text-purple-950 mt-1">{companyProducts.filter(p => p.isActive).length}</h3>
                   </div>
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
@@ -252,7 +251,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300">
-                  <h3 className="text-lg font-bold text-white mb-2">Item Master Setup</h3>
+                  <h3 className="text-lg font-bold text-white mb-2">Product Master Setup</h3>
                   <p className="text-sm text-slate-400">Products created here are synchronized automatically with Inventory, Purchasing, and Sales modules.</p>
                   <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="mt-6 px-6 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-sm transition-colors text-sm">
                     Add First Product
@@ -274,7 +273,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                       </button>
                     </div>
                     <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="w-full sm:w-auto px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors whitespace-nowrap">
-                      + Register New Item
+                      + Register New Product
                     </button>
                   </div>
 
@@ -368,7 +367,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                 <div className="p-4 sm:p-6 border-b border-rose-100 bg-rose-50/50 flex flex-col gap-2">
                   <h2 className="text-lg font-bold text-rose-900 flex items-center gap-2">
                     <svg className="w-5 h-5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                    Items Requiring Restock
+                    Products Requiring Restock
                   </h2>
                   <p className="text-sm text-slate-600">The following active products have fallen below their defined reorder levels.</p>
                 </div>
@@ -391,7 +390,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                               <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                             </div>
                             <h3 className="text-lg font-bold text-slate-800">All Stock Levels Healthy</h3>
-                            <p className="text-slate-500 mt-1">No items currently require restocking.</p>
+                            <p className="text-slate-500 mt-1">No products currently require restocking.</p>
                           </td>
                         </tr>
                       ) : (
@@ -421,7 +420,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                             </td>
                             <td className="py-4 px-6 text-right">
                               <button onClick={() => handleEdit(p)} className="px-4 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded shadow-sm transition-colors uppercase tracking-wider">
-                                View Item
+                                View Product
                               </button>
                             </td>
                           </tr>
@@ -436,7 +435,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
             {/* ADD / EDIT TAB */}
             {activeTab === 'add' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8">
-                <h2 className="text-xl font-bold text-purple-950 mb-6">{editingId ? 'Edit Product Configuration' : 'Register Master Item'}</h2>
+                <h2 className="text-xl font-bold text-purple-950 mb-6">{editingId ? 'Edit Product Configuration' : 'Register Master Product'}</h2>
                 
                 <form onSubmit={handleSubmit} className="flex flex-col gap-8">
                   
