@@ -115,3 +115,26 @@ model SearchHistory {
   completionTokens Int  @default(0)
   createdAt    DateTime @default(now())
 }
+
+model Product {
+  id            Int       @id @default(autoincrement())
+  company       String
+  name          String
+  sku           String
+  category      String
+  purchasePrice Float
+  sellingPrice  Float
+  minQuantity   Int       @default(10)
+  reorderLevel  Int       @default(20)
+  unit          String
+  isActive      Boolean   @default(true)
+  vatSetting    String
+  imageUrl      String?
+  barcode       String?
+  currentStock  Int       @default(0)
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+
+  @@index([company])
+  @@index([sku])
+}
