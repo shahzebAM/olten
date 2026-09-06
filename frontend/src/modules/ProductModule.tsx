@@ -20,23 +20,17 @@ interface Product {
   deletedAt: string | null;
 }
 
-// 1. IN-MEMORY CACHE (Survives component unmounts!)
 let cachedProducts: Record<string, Product[]> = {};
 
 export default function ProductModule({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
   
-  // 2. Initialize state directly from the cache if it exists
   const [products, setProducts] = useState<Product[]>(cachedProducts[selectedCompany] || []);
-  
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'low_stock'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  
-  // Image Preview Modal State
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // Filters State
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filterCategory, setFilterCategory] = useState('All');
@@ -57,7 +51,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Image Upload Handler (Converts File to Base64 String Link)
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -69,7 +62,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     reader.readAsDataURL(file);
   };
 
-  // 3. Custom setter to keep the cache perfectly synced with the UI
   const syncProducts = (updater: (prev: Product[]) => Product[]) => {
     setProducts((prev) => {
       const next = updater(prev);
@@ -79,18 +71,17 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
   };
 
   const fetchProducts = async () => {
-    // 4. BLOCK UNNECESSARY FETCHES: If we already have the data, stop here!
     if (cachedProducts[selectedCompany]) return;
 
     try {
       const response = await fetch(`${API_BASE_URL}/products?company=${selectedCompany}`);
       if (response.ok) {
         const data = await response.json();
-        cachedProducts[selectedCompany] = data; // Save to cache
+        cachedProducts[selectedCompany] = data; 
         setProducts(data);
       }
     } catch (error) {
-      console.warn("Backend not connected yet. Using local state for UI demonstration.");
+      console.warn("Backend not connected yet. Using local state.");
     }
   };
 
@@ -123,7 +114,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
       
       showToast(editingId ? "Product updated successfully." : "New product added to master list.", "success");
       
-      // Update local UI and Cache simultaneously
       if (!editingId) {
         syncProducts(prev => [...prev, { ...finalData, id: Date.now(), currentStock: 0 } as Product]);
       } else {
@@ -147,6 +137,19 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     setActiveTab('add');
   };
 
+  const handleDelete = async (id: number) => {
+    if (!window.confirm("Are you sure you want to permanently delete this product? This action cannot be undone.")) return;
+    
+    try {
+      syncProducts(prev => prev.filter(p => p.id !== id));
+      await fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' });
+      showToast("Product permanently deleted.", "success");
+    } catch (e) {
+      showToast("Failed to delete product.", "error");
+      fetchProducts(); // Re-sync if it fails
+    }
+  };
+
   const toggleStatus = async (id: number, currentStatus: boolean) => {
     const today = new Date().toISOString().split('T')[0];
     const newDeletedAt = currentStatus ? today : null;
@@ -156,7 +159,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
       await fetch(`${API_BASE_URL}/products/${id}/status`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: !currentStatus, deletedAt: newDeletedAt })
       });
-      showToast(currentStatus ? "Product deactivated (marked deleted)." : "Product reactivated.", "success");
+      showToast(currentStatus ? "Product deactivated." : "Product reactivated.", "success");
     } catch (e) {
       syncProducts(prev => prev.map(p => p.id === id ? { ...p, isActive: currentStatus, deletedAt: currentStatus ? null : today } : p));
       showToast("Failed to update status.", "error");
@@ -171,17 +174,23 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
   };
 
   const companyProducts = products.filter(p => p.company === selectedCompany);
-  
   const lowStockProducts = companyProducts.filter(p => p.currentStock <= p.reorderLevel && p.isActive);
   const lowStockCount = lowStockProducts.length;
 
   const filteredProducts = companyProducts.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     if (searchQuery && !matchesSearch) return false;
-    
     if (filterCategory !== 'All' && p.category !== filterCategory) return false;
-    if (filterDateAdded && p.createdAt !== filterDateAdded) return false;
-    if (filterDateDeleted && p.deletedAt !== filterDateDeleted) return false;
+    
+    // Normalize date strings for accurate filtering
+    if (filterDateAdded) {
+      const pDate = p.createdAt ? String(p.createdAt).split('T')[0] : '';
+      if (pDate !== filterDateAdded) return false;
+    }
+    if (filterDateDeleted) {
+      const dDate = p.deletedAt ? String(p.deletedAt).split('T')[0] : '';
+      if (dDate !== filterDateDeleted) return false;
+    }
     
     return true;
   });
@@ -198,7 +207,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden selection:bg-purple-100">
       
-      {/* RESTORED AND ENLARGED FLOATING LIGHTBOX */}
       {previewImage && (
         <div 
           className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-[200] flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200"
@@ -390,8 +398,8 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                                   <p className="text-[11px] text-slate-500 font-mono mt-0.5">SKU: {p.sku} | Barcode: {p.barcode}</p>
                                   <div className="flex gap-2 mt-1 items-center">
                                     <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-bold uppercase rounded">{p.category}</span>
-                                    <span className="text-[9px] text-slate-400 font-medium">Added: {p.createdAt}</span>
-                                    {p.deletedAt && <span className="text-[9px] text-rose-400 font-medium border-l border-slate-200 pl-2">Deleted: {p.deletedAt}</span>}
+                                    <span className="text-[9px] text-slate-400 font-medium">Added: {p.createdAt ? String(p.createdAt).split('T')[0] : ''}</span>
+                                    {p.deletedAt && <span className="text-[9px] text-rose-400 font-medium border-l border-slate-200 pl-2">Deleted: {String(p.deletedAt).split('T')[0]}</span>}
                                   </div>
                                 </div>
                               </div>
@@ -411,7 +419,10 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                               </button>
                             </td>
                             <td className="py-4 px-6 text-right">
-                              <button onClick={() => handleEdit(p)} className="text-purple-600 hover:text-purple-800 text-xs font-bold uppercase tracking-wider">Edit</button>
+                              <div className="flex items-center justify-end gap-3">
+                                <button onClick={() => handleEdit(p)} className="text-purple-600 hover:text-purple-800 text-xs font-bold uppercase tracking-wider">Edit</button>
+                                <button onClick={() => handleDelete(p.id)} className="text-rose-500 hover:text-rose-700 text-xs font-bold uppercase tracking-wider">Delete</button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -483,9 +494,10 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                               <div className="text-sm text-slate-700">Trigger set at: <span className="font-bold">{p.reorderLevel} {p.unit}</span></div>
                             </td>
                             <td className="py-4 px-6 text-right">
-                              <button onClick={() => handleEdit(p)} className="px-4 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded shadow-sm transition-colors uppercase tracking-wider">
-                                View Product
-                              </button>
+                              <div className="flex items-center justify-end gap-3">
+                                <button onClick={() => handleEdit(p)} className="text-purple-600 hover:text-purple-800 text-xs font-bold uppercase tracking-wider">Edit</button>
+                                <button onClick={() => handleDelete(p.id)} className="text-rose-500 hover:text-rose-700 text-xs font-bold uppercase tracking-wider">Delete</button>
+                              </div>
                             </td>
                           </tr>
                         ))
