@@ -58,4 +58,8 @@ export class ProductsService {
     });
   }
 
+  async exportFullBackup() {
+    return this.prisma.product.findMany();
+  }
+
 }

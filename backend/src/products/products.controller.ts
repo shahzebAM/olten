@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Query, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Query, Delete, Header } from '@nestjs/common';
 import { ProductsService } from './products.service';
 
 @Controller('products')
@@ -13,6 +13,14 @@ export class ProductsController {
   @Get()
   findAll(@Query('company') company: string) {
     return this.productsService.findAll(company);
+  }
+
+  @Get('export/backup')
+  @Header('Content-Type', 'application/json')
+  @Header('Content-Disposition', 'attachment; filename="master_products_backup.json"')
+  async downloadBackup() {
+    const allProducts = await this.productsService.exportFullBackup();
+    return JSON.stringify(allProducts, null, 2);
   }
 
   @Patch(':id')
