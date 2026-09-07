@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
-  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts, hasInventory, // Added hasInventory prop
+  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, // Added hasInventory prop
   onChangeCompany, onSelectModule
 }: any) {
 
@@ -113,6 +113,16 @@ export default function CompanyModule({
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-sky-950">Inventory Control</h2>
               <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Track physical stock, receipts, and issuing.</p>
+            </div>
+          </button>
+        )}
+
+        {hasWarehouses && (
+          <button onClick={() => onSelectModule('warehouses')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-teal-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg></div>
+              <h2 className="text-xl sm:text-2xl font-black text-teal-950">Multi-Warehouse</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage hubs and location-based routing.</p>
             </div>
           </button>
         )}

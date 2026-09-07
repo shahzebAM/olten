@@ -5,7 +5,10 @@ export default function UserControlModule({
   isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout 
 }: any) {
   
-  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false, products: true, inventory: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
+  const [newAdminModules, setNewAdminModules] = useState({ 
+    payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
+    companies: { Surgicom: true, Olten: true, Ordent: true } 
+  });
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
@@ -17,6 +20,7 @@ export default function UserControlModule({
   const isAiDocsEnabled = globalModules?.ai_docs;
   const isProductsEnabled = globalModules?.products;
   const isInventoryEnabled = globalModules?.inventory;
+  const isWarehousesEnabled = globalModules?.warehouses;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -38,7 +42,10 @@ export default function UserControlModule({
       await fetchAdmins(); 
       setNewAdminUsername('');
       setNewAdminPassword('');
-      setNewAdminModules({ payroll: true, ai_docs: false, products: true, inventory: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
+      setNewAdminModules({ 
+        payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
+        companies: { Surgicom: true, Olten: true, Ordent: true } 
+      });
       showToast("New user added successfully!", "success");
     } catch (error) { showToast("Failed to add user. Username might exist.", "error"); } 
     finally { setIsSaving(false); }
@@ -75,8 +82,8 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update role.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs' | 'products' | 'inventory') => {
-    const safeModules = currentModules || { payroll: false, ai_docs: false, products: false, inventory: false };
+  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses') => {
+    const safeModules = currentModules || { payroll: false, ai_docs: false, products: false, inventory: false, warehouses: false };
     const newModules = { ...safeModules, [toggleModule]: !safeModules[toggleModule] };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
@@ -111,6 +118,8 @@ export default function UserControlModule({
     } catch (error) { showToast("Failed to reset password.", "error"); } finally { setIsSaving(false); }
   };
 
+  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled;
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
       <div className="w-full max-w-6xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
@@ -130,14 +139,14 @@ export default function UserControlModule({
             <h2 className="text-lg font-bold text-slate-800">System Users</h2>
           </div>
           <div className="overflow-x-auto w-full">
-            <table className="w-full text-left border-collapse min-w-[1000px]">
+            <table className="w-full text-left border-collapse min-w-[1100px]">
               <thead className="bg-slate-100 border-b border-slate-200">
                 <tr>
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase">Username</th>
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th>
-                  {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center">Company Assignment</th>}
-                  {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center">Modules Assignment</th>}
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
+                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Username</th>
+                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Role Level</th>
+                  {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-1/6">Company Assignment</th>}
+                  {hasAnyModuleEnabled && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-2/6">Modules Assignment</th>}
+                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-right w-1/6">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -160,7 +169,7 @@ export default function UserControlModule({
                     {isCurrentUserSuperAdmin && (
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
-                          <div className="flex items-center justify-center gap-3 sm:gap-4 flex-wrap">
+                          <div className="flex items-center justify-center gap-3 flex-wrap">
                             <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                               <input type="checkbox" checked={user.modules?.companies?.Surgicom || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Surgicom')} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
                               <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Sur</span>
@@ -177,14 +186,26 @@ export default function UserControlModule({
                         ) : (<div className="text-center text-[10px] text-slate-400 uppercase tracking-widest font-bold">Unrestricted</div>)}
                       </td>
                     )}
-                    {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && isCurrentUserSuperAdmin && (
+                    {hasAnyModuleEnabled && isCurrentUserSuperAdmin && (
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
-                          <div className="flex items-center justify-center gap-3 sm:gap-4 flex-wrap">
+                          <div className="flex items-center justify-center gap-3 flex-wrap">
                             {isProductsEnabled && (
                               <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input type="checkbox" checked={user.modules?.products || false} onChange={() => handleUpdateModules(user.id, user.modules, 'products')} className="w-4 h-4 text-purple-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Products</span>
+                              </label>
+                            )}
+                            {isInventoryEnabled && (
+                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.inventory || false} onChange={() => handleUpdateModules(user.id, user.modules, 'inventory')} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Inventory</span>
+                              </label>
+                            )}
+                            {isWarehousesEnabled && (
+                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.warehouses || false} onChange={() => handleUpdateModules(user.id, user.modules, 'warehouses')} className="w-4 h-4 text-teal-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Hubs</span>
                               </label>
                             )}
                             {isPayrollEnabled && (
@@ -196,13 +217,7 @@ export default function UserControlModule({
                             {isAiDocsEnabled && (
                               <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI Docs</span>
-                              </label>
-                            )}
-                            {isInventoryEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.inventory || false} onChange={() => handleUpdateModules(user.id, user.modules, 'inventory')} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Inventory</span>
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI</span>
                               </label>
                             )}
                           </div>
@@ -242,51 +257,57 @@ export default function UserControlModule({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 pt-4 border-t border-slate-100">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 pt-4 border-t border-slate-100">
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Company Access</label>
-                <div className="flex flex-row flex-wrap gap-4 sm:gap-8 mt-2">
-                  <label className="flex items-center gap-3 cursor-pointer w-fit">
+                <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
                     <input type="checkbox" checked={newAdminModules.companies.Surgicom} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Surgicom: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
                     <span className="text-sm font-medium text-slate-700">Surgicom</span>
                   </label>
-                  <label className="flex items-center gap-3 cursor-pointer w-fit">
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
                     <input type="checkbox" checked={newAdminModules.companies.Olten} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Olten: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-600 shrink-0" />
                     <span className="text-sm font-medium text-slate-700">Olten</span>
                   </label>
-                  <label className="flex items-center gap-3 cursor-pointer w-fit">
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
                     <input type="checkbox" checked={newAdminModules.companies.Ordent} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Ordent: e.target.checked}})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
                     <span className="text-sm font-medium text-slate-700">Ordent</span>
                   </label>
                 </div>
               </div>
 
-              {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && (
-                <div className="flex flex-col gap-2">
+              {hasAnyModuleEnabled && (
+                <div className="flex flex-col gap-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-100">
                   <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
-                  <div className="flex flex-row flex-wrap gap-4 sm:gap-8 mt-2">
+                  <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
                     {isProductsEnabled && (
-                      <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
                         <input type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Product Manager</span>
                       </label>
                     )}
+                    {isInventoryEnabled && (
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Inventory Control</span>
+                      </label>
+                    )}
+                    {isWarehousesEnabled && (
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input type="checkbox" checked={newAdminModules.warehouses} onChange={e => setNewAdminModules({...newAdminModules, warehouses: e.target.checked})} className="w-5 h-5 text-teal-600 rounded border-slate-300 focus:ring-teal-600 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Multi-Warehouse</span>
+                      </label>
+                    )}
                     {isPayrollEnabled && (
-                      <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
                         <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
                       </label>
                     )}
                     {isAiDocsEnabled && (
-                      <label className="flex items-center gap-3 cursor-pointer w-fit">
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
                         <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">AI Documentation</span>
-                      </label>
-                    )}
-                    {isInventoryEnabled && (
-                      <label className="flex items-center gap-3 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Inventory Control</span>
                       </label>
                     )}
                   </div>

@@ -55,6 +55,14 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
             </div>
             <input type="checkbox" checked={globalModules.inventory} onChange={() => handleToggle('inventory')} className="w-5 h-5 rounded border-slate-700 bg-slate-800 text-rose-500 focus:ring-rose-500 focus:ring-offset-slate-900" />
           </label>
+
+          <label className="flex items-center justify-between p-4 rounded-xl bg-slate-900 hover:bg-slate-800 cursor-pointer border border-slate-800 transition-colors">
+  <div>
+    <div className="font-bold text-white">Multi-Warehouse</div>
+    <div className="text-xs text-slate-500 mt-0.5">Enables/disables location routing and transfer capabilities.</div>
+  </div>
+  <input type="checkbox" checked={globalModules.warehouses} onChange={() => handleToggle('warehouses')} className="w-5 h-5 rounded border-slate-700 bg-slate-800 text-rose-500 focus:ring-rose-500" />
+</label>
         </div>
       </div>
     </div>
