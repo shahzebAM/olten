@@ -5,7 +5,7 @@ export default function UserControlModule({
   isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout 
 }: any) {
   
-  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false, products: true, companies: { Surgicom: true, Olten: true, Ordent: true } });
+  const [newAdminModules, setNewAdminModules] = useState({ payroll: true, ai_docs: false, products: true, inventory: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
@@ -16,6 +16,7 @@ export default function UserControlModule({
   const isPayrollEnabled = globalModules?.payroll;
   const isAiDocsEnabled = globalModules?.ai_docs;
   const isProductsEnabled = globalModules?.products;
+  const isInventoryEnabled = globalModules?.inventory;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -37,7 +38,7 @@ export default function UserControlModule({
       await fetchAdmins(); 
       setNewAdminUsername('');
       setNewAdminPassword('');
-      setNewAdminModules({ payroll: true, ai_docs: false, products: true, companies: { Surgicom: true, Olten: true, Ordent: true } });
+      setNewAdminModules({ payroll: true, ai_docs: false, products: true, inventory: false, companies: { Surgicom: true, Olten: true, Ordent: true } });
       showToast("New user added successfully!", "success");
     } catch (error) { showToast("Failed to add user. Username might exist.", "error"); } 
     finally { setIsSaving(false); }
@@ -74,8 +75,8 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update role.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs' | 'products') => {
-    const safeModules = currentModules || { payroll: false, ai_docs: false, products: false };
+  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs' | 'products' | 'inventory') => {
+    const safeModules = currentModules || { payroll: false, ai_docs: false, products: false, inventory: false };
     const newModules = { ...safeModules, [toggleModule]: !safeModules[toggleModule] };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
@@ -135,7 +136,7 @@ export default function UserControlModule({
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase">Username</th>
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase">Role Level</th>
                   {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center">Company Assignment</th>}
-                  {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled) && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center">Modules Assignment</th>}
+                  {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center">Modules Assignment</th>}
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
                 </tr>
               </thead>
@@ -176,7 +177,7 @@ export default function UserControlModule({
                         ) : (<div className="text-center text-[10px] text-slate-400 uppercase tracking-widest font-bold">Unrestricted</div>)}
                       </td>
                     )}
-                    {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled) && isCurrentUserSuperAdmin && (
+                    {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && isCurrentUserSuperAdmin && (
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 sm:gap-4 flex-wrap">
@@ -196,6 +197,12 @@ export default function UserControlModule({
                               <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI Docs</span>
+                              </label>
+                            )}
+                            {isInventoryEnabled && (
+                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.inventory || false} onChange={() => handleUpdateModules(user.id, user.modules, 'inventory')} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Inventory</span>
                               </label>
                             )}
                           </div>
@@ -254,7 +261,7 @@ export default function UserControlModule({
                 </div>
               </div>
 
-              {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled) && (
+              {(isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled) && (
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
                   <div className="flex flex-row flex-wrap gap-4 sm:gap-8 mt-2">
@@ -274,6 +281,12 @@ export default function UserControlModule({
                       <label className="flex items-center gap-3 cursor-pointer w-fit">
                         <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">AI Documentation</span>
+                      </label>
+                    )}
+                    {isInventoryEnabled && (
+                      <label className="flex items-center gap-3 cursor-pointer w-fit">
+                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Inventory Control</span>
                       </label>
                     )}
                   </div>

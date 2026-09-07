@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import InventoryModule from './modules/InventoryModule';
 import AuthModule from './modules/AuthModule';
 import CompanyModule from './modules/CompanyModule';
 import UserControlModule from './modules/UserControlModule';
 import PayrollModule from './modules/PayrollModule';
 import AiDocsModule from './modules/AiDocsModule';
 import DeveloperModule from './modules/DeveloperModule';
-import ProductModule from './modules/ProductModule'; // IMPORT ADDED
+import ProductModule from './modules/ProductModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -13,15 +14,16 @@ export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
-  // ADDED 'products' TO ACTIVE MODULE TYPES
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'users'>('none');
+  
+  // 1. ADDED 'inventory' to active module types
+  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'users'>('none');
   const [selectedCompany, setSelectedCompany] = useState<'Surgicom' | 'Olten' | 'Ordent' | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
-  // ADDED products TO GLOBAL DEFAULT
+  // 2. ADDED 'inventory' to global default initialization
   const [globalModules, setGlobalModules] = useState(() => {
     const saved = localStorage.getItem('dev_global_modules');
-    return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true };
+    return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true };
   });
 
   const isDeveloper = loginUsername === 'system_dev';
@@ -46,15 +48,18 @@ export default function App() {
 
     const userHasPayroll = activeAccount.role === 'Super Admin' || activeAccount.modules?.payroll === true;
     const userHasAiDocs = activeAccount.role === 'Super Admin' || activeAccount.modules?.ai_docs === true;
-    const userHasProducts = activeAccount.role === 'Super Admin' || activeAccount.modules?.products === true; // ADDED
+    const userHasProducts = activeAccount.role === 'Super Admin' || activeAccount.modules?.products === true;
+    const userHasInventory = activeAccount.role === 'Super Admin' || activeAccount.modules?.inventory === true; // INVENTORY ROLE CHECK
     
     const finalHasPayroll = userHasPayroll && globalModules.payroll;
     const finalHasAiDocs = userHasAiDocs && globalModules.ai_docs;
-    const finalHasProducts = userHasProducts && globalModules.products; // ADDED
+    const finalHasProducts = userHasProducts && globalModules.products;
+    const finalHasInventory = userHasInventory && globalModules.inventory; // INVENTORY GLOBAL CHECK
 
     if (activeModule === 'payroll' && !finalHasPayroll) setActiveModule('none');
     if (activeModule === 'ai_docs' && !finalHasAiDocs) setActiveModule('none');
-    if (activeModule === 'products' && !finalHasProducts) setActiveModule('none'); // ADDED
+    if (activeModule === 'products' && !finalHasProducts) setActiveModule('none');
+    if (activeModule === 'inventory' && !finalHasInventory) setActiveModule('none'); // EJECT IF PERMISSION LOST
 
   }, [adminUsers, globalModules, selectedCompany, activeModule, isAuthenticated, isDeveloper, loginUsername]);
 
@@ -101,16 +106,20 @@ export default function App() {
   if (activeModule === 'none') {
     const userHasPayroll = isCurrentUserSuperAdmin || currentUser?.modules?.payroll === true;
     const userHasAiDocs = isCurrentUserSuperAdmin || currentUser?.modules?.ai_docs === true;
-    const userHasProducts = isCurrentUserSuperAdmin || currentUser?.modules?.products === true; // ADDED
+    const userHasProducts = isCurrentUserSuperAdmin || currentUser?.modules?.products === true;
+    const userHasInventory = isCurrentUserSuperAdmin || currentUser?.modules?.inventory === true;
     
     const finalHasPayroll = userHasPayroll && globalModules.payroll;
     const finalHasAiDocs = userHasAiDocs && globalModules.ai_docs;
-    const finalHasProducts = userHasProducts && globalModules.products; // ADDED
+    const finalHasProducts = userHasProducts && globalModules.products;
+    const finalHasInventory = userHasInventory && globalModules.inventory;
 
-    return <CompanyModule isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} hasPayroll={finalHasPayroll} hasAiDocs={finalHasAiDocs} hasProducts={finalHasProducts} onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} />;
+    // 3. PASSED `hasInventory` TO GATEWAY
+    return <CompanyModule isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} hasPayroll={finalHasPayroll} hasAiDocs={finalHasAiDocs} hasProducts={finalHasProducts} hasInventory={finalHasInventory} onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} />;
   }
 
-  // ADDED PRODUCT MODULE RENDER
+  // 4. ADDED INVENTORY ROUTE
+  if (activeModule === 'inventory') return <InventoryModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'products') return <ProductModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'users') return <UserControlModule adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} isCurrentUserSuperAdmin={isCurrentUserSuperAdmin} API_BASE_URL={API_BASE_URL} globalModules={globalModules} onBack={() => setActiveModule('none')} onLogout={handleLogout} />;

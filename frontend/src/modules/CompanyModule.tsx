@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
-  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts,
+  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts, hasInventory, // Added hasInventory prop
   onChangeCompany, onSelectModule
 }: any) {
 
@@ -11,7 +11,6 @@ export default function CompanyModule({
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-blue-100">
         
-        {/* RESPONSIVE HEADER WITH BOTH BUTTONS */}
         <div className="w-full max-w-5xl flex flex-col md:flex-row justify-between items-start md:items-center gap-5 mb-8 sm:mb-12">
           <div className="w-full md:w-auto">
             <h1 className="text-2xl sm:text-3xl font-black text-blue-950 tracking-tight">Select Organization</h1>
@@ -31,7 +30,6 @@ export default function CompanyModule({
           </div>
         </div>
 
-        {/* COMPANY CARDS GRID */}
         <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           {allowedCompanies.Surgicom && (
             <button onClick={() => onSelectCompany('Surgicom')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
@@ -93,7 +91,7 @@ export default function CompanyModule({
 
       <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         
-        {/* PRODUCT MODULE (Only renders if active) */}
+        {/* PRODUCTS */}
         {hasProducts && (
           <button onClick={() => onSelectModule('products')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-purple-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
@@ -106,7 +104,20 @@ export default function CompanyModule({
           </button>
         )}
 
-        {/* PAYROLL ENGINE (Only renders if active) */}
+        {/* INVENTORY MODULE */}
+        {hasInventory && (
+          <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-sky-950">Inventory Control</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Track physical stock, receipts, and issuing.</p>
+            </div>
+          </button>
+        )}
+
+        {/* PAYROLL */}
         {hasPayroll && (
           <button onClick={() => onSelectModule('payroll')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
@@ -119,7 +130,7 @@ export default function CompanyModule({
           </button>
         )}
 
-        {/* AI DOCS (Only renders if active) */}
+        {/* AI DOCS */}
         {hasAiDocs && (
           <button onClick={() => onSelectModule('ai_docs')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
@@ -132,8 +143,7 @@ export default function CompanyModule({
           </button>
         )}
 
-        {/* EMPTY STATE FALLBACK (If all modules are disabled/hidden) */}
-        {(!hasProducts && !hasPayroll && !hasAiDocs) && (
+        {(!hasProducts && !hasInventory && !hasPayroll && !hasAiDocs) && (
           <div className="col-span-full bg-white p-10 sm:p-16 rounded-2xl shadow-sm border border-slate-200 border-dashed flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
               <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
