@@ -135,3 +135,19 @@ model Product {
   @@index([company])
   @@index([sku])
 }
+
+model InventoryMovement {
+  id            String   @id @default(uuid())
+  productId     Int
+  productName   String
+  sku           String
+  type          String   // 'RECEIVE' | 'ISSUE' | 'ADJUST'
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reference     String?
+  remarks       String?
+  date          DateTime @default(now())
+  user          String
+  company       String
+}
