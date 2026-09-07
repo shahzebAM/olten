@@ -34,6 +34,14 @@ export class InventoryMovementsController {
     });
   }
 
+  // ADD THIS NEW ENDPOINT: Clears all history for a specific company
+  @Delete('clear/:company')
+  async clearHistory(@Param('company') company: string) {
+    return prisma.inventoryMovement.deleteMany({
+      where: { company }
+    });
+  }
+
   @Patch(':id')
   async update(@Param('id') id: string, @Body() data: any) {
     return prisma.inventoryMovement.update({

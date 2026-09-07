@@ -151,3 +151,37 @@ model InventoryMovement {
   user          String
   company       String
 }
+
+model Warehouse {
+  id          String   @id @default(uuid())
+  company     String
+  name        String
+  location    String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model WarehouseStock {
+  id          String   @id @default(uuid())
+  warehouseId String
+  productId   Int
+  sku         String
+  quantity    Int      @default(0)
+  company     String
+  lastUpdated DateTime @default(now())
+
+  @@unique([warehouseId, productId])
+}
+
+model WarehouseTransfer {
+  id              String   @id @default(uuid())
+  sourceId        String
+  destinationId   String
+  productId       Int
+  sku             String
+  quantity        Int
+  transferDate    DateTime @default(now())
+  reference       String?
+  user            String
+  company         String
+}

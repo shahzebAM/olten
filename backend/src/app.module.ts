@@ -6,16 +6,22 @@ import { DocumentationModule } from './documentation/documentation.module';
 import { ProductsModule } from './products/products.module';
 import { InventoryMovementsController } from "./inventory-movements/inventory-movements.controller";
 
+import { WarehousesController } from './warehouse/warehouse.controller';
+import { WarehouseStockController } from './warehouse/warehouse-stock.controller'; // FIXED TYPO HERE
+import { WarehouseTransfersController } from './warehouse/warehouse-transfers.controller';
+
 @Module({
   imports: [
     EmployeesModule,
     DocumentationModule,
     ProductsModule
-    // InventoryMovementsController removed from here
   ],
   controllers: [
     AppController,
-    InventoryMovementsController // Added here
+    InventoryMovementsController,
+    WarehousesController,
+    WarehouseStockController, // FIXED TYPO HERE
+    WarehouseTransfersController
   ],
   providers: [AppService],
 })
