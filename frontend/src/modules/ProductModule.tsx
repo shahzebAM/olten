@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 
 interface Product {
   id: number;
@@ -20,27 +21,35 @@ interface Product {
   deletedAt: string | null;
 }
 
+// 1. IN-MEMORY CACHES (Survives component unmounts!)
 let cachedProducts: Record<string, Product[]> = {};
+let currentValidImages: Record<string, string> = {}; // Tracks valid image by SKU
+let globalImageVault: Record<string, string> = {};   // Backs up replaced/deleted images by SKU
 
 export default function ProductModule({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
   
+  // 2. Initialize state directly from the cache if it exists
   const [products, setProducts] = useState<Product[]>(cachedProducts[selectedCompany] || []);
+  
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'low_stock'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  
+  // Image Preview Modal State
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  // Filters State
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filterCategory, setFilterCategory] = useState('All');
   const [filterDateAdded, setFilterDateAdded] = useState('');
-  const [filterDateDeleted, setFilterDateDeleted] = useState('');
 
-  const initialForm: Omit<Product, 'id' | 'currentStock' | 'company' | 'createdAt' | 'deletedAt'> = {
+  const initialForm: Omit<Product, 'id' | 'currentStock' | 'company' | 'createdAt' | 'deletedAt'> & { previousImageUrl?: string } = {
     name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0,
     minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, 
-    vatSetting: 'Vatable', imageUrl: '', barcode: ''
+    vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: ''
   };
   
   const [formData, setFormData] = useState(initialForm);
@@ -51,6 +60,54 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     setTimeout(() => setToast(null), 3500);
   };
 
+  // 🛡️ BACKGROUND VAULT TRACKER: Now strictly matches by SKU to survive database imports
+  const updateImageVault = (data: Product[]) => {
+    data.forEach(p => {
+      if (!p.sku) return;
+      const current = currentValidImages[p.sku];
+      const incoming = p.imageUrl;
+
+      if ((!incoming || !incoming.startsWith('data:image')) && current) {
+        globalImageVault[p.sku] = current;
+      } else if (incoming && incoming.startsWith('data:image')) {
+        if (current && current !== incoming) {
+          globalImageVault[p.sku] = current;
+        }
+        currentValidImages[p.sku] = incoming;
+      }
+    });
+  };
+
+  // 3. Custom setter to keep the cache perfectly synced with the UI
+  const syncProducts = (updater: (prev: Product[]) => Product[]) => {
+    setProducts((prev) => {
+      const next = updater(prev);
+      cachedProducts[selectedCompany] = next;
+      updateImageVault(next); // Run the silent backup tracker
+      return next;
+    });
+  };
+
+  const fetchProducts = async (force = false) => {
+    // 4. BLOCK UNNECESSARY FETCHES: If we already have the data, stop here!
+    if (!force && cachedProducts[selectedCompany]) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/products?company=${selectedCompany}`);
+      if (response.ok) {
+        const data = await response.json();
+        updateImageVault(data); // Back up images before rendering
+        cachedProducts[selectedCompany] = data; 
+        setProducts(data);
+      }
+    } catch (error) {
+      console.warn("Backend not connected yet. Using local state for UI demonstration.");
+    }
+  };
+
+  useEffect(() => { fetchProducts(); }, [selectedCompany]);
+
+  // Image Upload Handler (Converts File to Base64 String Link)
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -62,30 +119,89 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     reader.readAsDataURL(file);
   };
 
-  const syncProducts = (updater: (prev: Product[]) => Product[]) => {
-    setProducts((prev) => {
-      const next = updater(prev);
-      cachedProducts[selectedCompany] = next;
-      return next;
-    });
+  // INLINE TABLE UPLOAD HANDLER
+  const handleQuickImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, id: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    showToast("Uploading image...", "success");
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result as string;
+      syncProducts(prev => prev.map(p => p.id === id ? { ...p, imageUrl: base64String } : p));
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/products/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageUrl: base64String })
+        });
+        if (!response.ok) throw new Error();
+        showToast("Image loaded successfully.", "success");
+      } catch (error) {
+        showToast("Failed to save image to database.", "error");
+        fetchProducts(true);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
-  const fetchProducts = async () => {
-    if (cachedProducts[selectedCompany]) return;
-
+  // SINGLE IMAGE RESTORE HANDLER (Matches by SKU)
+  const restoreSingleImage = async (id: number, sku: string) => {
+    const vaultImg = globalImageVault[sku];
+    if (!vaultImg) return;
+    
     try {
-      const response = await fetch(`${API_BASE_URL}/products?company=${selectedCompany}`);
-      if (response.ok) {
-        const data = await response.json();
-        cachedProducts[selectedCompany] = data; 
-        setProducts(data);
-      }
-    } catch (error) {
-      console.warn("Backend not connected yet. Using local state.");
+      // Instantly swap the vault image into the UI
+      syncProducts(prev => prev.map(p => p.id === id ? { ...p, imageUrl: vaultImg } : p));
+      
+      // Execute backend patch
+      await fetch(`${API_BASE_URL}/products/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: vaultImg })
+      });
+      showToast("Image reloaded from vault.", "success");
+    } catch (e) {
+      showToast("Failed to reload image.", "error");
+      fetchProducts(true);
     }
   };
 
-  useEffect(() => { fetchProducts(); }, [selectedCompany]);
+  // GLOBAL BULK RESTORE HANDLER (Matches by SKU)
+  const restoreAllImages = async () => {
+    setIsImporting(true);
+    showToast("Scanning vault for missing images by SKU...", "success");
+    let restoredCount = 0;
+    
+    // Find all products that have a missing/corrupted image but have a matching SKU in the vault
+    const productsToRestore = products.filter(p => 
+      globalImageVault[p.sku] && (!p.imageUrl || p.imageUrl.includes('[Base64'))
+    );
+    
+    for (const p of productsToRestore) {
+       try {
+          const vaultImg = globalImageVault[p.sku];
+          await fetch(`${API_BASE_URL}/products/${p.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageUrl: vaultImg })
+          });
+          restoredCount++;
+       } catch(e) {
+          console.error(`Failed to restore image for product ${p.sku}`);
+       }
+    }
+    
+    if (restoredCount > 0) {
+      showToast(`Successfully restored ${restoredCount} images from vault.`, "success");
+      fetchProducts(true); // Refresh table to show recovered images
+    } else {
+      showToast("No missing images found to restore.", "success");
+    }
+    setIsImporting(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,10 +210,13 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     const today = new Date().toISOString().split('T')[0];
     const existingProduct = products.find(p => p.id === editingId);
     
+    // Safely remove the vault tracking property from the final payload sent to backend
+    const { previousImageUrl, ...cleanFormData } = formData;
+    
     const finalData = { 
-      ...formData, 
+      ...cleanFormData, 
       company: selectedCompany, 
-      barcode: formData.barcode || formData.sku.toUpperCase(),
+      barcode: cleanFormData.barcode || cleanFormData.sku.toUpperCase(),
       createdAt: existingProduct ? existingProduct.createdAt : today,
       deletedAt: existingProduct ? existingProduct.deletedAt : null
     };
@@ -114,6 +233,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
       
       showToast(editingId ? "Product updated successfully." : "New product added to master list.", "success");
       
+      // Update local UI and Cache simultaneously
       if (!editingId) {
         syncProducts(prev => [...prev, { ...finalData, id: Date.now(), currentStock: 0 } as Product]);
       } else {
@@ -132,21 +252,20 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
 
   const handleEdit = (prod: Product) => {
     const { id, company, currentStock, createdAt, deletedAt, ...editableData } = prod;
-    setFormData(editableData);
+    // Inject the exact vault image into the form state for editing via SKU matching
+    setFormData({ ...editableData, previousImageUrl: globalImageVault[prod.sku] || prod.imageUrl });
     setEditingId(prod.id);
     setActiveTab('add');
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm("Are you sure you want to permanently delete this product? This action cannot be undone.")) return;
-    
     try {
       syncProducts(prev => prev.filter(p => p.id !== id));
       await fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' });
       showToast("Product permanently deleted.", "success");
     } catch (e) {
       showToast("Failed to delete product.", "error");
-      fetchProducts(); // Re-sync if it fails
+      fetchProducts(true);
     }
   };
 
@@ -166,14 +285,87 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     }
   };
 
+  const handleExportExcel = async () => {
+    try {
+      showToast("Generating Excel file...", "success");
+      const response = await fetch(`${API_BASE_URL}/products?company=${selectedCompany}`);
+      if (!response.ok) throw new Error();
+      
+      const data = await response.json();
+      
+      if (data.length === 0) {
+        showToast("No products found to export.", "error");
+        return;
+      }
+
+      // Format data to prevent Excel character limit crashes
+      const safeExcelData = data.map((product: Product) => {
+        const safeProduct = { ...product };
+        if (safeProduct.imageUrl && safeProduct.imageUrl.length > 30000) {
+          safeProduct.imageUrl = "[Base64 Image Data Excluded - Too Large for Excel]";
+        }
+        return safeProduct;
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(safeExcelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Master Products");
+      
+      XLSX.writeFile(workbook, `${selectedCompany}_Products_Backup_${new Date().toISOString().split('T')[0]}.xlsx`);
+      showToast("Excel backup downloaded successfully.", "success");
+    } catch (error) {
+      showToast("Failed to generate Excel backup.", "error");
+    }
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    showToast("Reading Excel file...", "success");
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const workbook = XLSX.read(bstr, { type: 'binary' });
+        const worksheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[worksheetName];
+        const data = XLSX.utils.sheet_to_json(worksheet) as Product[];
+
+        let successCount = 0;
+
+        for (const item of data) {
+          const { id, ...productData } = item;
+          const response = await fetch(`${API_BASE_URL}/products`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...productData, company: selectedCompany })
+          });
+          if (response.ok) successCount++;
+        }
+
+        showToast(`Import complete. Added ${successCount} products.`, "success");
+        fetchProducts(true);
+      } catch (error) {
+        showToast("Error processing Excel file.", "error");
+      } finally {
+        setIsImporting(false);
+        e.target.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const clearFilters = () => {
     setSearchQuery('');
     setFilterCategory('All');
     setFilterDateAdded('');
-    setFilterDateDeleted('');
   };
 
   const companyProducts = products.filter(p => p.company === selectedCompany);
+  
   const lowStockProducts = companyProducts.filter(p => p.currentStock <= p.reorderLevel && p.isActive);
   const lowStockCount = lowStockProducts.length;
 
@@ -181,17 +373,10 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     if (searchQuery && !matchesSearch) return false;
     if (filterCategory !== 'All' && p.category !== filterCategory) return false;
-    
-    // Normalize date strings for accurate filtering
     if (filterDateAdded) {
       const pDate = p.createdAt ? String(p.createdAt).split('T')[0] : '';
       if (pDate !== filterDateAdded) return false;
     }
-    if (filterDateDeleted) {
-      const dDate = p.deletedAt ? String(p.deletedAt).split('T')[0] : '';
-      if (dDate !== filterDateDeleted) return false;
-    }
-    
     return true;
   });
 
@@ -207,6 +392,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden selection:bg-purple-100">
       
+      {/* FLOATING LIGHTBOX */}
       {previewImage && (
         <div 
           className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-[200] flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200"
@@ -219,12 +405,7 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
-            <img 
-              src={previewImage} 
-              alt="Preview" 
-              className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-slate-700/50"
-              onClick={(e) => e.stopPropagation()} 
-            />
+            <img src={previewImage} alt="Preview" className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-slate-700/50" onClick={(e) => e.stopPropagation()} />
           </div>
         </div>
       )}
@@ -319,9 +500,23 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300">
                   <h3 className="text-lg font-bold text-white mb-2">Product Master Setup</h3>
                   <p className="text-sm text-slate-400">Products created here are synchronized automatically with Inventory, Purchasing, and Sales modules.</p>
-                  <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="mt-6 px-6 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-sm transition-colors text-sm">
-                    Add First Product
-                  </button>
+                  
+                  <div className="flex flex-wrap items-center gap-4 mt-6">
+                    <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="w-full sm:w-auto px-6 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-sm transition-colors text-sm">
+                      Add First Product
+                    </button>
+                    
+                    <button onClick={handleExportExcel} className="w-full sm:w-auto px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold rounded-xl shadow-sm transition-colors text-sm border border-slate-700 flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      Export Excel
+                    </button>
+
+                    <label className={`w-full sm:w-auto px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold rounded-xl shadow-sm transition-colors text-sm border border-slate-700 flex items-center justify-center gap-2 cursor-pointer ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                      {isImporting ? 'Importing...' : 'Import Excel'}
+                      <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleImportExcel} disabled={isImporting} />
+                    </label>
+                  </div>
                 </div>
               </div>
             )}
@@ -338,13 +533,20 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                         <span className="hidden sm:inline">Filters</span>
                       </button>
                     </div>
-                    <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="w-full sm:w-auto px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors whitespace-nowrap">
-                      + Register New Product
-                    </button>
+                    <div className="flex w-full sm:w-auto gap-3">
+                      <button onClick={restoreAllImages} disabled={isImporting} className="flex-1 sm:flex-none px-4 py-2 bg-slate-800 hover:bg-slate-700 text-sky-400 text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        <span className="hidden sm:inline">Restore All Images</span>
+                        <span className="sm:hidden">Restore Images</span>
+                      </button>
+                      <button onClick={() => { setActiveTab('add'); setEditingId(null); setFormData(initialForm); }} className="flex-1 sm:flex-none px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors whitespace-nowrap">
+                        + Register New Product
+                      </button>
+                    </div>
                   </div>
 
                   {showFilters && (
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 bg-white border border-slate-200 rounded-xl mt-2 animate-in slide-in-from-top-2 fade-in duration-200">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-white border border-slate-200 rounded-xl mt-2 animate-in slide-in-from-top-2 fade-in duration-200">
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Category</label>
                         <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white outline-none focus:border-purple-500">
@@ -354,10 +556,6 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Date Added</label>
                         <input type="date" value={filterDateAdded} onChange={(e) => setFilterDateAdded(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-purple-500" />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Date Deleted</label>
-                        <input type="date" value={filterDateDeleted} onChange={(e) => setFilterDateDeleted(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-purple-500" />
                       </div>
                       <div className="flex items-end justify-end">
                         <button onClick={clearFilters} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 underline transition-colors">
@@ -387,12 +585,75 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                           <tr key={p.id} className={`hover:bg-purple-50/30 transition-colors ${!p.isActive ? 'opacity-60 grayscale-[50%]' : ''}`}>
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-4">
-                                <div 
-                                  className={`w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 ${p.imageUrl ? 'cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all' : ''}`}
-                                  onClick={() => p.imageUrl && setPreviewImage(p.imageUrl)}
-                                >
-                                  {p.imageUrl ? <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" /> : <svg className="w-6 h-6 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
+                                
+                                {/* INTERACTIVE IMAGE / RESTORE CELL */}
+                                <div className="relative group w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                                  {p.imageUrl && !p.imageUrl.includes('[Base64') ? (
+                                    // 1. Normal Valid Image Block
+                                    <>
+                                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover cursor-pointer" onClick={() => setPreviewImage(p.imageUrl)} />
+                                      <label className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity backdrop-blur-[1px] z-10" title="Change Image">
+                                        <svg className="w-6 h-6 sm:w-8 sm:h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleQuickImageUpload(e, p.id)} />
+                                      </label>
+
+                                      {/* EXPAND IMAGE BUTTON (TOP RIGHT) */}
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(p.imageUrl); }}
+                                        className="absolute top-1 right-1 bg-slate-900/80 hover:bg-black text-white p-1 rounded sm:rounded-md shadow-md z-20 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                                        title="View Full Image"
+                                      >
+                                         <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                                      </button>
+                                      
+                                      {/* Persistent Reload Button if a previous image exists in the vault */}
+                                      {globalImageVault[p.sku] && globalImageVault[p.sku] !== p.imageUrl && (
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); restoreSingleImage(p.id, p.sku); }}
+                                          className="absolute top-1 left-1 bg-amber-500 hover:bg-amber-600 text-white p-1 rounded sm:rounded-md shadow-md z-20 transition-transform hover:scale-110"
+                                          title="Reload Previous Image"
+                                        >
+                                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                        </button>
+                                      )}
+                                    </>
+                                  ) : globalImageVault[p.sku] ? (
+                                    // 2. Missing/Corrupted Image Block -> Render the "Vault Memory" Layout
+                                    <div className="relative w-full h-full rounded-xl border-2 border-dashed border-slate-300 overflow-hidden bg-slate-50 group">
+                                      <img src={globalImageVault[p.sku]} alt="Vault" className="w-full h-full object-cover opacity-40 grayscale cursor-pointer" onClick={() => setPreviewImage(globalImageVault[p.sku])} />
+                                      
+                                      {/* EXPAND VAULT IMAGE BUTTON (TOP RIGHT) */}
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(globalImageVault[p.sku]); }}
+                                        className="absolute top-1 right-1 bg-slate-900/80 hover:bg-black text-white p-1 rounded sm:rounded-md shadow-md z-20 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                                        title="View Original Image"
+                                      >
+                                         <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                                      </button>
+
+                                      <div className="absolute inset-0 flex items-center justify-center pb-3 sm:pb-4 pointer-events-none z-10">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); restoreSingleImage(p.id, p.sku); }}
+                                          className="bg-slate-800 hover:bg-slate-900 text-white px-2 py-1 rounded-md text-[9px] sm:text-[11px] font-bold shadow-lg flex items-center gap-1 transition-all transform hover:scale-105 pointer-events-auto"
+                                        >
+                                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                          Restore
+                                        </button>
+                                      </div>
+                                      <div className="absolute bottom-0 inset-x-0 bg-slate-600/90 text-white text-[7px] sm:text-[8px] font-black text-center py-0.5 sm:py-1 uppercase tracking-widest backdrop-blur-sm cursor-pointer" onClick={() => setPreviewImage(globalImageVault[p.sku])}>
+                                        Vault Memory
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    // 3. Completely Missing Image & Empty Vault Block -> Show Upload Icon
+                                    <label className="w-full h-full flex items-center justify-center cursor-pointer hover:bg-purple-50 transition-colors group" title="Upload Image">
+                                      <svg className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300 group-hover:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                      <svg className="w-6 h-6 sm:w-8 sm:h-8 text-purple-600 hidden group-hover:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleQuickImageUpload(e, p.id)} />
+                                    </label>
+                                  )}
                                 </div>
+
                                 <div>
                                   <h3 className="font-bold text-slate-900">{p.name}</h3>
                                   <p className="text-[11px] text-slate-500 font-mono mt-0.5">SKU: {p.sku} | Barcode: {p.barcode}</p>
@@ -470,12 +731,57 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                           <tr key={p.id} className="hover:bg-rose-50/30 transition-colors">
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-4">
-                                <div 
-                                  className={`w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 ${p.imageUrl ? 'cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all' : ''}`}
-                                  onClick={() => p.imageUrl && setPreviewImage(p.imageUrl)}
-                                >
-                                  {p.imageUrl ? <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" /> : <svg className="w-5 h-5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
+                                
+                                {/* INTERACTIVE IMAGE CELL FOR LOW STOCK */}
+                                <div className="relative group w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                                  {p.imageUrl && !p.imageUrl.includes('[Base64') ? (
+                                    <>
+                                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover cursor-pointer" onClick={() => setPreviewImage(p.imageUrl)} />
+                                      <label className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity backdrop-blur-[1px] z-10" title="Change Image">
+                                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleQuickImageUpload(e, p.id)} />
+                                      </label>
+
+                                      {/* EXPAND BUTTON */}
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(p.imageUrl); }}
+                                        className="absolute top-0.5 right-0.5 bg-slate-900/80 hover:bg-black text-white p-1 rounded shadow-md z-20 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                                        title="View Full Image"
+                                      >
+                                         <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                                      </button>
+                                    </>
+                                  ) : globalImageVault[p.sku] ? (
+                                    <div className="relative w-full h-full rounded-lg border-2 border-dashed border-slate-300 overflow-hidden bg-slate-50 group">
+                                      <img src={globalImageVault[p.sku]} alt="Vault" className="w-full h-full object-cover opacity-40 grayscale" />
+                                      
+                                      {/* EXPAND VAULT BUTTON */}
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(globalImageVault[p.sku]); }}
+                                        className="absolute top-0.5 right-0.5 bg-slate-900/80 hover:bg-black text-white p-1 rounded shadow-md z-20 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                                        title="View Original Image"
+                                      >
+                                         <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                                      </button>
+
+                                      <div className="absolute inset-0 flex items-center justify-center pb-2 pointer-events-none z-10">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); restoreSingleImage(p.id, p.sku); }}
+                                          className="bg-slate-800 hover:bg-slate-900 text-white px-1.5 py-0.5 rounded text-[8px] font-bold shadow-lg flex items-center gap-1 transition-all transform hover:scale-105 pointer-events-auto"
+                                        >
+                                          <svg className="w-2.5 h-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <label className="w-full h-full flex items-center justify-center cursor-pointer hover:bg-purple-50 transition-colors group" title="Upload Image">
+                                      <svg className="w-5 h-5 text-slate-300 group-hover:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                      <svg className="w-4 h-4 text-purple-600 hidden group-hover:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleQuickImageUpload(e, p.id)} />
+                                    </label>
+                                  )}
                                 </div>
+
                                 <div>
                                   <h3 className="font-bold text-slate-900">{p.name}</h3>
                                   <p className="text-xs text-slate-500 font-mono">SKU: {p.sku}</p>
@@ -602,12 +908,68 @@ export default function ProductModule({ selectedCompany, loginUsername, API_BASE
                         placeholder="https://example.com/image.jpg" 
                       />
                     </div>
-                    {/* Live Form Image Preview */}
-                    {formData.imageUrl && (
-                      <div className="mt-3 w-32 h-32 rounded-xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm">
-                        <img src={formData.imageUrl} alt="Preview" className="w-full h-full object-cover" />
-                      </div>
-                    )}
+                    
+                    {/* Live Form Image Preview & Vault */}
+                    <div className="flex gap-4 mt-3">
+                      
+                      {/* Current Active Form Image */}
+                      {formData.imageUrl && !formData.imageUrl.includes('[Base64') && (
+                        <div className="relative w-32 h-32 rounded-xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm group shrink-0">
+                          <img src={formData.imageUrl} alt="Current Preview" className="w-full h-full object-cover" />
+                          
+                          {/* Remove Image (Top Left) */}
+                          <button 
+                            type="button"
+                            onClick={() => setFormData({...formData, imageUrl: ''})}
+                            className="absolute top-2 left-2 bg-rose-500/90 hover:bg-rose-600 text-white p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10"
+                            title="Remove Current Image"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+
+                          {/* Expand Image (Top Right) */}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(formData.imageUrl); }}
+                            className="absolute top-2 right-2 bg-slate-900/80 hover:bg-black text-white p-1.5 rounded-lg shadow-md z-10 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                            title="View Full Image"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Image Vault (Previous Form Image) */}
+                      {formData.previousImageUrl && formData.previousImageUrl !== formData.imageUrl && !formData.previousImageUrl.includes('[Base64') && (
+                        <div className="relative w-32 h-32 rounded-xl border-2 border-dashed border-slate-300 overflow-hidden bg-slate-100 shadow-inner shrink-0 group">
+                          <img src={formData.previousImageUrl} alt="Vault" className="w-full h-full object-cover opacity-40 grayscale" />
+                          
+                          {/* Expand Vault Image (Top Right) */}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreviewImage(formData.previousImageUrl!); }}
+                            className="absolute top-2 right-2 bg-slate-900/80 hover:bg-black text-white p-1.5 rounded-lg shadow-md z-20 opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                            title="View Original Image"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                          </button>
+
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, imageUrl: formData.previousImageUrl!})}
+                              className="bg-slate-800/90 hover:bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-xl flex items-center gap-1.5 transition-all transform hover:scale-105 pointer-events-auto"
+                            >
+                              <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                              Restore
+                            </button>
+                          </div>
+                          <div className="absolute bottom-0 inset-x-0 bg-slate-800/50 text-white text-[9px] font-bold text-center py-0.5 uppercase tracking-widest backdrop-blur-sm pointer-events-none">
+                            Vault Memory
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="pt-4 border-t border-slate-200">
