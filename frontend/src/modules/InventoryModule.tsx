@@ -69,17 +69,13 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
       if (totalTransactionQty <= 0) return showToast("You must allocate quantity to at least one warehouse.", "error");
 
       if (transactionModal.type === 'RECEIVE') {
-        // Receiving from Hubs to Master (Master increases, Hubs decrease)
         newStock += totalTransactionQty;
-        
-        // Validate Hubs have enough stock to give back
         for (const [wId, qty] of Object.entries(allocations)) {
           const hubCurrent = hubStock.find(h => h.warehouseId === wId && h.productId === prod.id)?.quantity || 0;
           if (qty > hubCurrent) return showToast(`Not enough stock in ${warehouses.find(w=>w.id===wId)?.name} to receive ${qty}.`, "error");
         }
       } 
       else if (transactionModal.type === 'ISSUE') {
-        // Issuing from Master to Hubs (Master decreases, Hubs increase)
         if (previousPhysicalStock < totalTransactionQty) return showToast("Insufficient Master Stock to distribute.", "error");
         newStock -= totalTransactionQty;
       }
@@ -88,14 +84,12 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
     setIsProcessing(true);
 
     try {
-      // 1. Update Master Stock
       const response = await fetch(`${API_BASE_URL}/products/${prod.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentStock: newStock })
       });
       if (!response.ok) throw new Error();
 
-      // 2. Save Ledger Record
       const allocationRecord = Object.entries(allocations).map(([wId, qty]) => ({ id: wId, qty }));
       const movementPayload = {
         productId: prod.id, productName: prod.name, sku: prod.sku, type: transactionModal.type,
@@ -111,10 +105,9 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
       if (!movResponse.ok) throw new Error();
       const savedMovement = await movResponse.json();
 
-      // 3. Sync Specific Hub Stocks (if not an adjust)
       if (transactionModal.type !== 'ADJUST') {
         await Promise.all(Object.entries(allocations).map(([wId, qty]) => {
-          const delta = transactionModal.type === 'ISSUE' ? qty : -qty; // Issue increases hub, Receive decreases hub
+          const delta = transactionModal.type === 'ISSUE' ? qty : -qty; 
           return fetch(`${API_BASE_URL}/warehouse-stock`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ company: selectedCompany, warehouseId: wId, productId: prod.id, sku: prod.sku, quantity: delta })
@@ -122,7 +115,7 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
         }));
       }
 
-      fetchData(); // Sync live board
+      fetchData(); 
       showToast(`Stock successfully ${transactionModal.type.toLowerCase()}d.`, "success");
       setTransactionModal({ isOpen: false, product: null, type: 'RECEIVE' });
       setTxForm({ reference: '', remarks: '' });
@@ -142,7 +135,6 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
       let reversedStock = Number(prod.currentStock) || 0;
       const movQty = Number(movement.quantity) || 0;
 
-      // Reverse Master Math
       if (movement.type === 'RECEIVE') reversedStock -= movQty;
       if (movement.type === 'ISSUE') reversedStock += movQty;
       if (movement.type === 'ADJUST') reversedStock = Number(movement.previousStock) || 0;
@@ -152,7 +144,6 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
 
       await fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: reversedStock }) });
 
-      // Reverse Hub Math accurately using the stored JSON map
       if (movement.warehouseId && movement.warehouseId.startsWith('[{')) {
         const recordedAllocations = JSON.parse(movement.warehouseId);
         await Promise.all(recordedAllocations.map((alloc: any) => {
@@ -235,7 +226,6 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
 
       {isMobileMenuOpen && <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
 
-      {/* EDIT LEDGER ENTRY MODAL */}
       {editingMovement && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
@@ -268,7 +258,6 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
-      {/* TRANSACTION MODAL */}
       {transactionModal.isOpen && transactionModal.product && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
@@ -310,7 +299,7 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
                     {warehouses.length === 0 ? (
                       <div className="p-4 text-center text-sm text-slate-500 font-medium">No warehouses registered. Create one in the Multi-Warehouse module.</div>
                     ) : warehouses.map(w => {
-                      const curStk = hubStock.find(h => h.warehouseId === w.id && h.productId === transactionModal.product!.id)?.quantity || 0;
+                      const curStk = hubStock.find(h => h.warehouseId === w.id && h.productId === transactionModal.product?.id)?.quantity || 0;
                       return (
                         <div key={w.id} className={`flex items-center justify-between p-3 sm:p-4 transition-colors ${allocations[w.id] ? 'bg-sky-50/30' : 'hover:bg-slate-50'}`}>
                           <label className="flex items-center gap-3 cursor-pointer flex-1">
@@ -323,7 +312,7 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
                           {allocations[w.id] !== undefined && (
                             <div className="relative w-24">
                               <input type="number" min="1" max={transactionModal.type === 'RECEIVE' ? curStk : undefined} required value={allocations[w.id] || ''} onChange={e => setAllocations({...allocations, [w.id]: Number(e.target.value)})} className="w-full pl-3 pr-8 py-2 border border-sky-300 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-sky-500 shadow-inner bg-white" placeholder="Qty" />
-                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">{transactionModal.product.unit}</span>
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">{transactionModal.product?.unit}</span>
                             </div>
                           )}
                         </div>
@@ -332,7 +321,7 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
                   </div>
                   <div className="bg-slate-50 p-3 flex justify-between items-center border-t border-slate-200">
                     <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Total Selected</span>
-                    <span className="text-lg font-black text-slate-900">{Object.values(allocations).reduce((a,b)=>a+(b||0),0)} {transactionModal.product.unit}</span>
+                    <span className="text-lg font-black text-slate-900">{Object.values(allocations).reduce((a,b)=>a+(b||0),0)} {transactionModal.product?.unit}</span>
                   </div>
                 </div>
               ) : (
@@ -340,7 +329,7 @@ export default function InventoryModule({ selectedCompany, loginUsername, API_BA
                   <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Master Physical Count <span className="text-rose-500">*</span></label>
                   <div className="relative">
                     <input type="number" required min="0" value={adjustQty} onChange={e => setAdjustQty(e.target.value === '' ? '' : Number(e.target.value))} className="w-full pl-4 pr-12 py-3 border border-slate-300 rounded-xl text-lg font-black outline-none focus:ring-2 focus:ring-sky-500 shadow-sm" />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{transactionModal.product.unit}</span>
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{transactionModal.product?.unit}</span>
                   </div>
                 </div>
               )}
