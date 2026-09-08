@@ -86,16 +86,26 @@ export default function App() {
     setSelectedCompany(null);
   };
 
-  const handleAddCompany = async (newCompany: string) => {
+const handleAddCompany = async (newCompany: string) => {
     if (!companiesList.includes(newCompany)) {
       try {
-        await fetch(`${API_BASE_URL}/companies`, {
+        const res = await fetch(`${API_BASE_URL}/companies`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: newCompany })
         });
+        
+        // STRICT CHECK: Only update the screen if the database confirms the save
+        if (!res.ok) {
+          alert("Database Error: Could not save the workspace. Please check your backend terminal.");
+          return; 
+        }
+
         setCompaniesList([...companiesList, newCompany]);
-      } catch (e) { console.error(e); }
+      } catch (e) { 
+        alert("Network Error: Could not reach the backend server.");
+        console.error(e); 
+      }
     }
   };
 
