@@ -8,10 +8,12 @@ export default function UserControlModule({
   
   const getInitialCompanies = () => companiesList.reduce((acc: any, c: string) => ({...acc, [c]: true}), {});
 
+  // CHANGED: All modules now default to true
   const [newAdminModules, setNewAdminModules] = useState({ 
-    payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, purchasing: false, 
+    payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, 
     companies: getInitialCompanies()
   });
+  
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
@@ -24,7 +26,7 @@ export default function UserControlModule({
   const isProductsEnabled = globalModules?.products;
   const isInventoryEnabled = globalModules?.inventory;
   const isWarehousesEnabled = globalModules?.warehouses;
-  const isPurchasingEnabled = globalModules?.purchasing; // NEW
+  const isPurchasingEnabled = globalModules?.purchasing;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -46,8 +48,9 @@ export default function UserControlModule({
       await fetchAdmins(); 
       setNewAdminUsername('');
       setNewAdminPassword('');
+      // CHANGED: Reset state now also sets all modules back to true
       setNewAdminModules({ 
-        payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, purchasing: false, 
+        payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, 
         companies: getInitialCompanies() 
       });
       showToast("New user added successfully!", "success");
@@ -86,27 +89,25 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update role.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: string) => {
+  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: string, isChecked: boolean) => {
     const safeModules = currentModules || {};
-    const newModules = { ...safeModules, [toggleModule]: !safeModules[toggleModule] };
+    const newModules = { ...safeModules, [toggleModule]: isChecked };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
       const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modules: newModules }) });
       if (!response.ok) throw new Error();
-      showToast("Module access updated!", "success");
       await fetchAdmins();
     } catch (e) { showToast("Failed to update module access.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: string) => {
+  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: string, isChecked: boolean) => {
     const safeModules = currentModules || { companies: {} };
     const safeCompanies = safeModules.companies || {};
-    const newModules = { ...safeModules, companies: { ...safeCompanies, [toggleCompany]: !safeCompanies[toggleCompany] } };
+    const newModules = { ...safeModules, companies: { ...safeCompanies, [toggleCompany]: isChecked } };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
       const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modules: newModules }) });
       if (!response.ok) throw new Error();
-      showToast("Company access updated!", "success");
       await fetchAdmins();
     } catch (e) { showToast("Failed to update company access.", "error"); fetchAdmins(); }
   };
@@ -123,6 +124,12 @@ export default function UserControlModule({
   };
 
   const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled || isPurchasingEnabled;
+
+  const sortedAdmins = [...adminUsers].sort((a: any, b: any) => {
+    if (a.role === 'Super Admin' && b.role !== 'Super Admin') return -1;
+    if (a.role !== 'Super Admin' && b.role === 'Super Admin') return 1;
+    return a.id - b.id; 
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
@@ -154,7 +161,7 @@ export default function UserControlModule({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {adminUsers.map((user: any) => (
+                {sortedAdmins.map((user: any) => (
                   <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-4 px-4 sm:px-6 font-bold text-slate-800 flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs shrink-0 ${user.role === 'Super Admin' ? 'bg-slate-800' : 'bg-slate-400'}`}>
@@ -175,8 +182,8 @@ export default function UserControlModule({
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
                             {companiesList.map((c: string) => (
-                              <label key={c} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.companies?.[c] || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, c)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`comp-${user.id}-${c}`} key={c} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`comp-${user.id}-${c}`} type="checkbox" checked={user.modules?.companies?.[c] || false} onChange={(e) => handleUpdateCompanyAccess(user.id, user.modules, c, e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[50px]">{c.substring(0,4)}</span>
                               </label>
                             ))}
@@ -189,41 +196,39 @@ export default function UserControlModule({
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
                             
-                            {/* NEW: PURCHASING CHECKBOX */}
                             {isPurchasingEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.purchasing || false} onChange={() => handleUpdateModules(user.id, user.modules, 'purchasing')} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-pur-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-pur-${user.id}`} type="checkbox" checked={user.modules?.purchasing || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'purchasing', e.target.checked)} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Purchasing</span>
                               </label>
                             )}
-
                             {isProductsEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.products || false} onChange={() => handleUpdateModules(user.id, user.modules, 'products')} className="w-4 h-4 text-purple-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-prod-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-prod-${user.id}`} type="checkbox" checked={user.modules?.products || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'products', e.target.checked)} className="w-4 h-4 text-purple-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Products</span>
                               </label>
                             )}
                             {isInventoryEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.inventory || false} onChange={() => handleUpdateModules(user.id, user.modules, 'inventory')} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-inv-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-inv-${user.id}`} type="checkbox" checked={user.modules?.inventory || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'inventory', e.target.checked)} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Inventory</span>
                               </label>
                             )}
                             {isWarehousesEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.warehouses || false} onChange={() => handleUpdateModules(user.id, user.modules, 'warehouses')} className="w-4 h-4 text-teal-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-wh-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-wh-${user.id}`} type="checkbox" checked={user.modules?.warehouses || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'warehouses', e.target.checked)} className="w-4 h-4 text-teal-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Hubs</span>
                               </label>
                             )}
                             {isPayrollEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.payroll || false} onChange={() => handleUpdateModules(user.id, user.modules, 'payroll')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-pay-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-pay-${user.id}`} type="checkbox" checked={user.modules?.payroll || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'payroll', e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Payroll</span>
                               </label>
                             )}
                             {isAiDocsEnabled && (
-                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-rose-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                              <label htmlFor={`mod-ai-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-ai-${user.id}`} type="checkbox" checked={user.modules?.ai_docs || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'ai_docs', e.target.checked)} className="w-4 h-4 text-rose-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI</span>
                               </label>
                             )}
@@ -269,8 +274,8 @@ export default function UserControlModule({
                 <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Workspace Access</label>
                 <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
                   {companiesList.map((c: string) => (
-                    <label key={c} className="flex items-center gap-2 cursor-pointer w-fit">
-                      <input type="checkbox" checked={newAdminModules.companies[c] || false} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, [c]: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
+                    <label htmlFor={`new-comp-${c}`} key={c} className="flex items-center gap-2 cursor-pointer w-fit">
+                      <input id={`new-comp-${c}`} type="checkbox" checked={newAdminModules.companies[c] || false} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, [c]: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
                       <span className="text-sm font-medium text-slate-700">{c}</span>
                     </label>
                   ))}
@@ -281,42 +286,39 @@ export default function UserControlModule({
                 <div className="flex flex-col gap-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-100">
                   <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
                   <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
-                    
-                    {/* NEW: PURCHASING CHECKBOX */}
                     {isPurchasingEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.purchasing} onChange={e => setNewAdminModules({...newAdminModules, purchasing: e.target.checked})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
+                      <label htmlFor="new-mod-pur" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-pur" type="checkbox" checked={newAdminModules.purchasing} onChange={e => setNewAdminModules({...newAdminModules, purchasing: e.target.checked})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Procurement Engine</span>
                       </label>
                     )}
-
                     {isProductsEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-purple-600 rounded border-slate-300 focus:ring-purple-600 shrink-0" />
+                      <label htmlFor="new-mod-prod" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-prod" type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-purple-600 rounded border-slate-300 focus:ring-purple-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Product Manager</span>
                       </label>
                     )}
                     {isInventoryEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-sky-600 rounded border-slate-300 focus:ring-sky-600 shrink-0" />
+                      <label htmlFor="new-mod-inv" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-inv" type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-sky-600 rounded border-slate-300 focus:ring-sky-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Inventory Control</span>
                       </label>
                     )}
                     {isWarehousesEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.warehouses} onChange={e => setNewAdminModules({...newAdminModules, warehouses: e.target.checked})} className="w-5 h-5 text-teal-600 rounded border-slate-300 focus:ring-teal-600 shrink-0" />
+                      <label htmlFor="new-mod-wh" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-wh" type="checkbox" checked={newAdminModules.warehouses} onChange={e => setNewAdminModules({...newAdminModules, warehouses: e.target.checked})} className="w-5 h-5 text-teal-600 rounded border-slate-300 focus:ring-teal-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Multi-Warehouse</span>
                       </label>
                     )}
                     {isPayrollEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0" />
+                      <label htmlFor="new-mod-pay" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-pay" type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
                       </label>
                     )}
                     {isAiDocsEnabled && (
-                      <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-600 shrink-0" />
+                      <label htmlFor="new-mod-ai" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-ai" type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">AI Documentation</span>
                       </label>
                     )}

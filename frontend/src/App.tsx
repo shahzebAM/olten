@@ -34,6 +34,8 @@ export default function App() {
   const isDeveloper = loginUsername === 'system_dev';
 
   useEffect(() => { fetch(`${API_BASE_URL}/settings`).catch(() => {}); }, []);
+  
+  // Background polling every 3 seconds to check for permission updates
   useEffect(() => {
     if (!isAuthenticated || isDeveloper) return;
     fetchAdmins();
@@ -80,6 +82,27 @@ export default function App() {
   const allowedCompanies = isCurrentUserSuperAdmin
     ? companiesList.reduce((acc, c) => ({ ...acc, [c]: true }), {})
     : (currentUser?.modules?.companies || {});
+
+  // NEW: REAL-TIME ACCESS REVOCATION ENFORCER
+  useEffect(() => {
+    // If the user is a standard admin, continuously verify their live permissions
+    if (!isCurrentUserSuperAdmin && currentUser) {
+      
+      // 1. Kick out to Dashboard if Company Workspace access is revoked
+      if (selectedCompany && !currentUser.modules?.companies?.[selectedCompany]) {
+        setSelectedCompany(null);
+        setActiveModule('none');
+      }
+      
+      // 2. Kick out to Gateway if specific Module access is revoked
+      else if (activeModule !== 'none' && activeModule !== 'users') {
+        if (currentUser.modules && currentUser.modules[activeModule] === false) {
+          setActiveModule('none');
+        }
+      }
+
+    }
+  }, [currentUser, selectedCompany, activeModule, isCurrentUserSuperAdmin]);
 
   const isPrivacyRoute = window.location.pathname === '/privacy';
 
