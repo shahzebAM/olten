@@ -10,6 +10,7 @@ import { PurchasingController } from './purchasing/purchasing.controller';
 import { WarehousesController } from './warehouse/warehouse.controller';
 import { WarehouseStockController } from './warehouse/warehouse-stock.controller'; // FIXED TYPO HERE
 import { WarehouseTransfersController } from './warehouse/warehouse-transfers.controller';
+import { CompaniesController } from './companies/companies.controller';
 
 @Module({
   imports: [
@@ -23,7 +24,8 @@ import { WarehouseTransfersController } from './warehouse/warehouse-transfers.co
     WarehousesController,
     WarehouseStockController, // FIXED TYPO HERE
     WarehouseTransfersController,
-    PurchasingController
+    PurchasingController,
+    CompaniesController
   ],
   providers: [AppService],
 })
