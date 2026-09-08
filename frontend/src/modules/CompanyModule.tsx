@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
-  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses,
+  selectedCompany, loginUsername, currentUser, hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing,
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = []
 }: any) {
   
@@ -42,7 +42,6 @@ export default function CompanyModule({
     }
   };
 
-  // Restored colored company titles and animated hover borders
   const getCompanyTheme = (name: string) => {
     const lower = name.toLowerCase();
     if (lower === 'surgicom') return { title: 'text-blue-950', sub: 'Trading Corporation', iconBg: 'bg-blue-50', icon: 'text-blue-600', borderHover: 'hover:border-blue-400' };
@@ -63,7 +62,6 @@ export default function CompanyModule({
           </div>
         )}
 
-        {/* ADD COMPANY MODAL */}
         {showAddModal && (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
@@ -125,7 +123,6 @@ export default function CompanyModule({
                       <h2 className={`text-[22px] font-black ${theme.title} tracking-tight pr-8 transition-colors`}>{company}</h2>
                       <p className="text-[13px] text-[#64748B] mt-1 font-medium">{theme.sub}</p>
                     </div>
-                    {/* Animated Colored Arrow */}
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center ${theme.iconBg} group-hover:translate-x-1.5 transition-transform duration-300`}>
                       <svg className={`w-4 h-4 ${theme.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -151,7 +148,7 @@ export default function CompanyModule({
     );
   }
 
-  // RESTORED: Vibrant Gateway View Colors
+  // GATEWAY VIEW
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
       <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 sm:mb-12">
@@ -166,6 +163,15 @@ export default function CompanyModule({
       </div>
 
       <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        {hasPurchasing && (
+          <button onClick={() => onSelectModule('purchasing')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg></div>
+              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Procurement Engine</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage suppliers and purchase orders.</p>
+            </div>
+          </button>
+        )}
         {hasProducts && (
           <button onClick={() => onSelectModule('products')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-purple-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>

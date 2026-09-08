@@ -3,14 +3,13 @@ import React, { useState } from 'react';
 export default function UserControlModule({ 
   adminUsers, setAdminUsers, fetchAdmins, loginUsername, 
   isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout,
-  companiesList = [] // NEW PROP ACCEPTS DYNAMIC LIST
+  companiesList = [] 
 }: any) {
   
-  // Creates { Surgicom: true, Olten: true, etc... } dynamically
   const getInitialCompanies = () => companiesList.reduce((acc: any, c: string) => ({...acc, [c]: true}), {});
 
   const [newAdminModules, setNewAdminModules] = useState({ 
-    payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
+    payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, purchasing: false, 
     companies: getInitialCompanies()
   });
   const [newAdminUsername, setNewAdminUsername] = useState('');
@@ -25,6 +24,7 @@ export default function UserControlModule({
   const isProductsEnabled = globalModules?.products;
   const isInventoryEnabled = globalModules?.inventory;
   const isWarehousesEnabled = globalModules?.warehouses;
+  const isPurchasingEnabled = globalModules?.purchasing; // NEW
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -47,7 +47,7 @@ export default function UserControlModule({
       setNewAdminUsername('');
       setNewAdminPassword('');
       setNewAdminModules({ 
-        payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
+        payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, purchasing: false, 
         companies: getInitialCompanies() 
       });
       showToast("New user added successfully!", "success");
@@ -98,7 +98,6 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update module access.", "error"); fetchAdmins(); }
   };
 
-  // DYNAMICALLY UPDATES ACCESS FOR ANY COMPANY
   const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: string) => {
     const safeModules = currentModules || { companies: {} };
     const safeCompanies = safeModules.companies || {};
@@ -123,7 +122,7 @@ export default function UserControlModule({
     } catch (error) { showToast("Failed to reset password.", "error"); } finally { setIsSaving(false); }
   };
 
-  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled;
+  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled || isPurchasingEnabled;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
@@ -175,7 +174,6 @@ export default function UserControlModule({
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
-                            {/* DYNAMIC COMPANY CHECKBOXES */}
                             {companiesList.map((c: string) => (
                               <label key={c} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input type="checkbox" checked={user.modules?.companies?.[c] || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, c)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
@@ -190,6 +188,15 @@ export default function UserControlModule({
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
+                            
+                            {/* NEW: PURCHASING CHECKBOX */}
+                            {isPurchasingEnabled && (
+                              <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.purchasing || false} onChange={() => handleUpdateModules(user.id, user.modules, 'purchasing')} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Purchasing</span>
+                              </label>
+                            )}
+
                             {isProductsEnabled && (
                               <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input type="checkbox" checked={user.modules?.products || false} onChange={() => handleUpdateModules(user.id, user.modules, 'products')} className="w-4 h-4 text-purple-600 rounded border-slate-300 cursor-pointer shrink-0" />
@@ -216,7 +223,7 @@ export default function UserControlModule({
                             )}
                             {isAiDocsEnabled && (
                               <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <input type="checkbox" checked={user.modules?.ai_docs || false} onChange={() => handleUpdateModules(user.id, user.modules, 'ai_docs')} className="w-4 h-4 text-rose-600 rounded border-slate-300 cursor-pointer shrink-0" />
                                 <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI</span>
                               </label>
                             )}
@@ -261,15 +268,12 @@ export default function UserControlModule({
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Workspace Access</label>
                 <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
-                  
-                  {/* DYNAMIC COMPANY CHECKBOXES FOR NEW USERS */}
                   {companiesList.map((c: string) => (
                     <label key={c} className="flex items-center gap-2 cursor-pointer w-fit">
                       <input type="checkbox" checked={newAdminModules.companies[c] || false} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, [c]: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
                       <span className="text-sm font-medium text-slate-700">{c}</span>
                     </label>
                   ))}
-
                 </div>
               </div>
 
@@ -277,15 +281,24 @@ export default function UserControlModule({
                 <div className="flex flex-col gap-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-100">
                   <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
                   <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
+                    
+                    {/* NEW: PURCHASING CHECKBOX */}
+                    {isPurchasingEnabled && (
+                      <label className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input type="checkbox" checked={newAdminModules.purchasing} onChange={e => setNewAdminModules({...newAdminModules, purchasing: e.target.checked})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Procurement Engine</span>
+                      </label>
+                    )}
+
                     {isProductsEnabled && (
                       <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <input type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-purple-600 rounded border-slate-300 focus:ring-purple-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Product Manager</span>
                       </label>
                     )}
                     {isInventoryEnabled && (
                       <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <input type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-sky-600 rounded border-slate-300 focus:ring-sky-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Inventory Control</span>
                       </label>
                     )}
@@ -297,13 +310,13 @@ export default function UserControlModule({
                     )}
                     {isPayrollEnabled && (
                       <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <input type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
                       </label>
                     )}
                     {isAiDocsEnabled && (
                       <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-slate-800 rounded border-slate-300 focus:ring-slate-800 shrink-0" />
+                        <input type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-600 shrink-0" />
                         <span className="text-sm font-medium text-slate-700">AI Documentation</span>
                       </label>
                     )}

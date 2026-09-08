@@ -8,6 +8,7 @@ import AiDocsModule from './modules/AiDocsModule';
 import DeveloperModule from './modules/DeveloperModule';
 import ProductModule from './modules/ProductModule';
 import WarehouseModule from './modules/WarehouseModule';
+import PurchasingModule from './modules/PurchasingModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -16,7 +17,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users'>('none');
+  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'purchasing'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
@@ -27,7 +28,7 @@ export default function App() {
 
   const [globalModules, setGlobalModules] = useState(() => {
     const saved = localStorage.getItem('dev_global_modules');
-    return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true };
+    return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true };
   });
 
   const isDeveloper = loginUsername === 'system_dev';
@@ -99,16 +100,18 @@ export default function App() {
     const userHasProducts = isCurrentUserSuperAdmin || currentUser?.modules?.products === true;
     const userHasInventory = isCurrentUserSuperAdmin || currentUser?.modules?.inventory === true;
     const userHasWarehouses = isCurrentUserSuperAdmin || currentUser?.modules?.warehouses === true;
+    const userHasPurchasing = isCurrentUserSuperAdmin || currentUser?.modules?.purchasing === true;
     
     return <CompanyModule 
       isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} 
       hasPayroll={userHasPayroll && globalModules.payroll} hasAiDocs={userHasAiDocs && globalModules.ai_docs} 
       hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory} 
-      hasWarehouses={userHasWarehouses && globalModules.warehouses} 
+      hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}
       onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} 
     />;
   }
 
+  if (activeModule === 'purchasing') return <PurchasingModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'warehouses') return <WarehouseModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'inventory') return <InventoryModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'products') return <ProductModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
