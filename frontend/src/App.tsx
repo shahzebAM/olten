@@ -21,10 +21,8 @@ export default function App() {
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
-  const [companiesList, setCompaniesList] = useState<string[]>(() => {
-    const saved = localStorage.getItem('companies_list');
-    return saved ? JSON.parse(saved) : ['Surgicom', 'Olten', 'Ordent'];
-  });
+  // Replaced localStorage with state to be populated by DB
+  const [companiesList, setCompaniesList] = useState<string[]>(['Surgicom', 'Olten', 'Ordent']);
 
   const [globalModules, setGlobalModules] = useState(() => {
     const saved = localStorage.getItem('dev_global_modules');
@@ -33,13 +31,19 @@ export default function App() {
 
   const isDeveloper = loginUsername === 'system_dev';
 
-  useEffect(() => { fetch(`${API_BASE_URL}/settings`).catch(() => {}); }, []);
+  useEffect(() => { 
+    fetchCompanies();
+    fetch(`${API_BASE_URL}/settings`).catch(() => {}); 
+  }, []);
   
-  // Background polling every 3 seconds to check for permission updates
+  // Background polling now fetches both users and companies to keep devices synced
   useEffect(() => {
     if (!isAuthenticated || isDeveloper) return;
     fetchAdmins();
-    const interval = setInterval(() => { fetchAdmins(); }, 3000);
+    const interval = setInterval(() => { 
+      fetchAdmins(); 
+      fetchCompanies(); 
+    }, 3000);
     return () => clearInterval(interval);
   }, [isAuthenticated, isDeveloper]);
 
@@ -53,6 +57,28 @@ export default function App() {
     } catch (error) { console.error("Could not fetch admins"); }
   };
 
+  const fetchCompanies = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/companies`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.length > 0) {
+          setCompaniesList(data.map((c: any) => c.name));
+        } else {
+          // Auto-seed database if it is brand new and completely empty
+          await Promise.all([
+            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Surgicom' }) }),
+            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Olten' }) }),
+            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Ordent' }) })
+          ]);
+          const newRes = await fetch(`${API_BASE_URL}/companies`);
+          const newData = await newRes.json();
+          setCompaniesList(newData.map((c: any) => c.name));
+        }
+      }
+    } catch (e) { console.error("Could not fetch companies"); }
+  };
+
   const handleLogout = () => {
     setIsAuthenticated(false);
     setLoginUsername('');
@@ -60,19 +86,25 @@ export default function App() {
     setSelectedCompany(null);
   };
 
-  const handleAddCompany = (newCompany: string) => {
+  const handleAddCompany = async (newCompany: string) => {
     if (!companiesList.includes(newCompany)) {
-      const updated = [...companiesList, newCompany];
-      setCompaniesList(updated);
-      localStorage.setItem('companies_list', JSON.stringify(updated));
+      try {
+        await fetch(`${API_BASE_URL}/companies`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newCompany })
+        });
+        setCompaniesList([...companiesList, newCompany]);
+      } catch (e) { console.error(e); }
     }
   };
 
-  const handleRemoveCompany = (companyToRemove: string) => {
-    const updated = companiesList.filter(c => c !== companyToRemove);
-    setCompaniesList(updated);
-    localStorage.setItem('companies_list', JSON.stringify(updated));
-    if (selectedCompany === companyToRemove) setSelectedCompany(null);
+  const handleRemoveCompany = async (companyToRemove: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/companies/${companyToRemove}`, { method: 'DELETE' });
+      setCompaniesList(companiesList.filter(c => c !== companyToRemove));
+      if (selectedCompany === companyToRemove) setSelectedCompany(null);
+    } catch (e) { console.error(e); }
   };
 
   const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
@@ -83,24 +115,17 @@ export default function App() {
     ? companiesList.reduce((acc, c) => ({ ...acc, [c]: true }), {})
     : (currentUser?.modules?.companies || {});
 
-  // NEW: REAL-TIME ACCESS REVOCATION ENFORCER
   useEffect(() => {
-    // If the user is a standard admin, continuously verify their live permissions
     if (!isCurrentUserSuperAdmin && currentUser) {
-      
-      // 1. Kick out to Dashboard if Company Workspace access is revoked
       if (selectedCompany && !currentUser.modules?.companies?.[selectedCompany]) {
         setSelectedCompany(null);
         setActiveModule('none');
       }
-      
-      // 2. Kick out to Gateway if specific Module access is revoked
       else if (activeModule !== 'none' && activeModule !== 'users') {
         if (currentUser.modules && currentUser.modules[activeModule] === false) {
           setActiveModule('none');
         }
       }
-
     }
   }, [currentUser, selectedCompany, activeModule, isCurrentUserSuperAdmin]);
 
