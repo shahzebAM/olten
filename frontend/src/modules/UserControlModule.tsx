@@ -2,12 +2,16 @@ import React, { useState } from 'react';
 
 export default function UserControlModule({ 
   adminUsers, setAdminUsers, fetchAdmins, loginUsername, 
-  isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout 
+  isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout,
+  companiesList = [] // NEW PROP ACCEPTS DYNAMIC LIST
 }: any) {
   
+  // Creates { Surgicom: true, Olten: true, etc... } dynamically
+  const getInitialCompanies = () => companiesList.reduce((acc: any, c: string) => ({...acc, [c]: true}), {});
+
   const [newAdminModules, setNewAdminModules] = useState({ 
     payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
-    companies: { Surgicom: true, Olten: true, Ordent: true } 
+    companies: getInitialCompanies()
   });
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
@@ -44,7 +48,7 @@ export default function UserControlModule({
       setNewAdminPassword('');
       setNewAdminModules({ 
         payroll: true, ai_docs: false, products: true, inventory: false, warehouses: false, 
-        companies: { Surgicom: true, Olten: true, Ordent: true } 
+        companies: getInitialCompanies() 
       });
       showToast("New user added successfully!", "success");
     } catch (error) { showToast("Failed to add user. Username might exist.", "error"); } 
@@ -82,8 +86,8 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update role.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses') => {
-    const safeModules = currentModules || { payroll: false, ai_docs: false, products: false, inventory: false, warehouses: false };
+  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: string) => {
+    const safeModules = currentModules || {};
     const newModules = { ...safeModules, [toggleModule]: !safeModules[toggleModule] };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
@@ -94,9 +98,10 @@ export default function UserControlModule({
     } catch (e) { showToast("Failed to update module access.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: 'Surgicom' | 'Olten' | 'Ordent') => {
-    const safeModules = currentModules || { companies: { Surgicom: false, Olten: false, Ordent: false } };
-    const safeCompanies = safeModules.companies || { Surgicom: false, Olten: false, Ordent: false };
+  // DYNAMICALLY UPDATES ACCESS FOR ANY COMPANY
+  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: string) => {
+    const safeModules = currentModules || { companies: {} };
+    const safeCompanies = safeModules.companies || {};
     const newModules = { ...safeModules, companies: { ...safeCompanies, [toggleCompany]: !safeCompanies[toggleCompany] } };
     if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
     try {
@@ -144,7 +149,7 @@ export default function UserControlModule({
                 <tr>
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Username</th>
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Role Level</th>
-                  {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-1/6">Company Assignment</th>}
+                  {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-1/6">Workspace Access</th>}
                   {hasAnyModuleEnabled && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-2/6">Modules Assignment</th>}
                   <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-right w-1/6">Action</th>
                 </tr>
@@ -170,18 +175,13 @@ export default function UserControlModule({
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
-                            <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                              <input type="checkbox" checked={user.modules?.companies?.Surgicom || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Surgicom')} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Sur</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                              <input type="checkbox" checked={user.modules?.companies?.Olten || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Olten')} className="w-4 h-4 text-blue-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Olt</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                              <input type="checkbox" checked={user.modules?.companies?.Ordent || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, 'Ordent')} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Ord</span>
-                            </label>
+                            {/* DYNAMIC COMPANY CHECKBOXES */}
+                            {companiesList.map((c: string) => (
+                              <label key={c} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input type="checkbox" checked={user.modules?.companies?.[c] || false} onChange={() => handleUpdateCompanyAccess(user.id, user.modules, c)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[50px]">{c.substring(0,4)}</span>
+                              </label>
+                            ))}
                           </div>
                         ) : (<div className="text-center text-[10px] text-slate-400 uppercase tracking-widest font-bold">Unrestricted</div>)}
                       </td>
@@ -259,20 +259,17 @@ export default function UserControlModule({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 pt-4 border-t border-slate-100">
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Company Access</label>
+                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Workspace Access</label>
                 <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
-                  <label className="flex items-center gap-2 cursor-pointer w-fit">
-                    <input type="checkbox" checked={newAdminModules.companies.Surgicom} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Surgicom: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
-                    <span className="text-sm font-medium text-slate-700">Surgicom</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer w-fit">
-                    <input type="checkbox" checked={newAdminModules.companies.Olten} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Olten: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-600 shrink-0" />
-                    <span className="text-sm font-medium text-slate-700">Olten</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer w-fit">
-                    <input type="checkbox" checked={newAdminModules.companies.Ordent} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, Ordent: e.target.checked}})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
-                    <span className="text-sm font-medium text-slate-700">Ordent</span>
-                  </label>
+                  
+                  {/* DYNAMIC COMPANY CHECKBOXES FOR NEW USERS */}
+                  {companiesList.map((c: string) => (
+                    <label key={c} className="flex items-center gap-2 cursor-pointer w-fit">
+                      <input type="checkbox" checked={newAdminModules.companies[c] || false} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, [c]: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
+                      <span className="text-sm font-medium text-slate-700">{c}</span>
+                    </label>
+                  ))}
+
                 </div>
               </div>
 

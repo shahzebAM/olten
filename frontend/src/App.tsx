@@ -17,9 +17,14 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   
   const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users'>('none');
-  const [selectedCompany, setSelectedCompany] = useState<'Surgicom' | 'Olten' | 'Ordent' | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
+  const [companiesList, setCompaniesList] = useState<string[]>(() => {
+    const saved = localStorage.getItem('companies_list');
+    return saved ? JSON.parse(saved) : ['Surgicom', 'Olten', 'Ordent'];
+  });
+
   const [globalModules, setGlobalModules] = useState(() => {
     const saved = localStorage.getItem('dev_global_modules');
     return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true };
@@ -34,45 +39,6 @@ export default function App() {
     const interval = setInterval(() => { fetchAdmins(); }, 3000);
     return () => clearInterval(interval);
   }, [isAuthenticated, isDeveloper]);
-
-  useEffect(() => {
-    if (!isAuthenticated || adminUsers.length === 0 || isDeveloper) return;
-    
-    const activeAccount = adminUsers.find((u) => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
-    if (!activeAccount) { handleLogout(); return; }
-
-    if (activeAccount.role !== 'Super Admin' && selectedCompany && !activeAccount.modules?.companies?.[selectedCompany]) {
-      setSelectedCompany(null);
-    }
-
-    const userHasPayroll = activeAccount.role === 'Super Admin' || activeAccount.modules?.payroll === true;
-    const userHasAiDocs = activeAccount.role === 'Super Admin' || activeAccount.modules?.ai_docs === true;
-    const userHasProducts = activeAccount.role === 'Super Admin' || activeAccount.modules?.products === true;
-    const userHasInventory = activeAccount.role === 'Super Admin' || activeAccount.modules?.inventory === true;
-    const userHasWarehouses = activeAccount.role === 'Super Admin' || activeAccount.modules?.warehouses === true;
-    
-    const finalHasPayroll = userHasPayroll && globalModules.payroll;
-    const finalHasAiDocs = userHasAiDocs && globalModules.ai_docs;
-    const finalHasProducts = userHasProducts && globalModules.products;
-    const finalHasInventory = userHasInventory && globalModules.inventory;
-    const finalHasWarehouses = userHasWarehouses && globalModules.warehouses;
-
-    if (activeModule === 'payroll' && !finalHasPayroll) setActiveModule('none');
-    if (activeModule === 'ai_docs' && !finalHasAiDocs) setActiveModule('none');
-    if (activeModule === 'products' && !finalHasProducts) setActiveModule('none');
-    if (activeModule === 'inventory' && !finalHasInventory) setActiveModule('none');
-    if (activeModule === 'warehouses' && !finalHasWarehouses) setActiveModule('none');
-
-  }, [adminUsers, globalModules, selectedCompany, activeModule, isAuthenticated, isDeveloper, loginUsername]);
-
-  useEffect(() => {
-    const syncConfig = () => {
-      const saved = localStorage.getItem('dev_global_modules');
-      if (saved) setGlobalModules(JSON.parse(saved));
-    };
-    window.addEventListener('storage', syncConfig);
-    return () => window.removeEventListener('storage', syncConfig);
-  }, []);
 
   const fetchAdmins = async () => {
     try {
@@ -91,19 +57,41 @@ export default function App() {
     setSelectedCompany(null);
   };
 
+  const handleAddCompany = (newCompany: string) => {
+    if (!companiesList.includes(newCompany)) {
+      const updated = [...companiesList, newCompany];
+      setCompaniesList(updated);
+      localStorage.setItem('companies_list', JSON.stringify(updated));
+    }
+  };
+
+  const handleRemoveCompany = (companyToRemove: string) => {
+    const updated = companiesList.filter(c => c !== companyToRemove);
+    setCompaniesList(updated);
+    localStorage.setItem('companies_list', JSON.stringify(updated));
+    if (selectedCompany === companyToRemove) setSelectedCompany(null);
+  };
+
   const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
   const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
   const hasUsers = isCurrentUserSuperAdmin;
 
   const allowedCompanies = isCurrentUserSuperAdmin
-    ? { Surgicom: true, Olten: true, Ordent: true }
-    : (currentUser?.modules?.companies || { Surgicom: false, Olten: false, Ordent: false });
+    ? companiesList.reduce((acc, c) => ({ ...acc, [c]: true }), {})
+    : (currentUser?.modules?.companies || {});
 
   const isPrivacyRoute = window.location.pathname === '/privacy';
 
   if (!isAuthenticated) return <AuthModule onLoginSuccess={(user: string) => { setIsAuthenticated(true); setLoginUsername(user); }} isPrivacyRoute={isPrivacyRoute} API_BASE_URL={API_BASE_URL} />;
   if (isDeveloper) return <DeveloperModule onLogout={handleLogout} globalModules={globalModules} setGlobalModules={setGlobalModules} />;
-  if (!selectedCompany && activeModule !== 'users') return <CompanyModule isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} />;
+  
+  if (!selectedCompany && activeModule !== 'users') return (
+    <CompanyModule 
+      isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} 
+      companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
+      onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
+    />
+  );
 
   if (activeModule === 'none') {
     const userHasPayroll = isCurrentUserSuperAdmin || currentUser?.modules?.payroll === true;
@@ -112,21 +100,29 @@ export default function App() {
     const userHasInventory = isCurrentUserSuperAdmin || currentUser?.modules?.inventory === true;
     const userHasWarehouses = isCurrentUserSuperAdmin || currentUser?.modules?.warehouses === true;
     
-    const finalHasPayroll = userHasPayroll && globalModules.payroll;
-    const finalHasAiDocs = userHasAiDocs && globalModules.ai_docs;
-    const finalHasProducts = userHasProducts && globalModules.products;
-    const finalHasInventory = userHasInventory && globalModules.inventory;
-    const finalHasWarehouses = userHasWarehouses && globalModules.warehouses;
-
-    return <CompanyModule isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} hasPayroll={finalHasPayroll} hasAiDocs={finalHasAiDocs} hasProducts={finalHasProducts} hasInventory={finalHasInventory} hasWarehouses={finalHasWarehouses} onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} />;
+    return <CompanyModule 
+      isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} 
+      hasPayroll={userHasPayroll && globalModules.payroll} hasAiDocs={userHasAiDocs && globalModules.ai_docs} 
+      hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory} 
+      hasWarehouses={userHasWarehouses && globalModules.warehouses} 
+      onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} 
+    />;
   }
 
   if (activeModule === 'warehouses') return <WarehouseModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'inventory') return <InventoryModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'products') return <ProductModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'users') return <UserControlModule adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} isCurrentUserSuperAdmin={isCurrentUserSuperAdmin} API_BASE_URL={API_BASE_URL} globalModules={globalModules} onBack={() => setActiveModule('none')} onLogout={handleLogout} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
+  
+  if (activeModule === 'users') return (
+    <UserControlModule 
+      adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} 
+      isCurrentUserSuperAdmin={isCurrentUserSuperAdmin} API_BASE_URL={API_BASE_URL} globalModules={globalModules} 
+      companiesList={companiesList} 
+      onBack={() => setActiveModule('none')} onLogout={handleLogout} 
+    />
+  );
 
   return null;
 }
