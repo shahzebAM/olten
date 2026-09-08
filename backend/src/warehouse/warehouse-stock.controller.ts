@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -12,10 +12,7 @@ export class WarehouseStockController {
     const safeQuantity = Number(data.quantity);
 
     const existing = await prisma.warehouseStock.findFirst({
-      where: { 
-        warehouseId: data.warehouseId, 
-        productId: safeProductId 
-      }
+      where: { warehouseId: data.warehouseId, productId: safeProductId }
     });
 
     if (existing) {
@@ -47,5 +44,11 @@ export class WarehouseStockController {
       where: { id },
       data: { quantity: Number(data.quantity) } 
     });
+  }
+
+  // NEW: Allows deletion of ghost/orphaned stock records
+  @Delete(':id')
+  async removeStock(@Param('id') id: string) {
+    return prisma.warehouseStock.delete({ where: { id } });
   }
 }
