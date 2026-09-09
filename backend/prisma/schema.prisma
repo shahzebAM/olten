@@ -43,6 +43,7 @@ model Admin {
 
 model Settings {
   id         Int    @id @default(autoincrement())
+  company    String @unique @default("Global") 
   shiftStart String @default("08:00")
   shiftEnd   String @default("17:00")
 }

@@ -11,6 +11,7 @@ import { WarehousesController } from './warehouse/warehouse.controller';
 import { WarehouseStockController } from './warehouse/warehouse-stock.controller'; // FIXED TYPO HERE
 import { WarehouseTransfersController } from './warehouse/warehouse-transfers.controller';
 import { CompaniesController } from './companies/companies.controller';
+import { SettingsController } from './settings/settings.controller';
 
 @Module({
   imports: [
@@ -25,7 +26,8 @@ import { CompaniesController } from './companies/companies.controller';
     WarehouseStockController, // FIXED TYPO HERE
     WarehouseTransfersController,
     PurchasingController,
-    CompaniesController
+    CompaniesController,
+    SettingsController
   ],
   providers: [AppService],
 })

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -29,13 +29,23 @@ export class PurchasingController {
     return prisma.supplier.findMany({ where: { company } });
   }
 
+  @Patch('suppliers/:id')
+  async updateSupplier(@Param('id') id: string, @Body() data: any) {
+    return prisma.supplier.update({
+      where: { id },
+      data: {
+        name: data.name,
+        contact: data.contact,
+        phone: data.phone,
+        email: data.email
+      }
+    });
+  }
+
   @Patch('suppliers/:id/balance')
   async updateBalance(@Param('id') id: string, @Body() data: { amount: number }) {
     const supplier = await prisma.supplier.findUnique({ where: { id } });
-    
-    if (!supplier) {
-      throw new NotFoundException('Supplier not found');
-    }
+    if (!supplier) throw new NotFoundException('Supplier not found');
 
     return prisma.supplier.update({
       where: { id },
@@ -45,17 +55,7 @@ export class PurchasingController {
 
   // --- PURCHASE ORDERS ---
   @Post('pos')
-  async createPO(
-    @Body() data: { 
-      company: string; 
-      poNumber: string; 
-      supplierId: string; 
-      totalAmount: number; 
-      user: string; 
-      status: string; 
-      items: any[] 
-    }
-  ) {
+  async createPO(@Body() data: any) {
     return prisma.purchaseOrder.create({
       data: {
         company: data.company,
@@ -65,7 +65,7 @@ export class PurchasingController {
         user: data.user,
         status: data.status || 'PENDING',
         items: {
-          create: data.items.map(item => ({
+          create: data.items.map((item: any) => ({
             productId: Number(item.productId),
             sku: String(item.sku),
             productName: String(item.productName),
