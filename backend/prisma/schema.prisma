@@ -229,3 +229,28 @@ model Company {
   name      String   @unique
   createdAt DateTime @default(now())
 }
+
+model Customer {
+  id          String   @id @default(uuid())
+  company     String
+  name        String
+  contact     String?
+  phone       String?
+  email       String?
+  address     String?
+  creditLimit Float    @default(0)
+  balance     Float    @default(0) // Tracks Outstanding Receivables
+  createdAt   DateTime @default(now())
+}
+
+model SalesOrder {
+  id          String   @id @default(uuid())
+  company     String
+  soNumber    String
+  customerId  String
+  date        DateTime @default(now())
+  status      String   @default("PENDING") // PENDING, APPROVED, FULFILLED, RETURNED
+  totalAmount Float
+  items       Json
+  user        String
+}

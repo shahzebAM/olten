@@ -12,6 +12,7 @@ import { WarehouseStockController } from './warehouse/warehouse-stock.controller
 import { WarehouseTransfersController } from './warehouse/warehouse-transfers.controller';
 import { CompaniesController } from './companies/companies.controller';
 import { SettingsController } from './settings/settings.controller';
+import { SalesController } from './sales/sales.controller';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { SettingsController } from './settings/settings.controller';
     WarehouseTransfersController,
     PurchasingController,
     CompaniesController,
-    SettingsController
+    SettingsController,
+    SalesController
   ],
   providers: [AppService],
 })
