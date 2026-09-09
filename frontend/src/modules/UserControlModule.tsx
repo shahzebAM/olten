@@ -8,9 +8,8 @@ export default function UserControlModule({
   
   const getInitialCompanies = () => companiesList.reduce((acc: any, c: string) => ({...acc, [c]: true}), {});
 
-  // CHANGED: All modules now default to true
   const [newAdminModules, setNewAdminModules] = useState({ 
-    payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, 
+    payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true,
     companies: getInitialCompanies()
   });
   
@@ -21,12 +20,14 @@ export default function UserControlModule({
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Global Feature Flags controlled by DeveloperModule
   const isPayrollEnabled = globalModules?.payroll;
   const isAiDocsEnabled = globalModules?.ai_docs;
   const isProductsEnabled = globalModules?.products;
   const isInventoryEnabled = globalModules?.inventory;
   const isWarehousesEnabled = globalModules?.warehouses;
   const isPurchasingEnabled = globalModules?.purchasing;
+  const isSalesEnabled = globalModules?.sales;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -48,9 +49,8 @@ export default function UserControlModule({
       await fetchAdmins(); 
       setNewAdminUsername('');
       setNewAdminPassword('');
-      // CHANGED: Reset state now also sets all modules back to true
       setNewAdminModules({ 
-        payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, 
+        payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true,
         companies: getInitialCompanies() 
       });
       showToast("New user added successfully!", "success");
@@ -123,7 +123,7 @@ export default function UserControlModule({
     } catch (error) { showToast("Failed to reset password.", "error"); } finally { setIsSaving(false); }
   };
 
-  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled || isPurchasingEnabled;
+  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled || isPurchasingEnabled || isSalesEnabled;
 
   const sortedAdmins = [...adminUsers].sort((a: any, b: any) => {
     if (a.role === 'Super Admin' && b.role !== 'Super Admin') return -1;
@@ -195,7 +195,12 @@ export default function UserControlModule({
                       <td className="py-4 px-4 sm:px-6">
                         {user.role !== 'Super Admin' ? (
                           <div className="flex items-center justify-center gap-3 flex-wrap">
-                            
+                            {isSalesEnabled && (
+                              <label htmlFor={`mod-sales-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
+                                <input id={`mod-sales-${user.id}`} type="checkbox" checked={user.modules?.sales || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'sales', e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Sales</span>
+                              </label>
+                            )}
                             {isPurchasingEnabled && (
                               <label htmlFor={`mod-pur-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
                                 <input id={`mod-pur-${user.id}`} type="checkbox" checked={user.modules?.purchasing || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'purchasing', e.target.checked)} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
@@ -286,6 +291,12 @@ export default function UserControlModule({
                 <div className="flex flex-col gap-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-100">
                   <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
                   <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
+                    {isSalesEnabled && (
+                      <label htmlFor="new-mod-sales" className="flex items-center gap-2 cursor-pointer w-fit">
+                        <input id="new-mod-sales" type="checkbox" checked={newAdminModules.sales} onChange={e => setNewAdminModules({...newAdminModules, sales: e.target.checked})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Sales & CRM</span>
+                      </label>
+                    )}
                     {isPurchasingEnabled && (
                       <label htmlFor="new-mod-pur" className="flex items-center gap-2 cursor-pointer w-fit">
                         <input id="new-mod-pur" type="checkbox" checked={newAdminModules.purchasing} onChange={e => setNewAdminModules({...newAdminModules, purchasing: e.target.checked})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />

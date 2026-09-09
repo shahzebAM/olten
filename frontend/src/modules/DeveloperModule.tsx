@@ -12,6 +12,7 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
   };
 
   const systemModules = [
+    { id: 'sales', name: 'Sales & CRM Engine', desc: 'Customer and Sales Management', icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z', color: 'text-emerald-600', bg: 'bg-emerald-100', border: 'border-emerald-200' },
     { id: 'purchasing', name: 'Procurement Engine', desc: 'Supplier and PO Management', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z', color: 'text-amber-600', bg: 'bg-amber-100', border: 'border-amber-200' },
     { id: 'products', name: 'Product Manager', desc: 'Master SKUs and Pricing', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', color: 'text-purple-600', bg: 'bg-purple-100', border: 'border-purple-200' },
     { id: 'inventory', name: 'Inventory Control', desc: 'Stock Ledger and Adjustments', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', color: 'text-sky-600', bg: 'bg-sky-100', border: 'border-sky-200' },
