@@ -21,7 +21,6 @@ export default function App() {
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
-  // Replaced localStorage with state to be populated by DB
   const [companiesList, setCompaniesList] = useState<string[]>(['Surgicom', 'Olten', 'Ordent']);
 
   const [globalModules, setGlobalModules] = useState(() => {
@@ -36,7 +35,6 @@ export default function App() {
     fetch(`${API_BASE_URL}/settings`).catch(() => {}); 
   }, []);
   
-  // Background polling now fetches both users and companies to keep devices synced
   useEffect(() => {
     if (!isAuthenticated || isDeveloper) return;
     fetchAdmins();
@@ -65,7 +63,6 @@ export default function App() {
         if (data.length > 0) {
           setCompaniesList(data.map((c: any) => c.name));
         } else {
-          // Auto-seed database if it is brand new and completely empty
           await Promise.all([
             fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Surgicom' }) }),
             fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Olten' }) }),
@@ -86,7 +83,8 @@ export default function App() {
     setSelectedCompany(null);
   };
 
-const handleAddCompany = async (newCompany: string) => {
+  // RESTORED: Strict Add Company Logic
+  const handleAddCompany = async (newCompany: string) => {
     if (!companiesList.includes(newCompany)) {
       try {
         const res = await fetch(`${API_BASE_URL}/companies`, {
@@ -95,9 +93,8 @@ const handleAddCompany = async (newCompany: string) => {
           body: JSON.stringify({ name: newCompany })
         });
         
-        // STRICT CHECK: Only update the screen if the database confirms the save
         if (!res.ok) {
-          alert("Database Error: Could not save the workspace. Please check your backend terminal.");
+          alert("Database Error: Could not save the workspace.");
           return; 
         }
 

@@ -122,14 +122,12 @@ const InputField = ({ label, required = false, type = "text", placeholder = "", 
 
 const EmployeeFormFields = ({ formData, handleChange }: any) => (
   <>
-    {/* --- ROW 1: NAMES --- */}
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
       <InputField required label="First Name" value={formData.firstName} onChange={handleChange('firstName', 'standard')} />
       <InputField label="Middle Name" placeholder="Optional" value={formData.middleName} onChange={handleChange('middleName', 'standard')} />
       <InputField required label="Last Name" value={formData.lastName} onChange={handleChange('lastName', 'standard')} />
     </div>
 
-    {/* --- ROW 2: BIRTH DATE & CIVIL STATUS --- */}
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mt-4 sm:mt-6">
       <InputField required type="date" label="Birth Date" value={formData.dateOfBirth} onChange={handleChange('dateOfBirth', 'standard')} />
       <div className="flex flex-col gap-1.5 w-full">
@@ -147,14 +145,12 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
       </div>
     </div>
 
-    {/* --- ROW 3: COMPLETE ADDRESS --- */}
     <div className="mt-4 sm:mt-6">
       <InputField required label="Complete Address" value={formData.address} onChange={handleChange('address', 'standard')} />
     </div>
     
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
 
-    {/* --- ROW 4: COMPENSATION & EMPLOYMENT --- */}
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
       <InputField required type="number" step="0.01" label="Base Salary per Cutoff (₱)" placeholder="0.00" value={formData.baseRate} onChange={handleChange('baseRate', 'standard')} />
       <div className="flex flex-col gap-1.5 w-full">
@@ -175,7 +171,6 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
     
-    {/* --- ROW 5: ADVANCES & DEDUCTIONS --- */}
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
       <InputField type="number" step="0.01" label="Total Cash Advance Balance (₱)" placeholder="0.00" value={formData.cashAdvanceBalance} onChange={handleChange('cashAdvanceBalance', 'standard')} />
       <InputField type="number" step="0.01" label="Standard Deduction per Cutoff (₱)" placeholder="0.00" value={formData.cashAdvanceInstallment} onChange={handleChange('cashAdvanceInstallment', 'standard')} />
@@ -183,7 +178,6 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
 
-    {/* --- ROW 6: GOVT IDS --- */}
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
       <InputField label="TIN" placeholder="000-000-000-000" value={formData.tin} onChange={handleChange('tin', 'tin')} />
       <InputField label="SSS Number" placeholder="00-0000000-0" value={formData.sssNumber} onChange={handleChange('sssNumber', 'sss')} />
@@ -336,12 +330,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     fetchAttendances();
     fetchPayrolls();
     fetchSettings();
-  }, []);
+  }, [selectedCompany]);
 
   // --- API CALLS ---
   const fetchSettings = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/settings`);
+      const response = await fetch(`${API_BASE_URL}/settings?company=${selectedCompany}`);
       if (response.ok) {
         const data = await response.json();
         const settingsObj = Array.isArray(data) ? data[0] : data;
@@ -350,6 +344,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
           setShiftEnd(settingsObj.shiftEnd);
           setTempShiftStart(settingsObj.shiftStart);
           setTempShiftEnd(settingsObj.shiftEnd);
+        } else {
+          setShiftStart('08:00'); setShiftEnd('17:00');
+          setTempShiftStart('08:00'); setTempShiftEnd('17:00');
         }
       }
     } catch (error) { console.warn("Could not connect to /settings backend endpoint."); }
@@ -710,11 +707,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setIsSaving(true);
     try {
       const response = await fetch(`${API_BASE_URL}/settings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shiftStart: tempShiftStart, shiftEnd: tempShiftEnd })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ company: selectedCompany, shiftStart: tempShiftStart, shiftEnd: tempShiftEnd })
       });
       if (!response.ok) throw new Error();
       setShiftStart(tempShiftStart); setShiftEnd(tempShiftEnd);
-      showToast("Shift updated permanently in database!", "success");
+      showToast("Shift updated permanently for this workspace!", "success");
     } catch (error) { showToast("Failed to save shift to database.", "error"); } 
     finally { setIsSaving(false); }
   };
@@ -931,7 +929,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     }).filter(Boolean) as SummaryReportRow[];
   };
 
-  // PASTE IT HERE! COMPLETELY OUTSIDE THE PREVIOUS FUNCTION
   const handleGenerateReport = () => {
     setIsReportModalOpen(true);
   };
@@ -1438,7 +1435,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden print:h-auto print:block">
         
         {/* TOP HEADER */}
-{/* TOP HEADER */}
         <header className="h-auto sm:h-20 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-8 py-3 sm:py-0 shadow-sm relative z-10 print-hidden shrink-0 gap-3 sm:gap-0">
           <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
             <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 sm:p-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors border border-slate-200 shrink-0">
@@ -1515,10 +1511,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300 flex flex-col relative overflow-hidden">
                     <h3 className="text-lg font-bold text-white mb-4 relative z-10">System Configuration</h3>
                     <div className="space-y-4 flex-1 relative z-10">
-                      {/* <div>
-                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">API Connection</p>
-                        <p className="text-sm font-mono text-emerald-400 mt-1">{API_BASE_URL}</p>
-                      </div> */}
                       <div>
                         <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current Default Shift</p>
                         <p className="text-sm font-mono text-blue-400 mt-1 bg-slate-800/50 py-1.5 px-3 rounded-lg border border-slate-700/50 w-fit">{format12Hour(shiftStart)} — {format12Hour(shiftEnd)}</p>

@@ -6,8 +6,10 @@ export default function CompanyModule({
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = []
 }: any) {
   
+  // RESTORED: Add Company UI State
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCompany, setNewCompany] = useState('');
+  
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -62,6 +64,7 @@ export default function CompanyModule({
           </div>
         )}
 
+        {/* RESTORED: Add Company Modal */}
         {showAddModal && (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
