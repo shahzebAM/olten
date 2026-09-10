@@ -122,7 +122,9 @@ const InputField = ({ label, required = false, type = "text", placeholder = "", 
 
 const EmployeeFormFields = ({ formData, handleChange }: any) => (
   <>
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      {/* NEW EMPLOYEE ID FIELD */}
+      <InputField required label="Employee ID" placeholder="Biometric ID" value={formData.employeeId} onChange={handleChange('employeeId', 'standard')} />
       <InputField required label="First Name" value={formData.firstName} onChange={handleChange('firstName', 'standard')} />
       <InputField label="Middle Name" placeholder="Optional" value={formData.middleName} onChange={handleChange('middleName', 'standard')} />
       <InputField required label="Last Name" value={formData.lastName} onChange={handleChange('lastName', 'standard')} />
@@ -193,6 +195,7 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 
 interface Employee {
   id: number;
+  employeeId?: string; // New Database ID field
   firstName: string;
   middleName: string;
   lastName: string;
@@ -301,6 +304,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [dailyTimeLogs, setDailyTimeLogs] = useState<Record<number, { timeIn: string, timeOut: string, type: string, reason: string }>>({});
 
   const initialFormState = {
+    employeeId: '', // NEW FIELD
     firstName: '', middleName: '', lastName: '', dateOfBirth: '', 
     civilStatus: 'Single', address: '', employmentStatus: 'Probationary', 
     baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: '',
@@ -421,23 +425,23 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   };
 
   const handleExportAttendance = () => {
-    const headers = ['Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
+    const headers = ['System ID', 'Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
     const data = attendances.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
       const isLeave = !a.timeIn.includes(':');
       let niceTimeIn = isLeave ? a.timeIn : format12Hour(a.timeIn);
       let niceTimeOut = isLeave ? a.timeOut : format12Hour(a.timeOut);
-      return [ a.employeeId, a.date ? a.date.split('T')[0] : '', niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.hours, a.reason || 'Regular' ];
+      return [ a.employeeId, emp?.employeeId || '', a.date ? a.date.split('T')[0] : '', niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.hours, a.reason || 'Regular' ];
     });
     exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
 
   const handleExportPayrolls = () => {
-    const headers = ['Date Computed', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
+    const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
     const data = payrolls.map(p => {
       const emp = employees.find(e => e.id === p.employeeId);
       const totalDeds = p.cashAdvance + p.sssDeduction + p.pagIbigDeduct + p.philhealthDeduct + p.tax + (p.pagIbigLoan || 0) + (p.pagIbigHousingLoan || 0);
-      return [formatMDY(p.createdAt), p.employeeId, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
+      return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
     });
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
@@ -530,7 +534,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         };
 
         const headers = parseCSVRow(rows[0]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-        const empIdIdx = headers.findIndex(h => h === 'employeeid' || h === 'id');
+        const empIdIdx = headers.findIndex(h => h === 'employeeid' || h === 'systemid' || h === 'id');
         const dateIdx = headers.findIndex(h => h === 'date');
         const inIdx = headers.findIndex(h => h === 'timein');
         const outIdx = headers.findIndex(h => h === 'timeout');
@@ -569,9 +573,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         const validPayloads = [];
         for (let i = 1; i < rows.length; i++) {
           const cols = parseCSVRow(rows[i]);
-          if (cols.length < 4 || !cols[empIdIdx] || isNaN(parseInt(cols[empIdIdx]))) continue;
+          if (cols.length < 4 || !cols[empIdIdx]) continue;
           
-          const parsedEmpId = parseInt(cols[empIdIdx]);
+          const importedId = cols[empIdIdx];
           const tIn = formatTime24(cols[inIdx]);
           const tOut = formatTime24(cols[outIdx]);
           const safeDate = formatIsoDate(cols[dateIdx]);
@@ -583,9 +587,13 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             return; 
           }
 
-          const employeeExists = employees.some(emp => emp.id === parsedEmpId);
-          if (!employeeExists) {
-            showToast(`Import Aborted! Row ${i + 1} uses an Employee ID (${parsedEmpId}) that does not exist.`, "error");
+          // Match by internal system ID or the custom Employee ID
+          const matchedEmployee = employees.find(emp => 
+            emp.id.toString() === importedId || emp.employeeId === importedId
+          );
+
+          if (!matchedEmployee) {
+            showToast(`Import Aborted! Row ${i + 1} uses an Employee ID (${importedId}) that does not exist.`, "error");
             setIsSaving(false);
             event.target.value = '';
             return; 
@@ -598,7 +606,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
              hours = 8; 
           }
 
-          validPayloads.push({ employeeId: parsedEmpId, date: safeDate, timeIn: tIn, timeOut: tOut, hours, reason: null, shiftStart, shiftEnd });
+          validPayloads.push({ employeeId: matchedEmployee.id, date: safeDate, timeIn: tIn, timeOut: tOut, hours, reason: null, shiftStart, shiftEnd });
         }
 
         if (validPayloads.length === 0) {
@@ -650,13 +658,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
   const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
-      showToast("All core employee details must be filled out.", "error"); return;
+    if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
+      showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
     }
 
     setIsSaving(true);
     const payload = {
       ...formData, 
+      employeeId: formData.employeeId.trim(), // Sent to backend
       company: selectedCompany, 
       baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       middleName: formData.middleName || null, bankAccount: formData.bankAccount || '', tin: formData.tin || null,
@@ -670,7 +679,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     try {
       const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) { showToast("Failed to save. Government ID might already exist.", "error"); setIsSaving(false); return; }
+      if (!response.ok) { showToast("Failed to save. Employee ID or Government ID might already exist.", "error"); setIsSaving(false); return; }
       
       await fetchEmployees();
       setIsEditModalOpen(false);
@@ -691,6 +700,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
   const openEditModal = (emp: Employee) => {
     setFormData({
+      employeeId: emp.employeeId || '', // Pre-fill Database ID
       firstName: emp.firstName, middleName: emp.middleName || '', lastName: emp.lastName,
       dateOfBirth: emp.dateOfBirth ? emp.dateOfBirth.split('T')[0] : '', civilStatus: emp.civilStatus,
       address: emp.address, employmentStatus: emp.employmentStatus, baseRate: emp.baseRate.toString(),
@@ -948,7 +958,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
-    return fullName.includes(query) || emp.employmentStatus.toLowerCase().includes(query) || (emp.bankAccount && emp.bankAccount.includes(query));
+    return fullName.includes(query) || emp.employmentStatus.toLowerCase().includes(query) || (emp.bankAccount && emp.bankAccount.includes(query)) || (emp.employeeId && emp.employeeId.includes(query));
   });
 
   const filteredAttendanceEmployees = employees.filter(emp => {
@@ -1274,7 +1284,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                           <tbody>
                             {reportData.map((row) => (
                               <tr key={row.emp.id} className="hover:bg-slate-50">
-                                <td className="py-2 px-3 border border-slate-300 font-mono text-slate-500">{row.emp.id.toString().padStart(4, '0')}</td>
+                                <td className="py-2 px-3 border border-slate-300 font-mono text-slate-500">{row.emp.employeeId || row.emp.id.toString().padStart(4, '0')}</td>
                                 <td className="py-2 px-3 border border-slate-300 font-bold uppercase text-slate-700">{row.emp.lastName}, {row.emp.firstName}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-center font-medium">{row.count}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatMoney(row.totalDays)}</td>
@@ -1531,7 +1541,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <table className="w-full text-left border-collapse min-w-[800px]">
                     <thead className="bg-slate-100 border-b border-slate-200">
                       <tr>
-                        <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-16">ID No.</th>
+                        <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-24">Emp ID</th>
                         <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Employee</th>
                         <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Status</th>
                         <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Compensation & Bank</th>
@@ -1545,7 +1555,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       ) : (
                         filteredEmployees.map((emp) => (
                           <tr key={emp.id} className="hover:bg-blue-50/30 transition-colors group">
-                            <td className="py-4 px-6 align-top"><span className="font-mono font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">#{emp.id}</span></td>
+                            <td className="py-4 px-6 align-top">
+                              <span className="font-mono font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                                {emp.employeeId ? emp.employeeId : `#${emp.id}`}
+                              </span>
+                            </td>
                             <td className="py-4 px-6 align-top">
                               <div className="font-semibold text-blue-950">{emp.firstName} {emp.middleName ? emp.middleName + ' ' : ''}{emp.lastName}</div>
                               <div className="text-xs text-slate-500 mt-1">{emp.address}</div>
@@ -1619,32 +1633,35 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                     
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
                       <button onClick={handleRefreshData} disabled={isSaving} className="flex-1 sm:flex-none px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1 disabled:opacity-50"><svg className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>{isSaving ? 'Syncing...' : 'Refresh'}</button>
+                      
+                      {/* SENTRY SYNC BUTTON */}
                       <button 
-  onClick={async () => {
-    setIsSaving(true);
-    showToast("Connecting to Sentry Biometrics...", "success");
-    try {
-      const res = await fetch(`${API_BASE_URL}/employees/attendance/sync-sentry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, date: attendanceDate })
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      await fetchAttendances(); // Refreshes the React table instantly
-      showToast(`Successfully synced ${data.importedLogs} biometric logs!`, "success");
-    } catch (e) {
-      showToast("Sentry Server (192.168.0.151) is unreachable.", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  }} 
-  disabled={isSaving} 
-  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
->
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" /></svg>
-  Pull Biometrics
-</button>
+                        onClick={async () => {
+                          setIsSaving(true);
+                          showToast("Connecting to Sentry Biometrics...", "success");
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/employees/attendance/sync-sentry`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ company: selectedCompany, date: attendanceDate })
+                            });
+                            if (!res.ok) throw new Error();
+                            const data = await res.json();
+                            await fetchAttendances(); // Refreshes the React table instantly
+                            showToast(`Successfully synced ${data.importedLogs} biometric logs!`, "success");
+                          } catch (e) {
+                            showToast("Sentry Server (192.168.0.151) is unreachable.", "error");
+                          } finally {
+                            setIsSaving(false);
+                          }
+                        }} 
+                        disabled={isSaving} 
+                        className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" /></svg>
+                        Pull Biometrics
+                      </button>
+
                       <button onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', new Date().toISOString().split('T')[0], '08:00 AM', '05:00 PM'], ['2', new Date().toISOString().split('T')[0], 'LEAVE', 'PAID']])} className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors">Template</button>
                       <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">Import CSV<input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} /></label>
                       <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">Export CSV</button>
@@ -1675,7 +1692,10 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                             const currentLog = dailyTimeLogs[emp.id] || { timeIn: shiftStart, timeOut: shiftEnd, type: 'regular', reason: '' };
                         return (
                           <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
-                            <td className="py-5 px-6 align-top w-1/4"><span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span></td>
+                            <td className="py-5 px-6 align-top w-1/4">
+                              <span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span>
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {emp.employeeId || emp.id}</div>
+                            </td>
                             <td className="py-5 px-6 align-top">
                               <div className="flex flex-col gap-3">
                                 {empLogs.length === 0 ? <span className="text-sm text-slate-400 italic mt-1.5">No logs recorded</span> : 
@@ -1744,7 +1764,10 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                             });
                         return (
                           <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors">
-                            <td className="py-5 px-6 align-top w-1/4"><span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span></td>
+                            <td className="py-5 px-6 align-top w-1/4">
+                              <span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span>
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {emp.employeeId || emp.id}</div>
+                            </td>
                             <td className="py-5 px-6 align-top">
                               {monthLogs.length === 0 ? (
                                 <span className="text-sm text-slate-400 italic">No logs this month</span>
@@ -1790,6 +1813,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                     <table className="w-full text-left border-collapse min-w-[800px]">
                       <thead className="bg-slate-100 border-b border-slate-200">
                         <tr>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-24">Emp ID</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Employee Name</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Valid Logged Hours</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Total OT Hours</th>
@@ -1798,7 +1822,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredActiveEmployees.length === 0 ? (
-                          <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
+                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
                         ) : (
                           filteredActiveEmployees.map((emp) => {
                             const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
@@ -1809,6 +1833,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                             });
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
+                                <td className="py-4 px-6 font-mono text-slate-500">{emp.employeeId || `#${emp.id}`}</td>
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp.firstName} {emp.lastName}</td>
                                 <td className="py-4 px-6 font-mono text-slate-600">{formatDecToHM(totalLogged)}</td>
                                 <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{totalOtLogged > 0 ? formatDecToHM(totalOtLogged) : '--'}</td>
@@ -1838,6 +1863,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       <thead className="bg-slate-100 border-b border-slate-200">
                         <tr>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Date Computed</th>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Emp ID</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Employee</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Hours / Days</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Final Net Pay</th>
@@ -1846,13 +1872,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredSavedPayrolls.length === 0 ? (
-                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No payroll records saved or matching your search.</td></tr>
+                          <tr><td colSpan={6} className="py-12 text-center text-slate-400 font-medium text-sm">No payroll records saved or matching your search.</td></tr>
                         ) : (
                           filteredSavedPayrolls.map(pr => {
                             const emp = employees.find(e => e.id === Number(pr.employeeId));
                             return (
                               <tr key={pr.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="py-4 px-6 text-sm text-slate-600 font-mono font-semibold">{formatMDY(pr.createdAt)}</td>
+                                <td className="py-4 px-6 text-sm text-slate-500 font-mono">{emp?.employeeId || `#${emp?.id}`}</td>
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown Employee'}</td>
                                 <td className="py-4 px-6 text-sm text-slate-600">{formatDecToHM(pr.totalHours)} / {pr.daysWorked} days</td>
                                 <td className="py-4 px-6 font-mono font-bold text-emerald-700">₱{pr.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
