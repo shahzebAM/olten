@@ -1619,6 +1619,32 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                     
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
                       <button onClick={handleRefreshData} disabled={isSaving} className="flex-1 sm:flex-none px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1 disabled:opacity-50"><svg className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>{isSaving ? 'Syncing...' : 'Refresh'}</button>
+                      <button 
+  onClick={async () => {
+    setIsSaving(true);
+    showToast("Connecting to Sentry Biometrics...", "success");
+    try {
+      const res = await fetch(`${API_BASE_URL}/employees/attendance/sync-sentry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, date: attendanceDate })
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      await fetchAttendances(); // Refreshes the React table instantly
+      showToast(`Successfully synced ${data.importedLogs} biometric logs!`, "success");
+    } catch (e) {
+      showToast("Sentry Server (192.168.0.151) is unreachable.", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  }} 
+  disabled={isSaving} 
+  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
+>
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" /></svg>
+  Pull Biometrics
+</button>
                       <button onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', new Date().toISOString().split('T')[0], '08:00 AM', '05:00 PM'], ['2', new Date().toISOString().split('T')[0], 'LEAVE', 'PAID']])} className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors">Template</button>
                       <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">Import CSV<input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} /></label>
                       <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">Export CSV</button>
