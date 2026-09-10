@@ -428,9 +428,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const headers = ['System ID', 'Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
     const data = attendances.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
-      const isLeave = !a.timeIn.includes(':');
-      let niceTimeIn = isLeave ? a.timeIn : format12Hour(a.timeIn);
-      let niceTimeOut = isLeave ? a.timeOut : format12Hour(a.timeOut);
+const isLeave = a.timeIn === 'LEAVE';
+      let niceTimeIn = isLeave ? a.timeIn : (a.timeIn ? format12Hour(a.timeIn) : 'MISSING');
+      let niceTimeOut = isLeave ? a.timeOut : (a.timeOut ? format12Hour(a.timeOut) : 'MISSING');
       return [ a.employeeId, emp?.employeeId || '', a.date ? a.date.split('T')[0] : '', niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.hours, a.reason || 'Regular' ];
     });
     exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
@@ -505,11 +505,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     }
   };
 
-  const handleImportAttendance = async (event: any) => {
+const handleImportAttendance = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsSaving(true);
-    showToast("Validating Excel records...", "success");
+    showToast("Validating DTR records...", "success");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -518,6 +518,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
         if (rows.length < 2) throw new Error("File empty or missing data");
 
+        // Standard CSV Parser that respects quotes
         const parseCSVRow = (str: string) => {
             const result = [];
             let cell = '';
@@ -533,18 +534,30 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             return result;
         };
 
-        const headers = parseCSVRow(rows[0]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-        const empIdIdx = headers.findIndex(h => h === 'employeeid' || h === 'systemid' || h === 'id');
-        const dateIdx = headers.findIndex(h => h === 'date');
-        const inIdx = headers.findIndex(h => h === 'timein');
-        const outIdx = headers.findIndex(h => h === 'timeout');
+        // 1. DYNAMIC HEADER DETECTION: Scans down the file until it finds the actual data table
+        let headerRowIdx = -1;
+        let headers: string[] = [];
+        for (let i = 0; i < Math.min(15, rows.length); i++) {
+          const cols = parseCSVRow(rows[i]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+          // Looks for Personnel No/ID, Date, IN, and OUT
+          if ((cols.includes('personnelno') || cols.includes('employeeid')) && cols.includes('date') && cols.includes('in') && cols.includes('out')) {
+            headerRowIdx = i;
+            headers = cols;
+            break;
+          }
+        }
 
-        if (empIdIdx === -1 || dateIdx === -1 || inIdx === -1 || outIdx === -1) {
-          showToast("Missing columns! Use the exact Template format.", "error");
+        if (headerRowIdx === -1) {
+          showToast("Import Aborted! Could not detect 'Personnel No', 'Date', 'IN', and 'OUT' columns.", "error");
           setIsSaving(false);
           event.target.value = '';
           return;
         }
+
+        const empIdIdx = headers.findIndex(h => h === 'personnelno' || h === 'employeeid' || h === 'systemid' || h === 'id');
+        const dateIdx = headers.findIndex(h => h === 'date');
+        const inIdx = headers.findIndex(h => h === 'in' || h === 'timein');
+        const outIdx = headers.findIndex(h => h === 'out' || h === 'timeout');
 
         const formatTime24 = (timeStr: string) => {
           if (!timeStr) return '';
@@ -562,6 +575,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         };
 
         const formatIsoDate = (dStr: string) => {
+           if (!dStr) return '';
            if (dStr.includes('/')) {
                const p = dStr.split('/');
                if (p[2] && p[2].length === 4) return `${p[2]}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;
@@ -570,63 +584,107 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
            return '';
         };
 
-        const validPayloads = [];
-        for (let i = 1; i < rows.length; i++) {
-          const cols = parseCSVRow(rows[i]);
-          if (cols.length < 4 || !cols[empIdIdx]) continue;
-          
-          const importedId = cols[empIdIdx];
-          const tIn = formatTime24(cols[inIdx]);
-          const tOut = formatTime24(cols[outIdx]);
-          const safeDate = formatIsoDate(cols[dateIdx]);
+// Use an Object dictionary instead of an Array to prevent CSV duplicates
+        const validPayloads: any = {};
+        let currentPersonnelNo = '';
+        let incompleteEmployees = new Set<string>(); // Track names for the toast
 
-          if (!safeDate || !tIn || !tOut) {
-            showToast(`Import Aborted! Excel Row ${i + 1} is missing a valid Date or Time.`, "error");
-            setIsSaving(false);
-            event.target.value = '';
-            return; 
+        // 2. DATA PROCESSING LOOP
+        for (let i = headerRowIdx + 1; i < rows.length; i++) {
+          const cols = parseCSVRow(rows[i]);
+          
+          // Smart Tracking: If the cell has an ID, update our tracker. If blank, it assumes the previous employee.
+          if (cols[empIdIdx] && cols[empIdIdx].trim() !== '') {
+            currentPersonnelNo = cols[empIdIdx].trim();
           }
 
-          // Match by internal system ID or the custom Employee ID
+          if (!currentPersonnelNo) continue; 
+
+          const rawDate = cols[dateIdx];
+          const rawIn = cols[inIdx] ? cols[inIdx].trim() : '';
+          const rawOut = cols[outIdx] ? cols[outIdx].trim() : '';
+
+          const tIn = formatTime24(rawIn);
+          const tOut = formatTime24(rawOut);
+          const safeDate = formatIsoDate(rawDate);
+
+          if (!safeDate) continue;
+
+          // Maps the internal DTR Personnel No (e.g., S-00001) to your system's employees
           const matchedEmployee = employees.find(emp => 
-            emp.id.toString() === importedId || emp.employeeId === importedId
+            emp.employeeId === currentPersonnelNo || emp.id.toString() === currentPersonnelNo
           );
 
-          if (!matchedEmployee) {
-            showToast(`Import Aborted! Row ${i + 1} uses an Employee ID (${importedId}) that does not exist.`, "error");
-            setIsSaving(false);
-            event.target.value = '';
-            return; 
-          }
+          if (!matchedEmployee) continue; // Skips IDs that aren't registered in your NestJS app yet
 
           let hours = 0;
-          if (tIn.includes(':') && tOut.includes(':')) { 
+          // Only compute full hours if both punches exist
+          if (tIn && tOut && tIn.includes(':') && tOut.includes(':')) { 
              hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; 
           } else if (tOut === 'PAID') { 
              hours = 8; 
           }
 
-          validPayloads.push({ employeeId: matchedEmployee.id, date: safeDate, timeIn: tIn, timeOut: tOut, hours, reason: null, shiftStart, shiftEnd });
+          // If either punch is missing, register their name for the warning toast
+          if (!tIn || !tOut) {
+             incompleteEmployees.add(`${matchedEmployee.firstName} ${matchedEmployee.lastName}`);
+          }
+
+          // Smart Deduplication: Keys entries by Employee ID + Date to merge Excel duplicates
+          const payloadKey = `${matchedEmployee.id}_${safeDate}`;
+          validPayloads[payloadKey] = { 
+            employeeId: matchedEmployee.id, 
+            date: safeDate, 
+            timeIn: tIn || '', // Defaults to empty string (nill) if missing
+            timeOut: tOut || '', // Defaults to empty string (nill) if missing
+            hours, 
+            reason: null, 
+            shiftStart, 
+            shiftEnd 
+          };
         }
 
-        if (validPayloads.length === 0) {
+        const payloadArray = Object.values(validPayloads);
+
+        if (payloadArray.length === 0) {
            showToast("No valid rows found to import.", "error");
            setIsSaving(false); event.target.value = ''; return;
         }
 
-        showToast(`Uploading ${validPayloads.length} verified logs...`, "success");
         let successCount = 0;
-        for (const payload of validPayloads) {
-          const res = await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        for (const payload of payloadArray as any[]) {
+          // Checks current system state to Update existing records instead of cloning them
+          const existingLog = attendances.find(a => a.employeeId === payload.employeeId && a.date && a.date.split('T')[0] === payload.date);
+          
+          const url = existingLog ? `${API_BASE_URL}/employees/attendance/${existingLog.id}` : `${API_BASE_URL}/employees/attendance`;
+          const method = existingLog ? 'PATCH' : 'POST';
+
+          const res = await fetch(url, { 
+            method: method, 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
+          });
+          
           if(res.ok) successCount++;
         }
         
         await new Promise(resolve => setTimeout(resolve, 500));
         await fetchAttendances();
+        
         showToast(`Imported ${successCount} logs successfully!`, "success");
+
+        // Delay the incomplete attendance warning slightly so it doesn't collide with the success message
+        if (incompleteEmployees.size > 0) {
+          setTimeout(() => {
+            const arr = Array.from(incompleteEmployees);
+            const nameStr = arr.slice(0, 3).join(', ') + (arr.length > 3 ? ` & ${arr.length - 3} more` : '');
+            showToast(`Note: Incomplete punches safely saved for ${nameStr}`, "success");
+          }, 3600);
+        }
+        
       } catch (err) { 
         showToast("Failed to parse CSV file. Check formatting.", "error"); 
-      } finally { 
+      } finally {
         setIsSaving(false); 
         event.target.value = ''; 
       }
@@ -786,7 +844,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   };
 
   const openEditLogModal = (log: AttendanceRecord) => {
-    const isLeave = !log.timeIn.includes(':');
+    const isLeave = log.timeIn === 'LEAVE';
     let type = 'regular';
     if (isLeave) type = log.timeOut === 'PAID' ? 'paid_leave' : 'unpaid_leave';
     setEditLogForm({ date: log.date ? log.date.split('T')[0] : '', timeIn: isLeave ? '' : log.timeIn, timeOut: isLeave ? '' : log.timeOut, type, reason: log.reason || '' });
@@ -966,7 +1024,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     if (!attendanceSearchQuery) return true;
     const query = attendanceSearchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
-    return fullName.includes(query);
+    const empId = emp.employeeId ? emp.employeeId.toLowerCase() : '';
+    return fullName.includes(query) || empId.includes(query);
   });
 
   const filteredActiveEmployees = employees.filter(emp => {
@@ -974,7 +1033,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     if (!payrollActiveSearchQuery) return true;
     const query = payrollActiveSearchQuery.toLowerCase();
     const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
-    return fullName.includes(query);
+    const empId = emp.employeeId ? emp.employeeId.toLowerCase() : '';
+    return fullName.includes(query) || empId.includes(query);
   });
 
   const filteredSavedPayrolls = payrolls.filter(pr => {
@@ -1062,14 +1122,15 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 const monthLogs = attendances.filter(a => Number(a.employeeId) === monthLogsModalEmp.id && a.date && a.date.split('T')[0].startsWith(attendanceMonth)).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
                 if (monthLogs.length === 0) return <div className="text-center py-8 text-slate-500 italic">No logs found for this month.</div>;
                 return monthLogs.map(log => {
-                  const isLeave = !log.timeIn.includes(':');
-                  const shiftDetails = !isLeave ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
+                  const isLeave = log.timeIn === 'LEAVE';
+                  const hasFullPunch = log.timeIn && log.timeOut && !isLeave;
+                  const shiftDetails = hasFullPunch ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
                   return (
                     <div key={log.id} className="flex items-center justify-between gap-3 text-sm border border-slate-200 bg-white rounded-xl px-5 py-3.5 shadow-sm w-full group/log whitespace-nowrap hover:border-indigo-300 transition-colors">
                       <span className="font-bold text-slate-700 w-[95px]">{formatMDY(log.date)}</span>
                       <span className="text-slate-200">|</span>
                       <span className="font-mono font-bold text-indigo-900 min-w-[150px]">
-                        {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${format12Hour(log.timeIn)} - ${format12Hour(log.timeOut)}`}
+                        {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${log.timeIn ? format12Hour(log.timeIn) : '--:--'} to ${log.timeOut ? format12Hour(log.timeOut) : '--:--'}`}
                       </span>
                       <span className="text-slate-200">|</span>
                       <span className="font-bold text-indigo-600 w-[70px]">Reg: {formatDecToHM(shiftDetails.reg)}</span>
@@ -1674,13 +1735,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                               <div className="flex flex-col gap-3">
                                 {empLogs.length === 0 ? <span className="text-sm text-slate-400 italic mt-1.5">No logs recorded</span> : 
                                   empLogs.map(log => {
-                                    const isLeave = !log.timeIn.includes(':');
-                                    const shiftCalc = !isLeave ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : null;
+                                    const isLeave = log.timeIn === 'LEAVE';
+                                    const hasFullPunch = log.timeIn && log.timeOut && !isLeave;
+                                    const shiftCalc = hasFullPunch ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : null;
                                     return (
                                       <div key={log.id} className="flex flex-col bg-white border border-indigo-100 rounded-xl shadow-sm overflow-hidden w-full max-w-[420px]">
                                         <div className="flex items-center justify-between gap-6 bg-indigo-50 px-4 py-2.5">
                                           <span className="text-sm font-bold text-indigo-900 font-mono whitespace-nowrap">
-                                            {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${format12Hour(log.timeIn)} - ${format12Hour(log.timeOut)}`}
+                                            {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${log.timeIn ? format12Hour(log.timeIn) : '--:--'} to ${log.timeOut ? format12Hour(log.timeOut) : '--:--'}`}
                                           </span>
                                           <div className="flex items-center gap-3 shrink-0">
                                             <button onClick={() => openEditLogModal(log)} className="text-indigo-400 hover:text-indigo-600 font-bold transition-colors text-xs uppercase tracking-wider">EDIT</button>
