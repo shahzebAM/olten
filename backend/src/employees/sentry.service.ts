@@ -38,13 +38,13 @@ export class SentryIntegrationService {
       for (const log of rawLogs) {
         if (!log) continue;
 
-        // Defensive Mapping: Scans for common Sentry Name and Time keys instead of IDs
-        const rawName = log.EmployeeName || log.Name || log.FullName || log.UserName || log.employee_name || log.user;
+        // Defensive Mapping: Scans for common Sentry ID and Time keys
+        const rawId = log.EmployeeId || log.emp_id || log.BioId || log.UserId || log.id;
         const rawTime = log.LogDate || log.DateTime || log.timestamp || log.Time;
         const rawType = log.Status ?? log.Type ?? log.PunchType ?? log.state; 
 
-        if (!rawName || !rawTime) {
-          this.logger.warn(`Missing Name or Time in log. Sentry sent: ${JSON.stringify(log)}`);
+        if (rawId === undefined || !rawTime) {
+          this.logger.warn(`Missing ID or Time in log. Sentry sent: ${JSON.stringify(log)}`);
           continue;
         }
 
@@ -57,24 +57,17 @@ export class SentryIntegrationService {
 
         if (logDateString !== targetDate) continue;
 
-        // Data Isolation & Smart Name Matching 
-        const sentryNameFormatted = String(rawName).trim().toLowerCase();
-        
-        const employee = companyEmployees.find(e => {
-          const first = e.firstName.toLowerCase();
-          const last = e.lastName.toLowerCase();
-          
-          // Check standard "First Last" and "First Middle Last" combinations
-          const dbFullName1 = `${first} ${last}`;
-          const dbFullName2 = `${first} ${e.middleName ? e.middleName.toLowerCase() : ''} ${last}`.replace(/\s+/g, ' ');
-          
-          return sentryNameFormatted === dbFullName1 || 
-                 sentryNameFormatted === dbFullName2 || 
-                 (sentryNameFormatted.includes(first) && sentryNameFormatted.includes(last));
-        });
+        // Data Isolation & ID Matching
+        const sentryIdString = String(rawId).trim();
+        const sentryIdNumber = !isNaN(Number(rawId)) ? Number(rawId) : -1;
+
+        const employee = companyEmployees.find(e => 
+          (e.employeeId && e.employeeId === sentryIdString) || 
+          (e.id === sentryIdNumber)
+        );
 
         if (!employee) {
-          this.logger.debug(`No match found for Sentry name: ${rawName}`);
+          this.logger.debug(`No match found for Sentry ID: ${rawId}`);
           continue; 
         }
 

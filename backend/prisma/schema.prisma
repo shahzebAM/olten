@@ -10,6 +10,7 @@ datasource db {
 
 model Employee {
   id                     Int          @id @default(autoincrement())
+  employeeId             String?
   firstName              String
   middleName             String?
   lastName               String
