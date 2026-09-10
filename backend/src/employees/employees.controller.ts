@@ -1,9 +1,13 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
+import { SentryIntegrationService } from './sentry.service';
 
 @Controller() 
 export class EmployeesController {
-  constructor(private readonly employeesService: EmployeesService) {}
+  constructor(
+    private readonly employeesService: EmployeesService,
+    private readonly sentryIntegrationService: SentryIntegrationService
+  ) {}
 
   // ==========================================
   // EMPLOYEES
@@ -49,6 +53,14 @@ export class EmployeesController {
   @Delete('employees/attendance/:id')
   async deleteAttendance(@Param('id') id: string) {
     return await this.employeesService.deleteAttendance(Number(id));
+  }
+
+  // ==========================================
+  // SENTRY BIOMETRICS INTEGRATION
+  // ==========================================
+  @Post('employees/attendance/sync-sentry')
+  async syncSentryLogs(@Body() body: { company: string, date: string }) {
+    return await this.sentryIntegrationService.syncBiometrics(body.company, body.date);
   }
 
   // ==========================================
