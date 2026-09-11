@@ -33,7 +33,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [ledgerEndDate, setLedgerEndDate] = useState('');
 
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
-  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' }>({ isOpen: false, products: [], type: 'RECEIVE' });
+  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
 
   const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
@@ -109,9 +109,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setMovForm({ sourceId: initialSource, destId: initialDest });
     
     const initialQtys: Record<number, string> = {};
-    if (type === 'ADJUST' && prods.length === 1) {
-         initialQtys[prods[0].id] = String(prods[0].currentStock);
-    }
+    prods.forEach(p => {
+      initialQtys[p.id] = type === 'ADJUST' ? String(p.currentStock) : '';
+    });
     setMovQtys(initialQtys);
   };
 
@@ -632,6 +632,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600">Receive</button>
                     <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600">Return to Hub</button>
                     <button onClick={() => openBulkTx('ISSUE')} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-rose-600">Issue</button>
+                    <button onClick={() => openBulkTx('ADJUST')} className="px-4 py-2 bg-indigo-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-indigo-600">Adjust Master</button>
                     {isAuthorizedAdmin && (
                       <button onClick={handleBulkDelete} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 ml-4">Delete</button>
                     )}
@@ -691,10 +692,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5 text-right">
                           <div className="flex flex-wrap justify-end gap-1.5">
-                            <button onClick={() => openTx([p], 'RECEIVE')} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold uppercase hover:bg-emerald-100 transition-colors" title="Receive to Master">Recv</button>
-                            <button onClick={() => openTx([p], 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors" title="Return to Hub">Ret</button>
-                            <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue External">Iss</button>
-                            <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Master Stock">Adj</button>
+                            <button onClick={() => openTx([p], 'RECEIVE')} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold uppercase hover:bg-emerald-100 transition-colors" title="Receive into Master Stock">Recv</button>
+                            <button onClick={() => openTx([p], 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors" title="Return to Warehouse Hub">Ret</button>
+                            <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue to External Client">Iss</button>
+                            <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Physical Master Stock">Adj</button>
                             <button onClick={() => { setProductForm({ ...p, previousImageUrl: globalImageVault[p.sku] || p.imageUrl || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
                             {isAuthorizedAdmin && (
                               <button onClick={() => handleProductDelete(p.id)} className="px-2.5 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-50 transition-colors">Del</button>
@@ -1113,7 +1114,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     {txModal.type === 'RETURN' ? (
                        <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">Master / Office Stock</div>
                     ) : (
-                       <select required value={movForm.sourceId} onChange={e=>setMovForm({...movForm, sourceId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
+                       <select required value={movForm.sourceId} onChange={e=>setMovForm({...movForm, sourceId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400 cursor-pointer">
                          <option value="">Select Source...</option>
                          {txModal.type === 'RECEIVE' && <option value="EXTERNAL">External Supplier</option>}
                          {txModal.type === 'ISSUE' && <option value="MASTER">Master / Office Stock</option>}
@@ -1130,7 +1131,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     ) : txModal.type === 'ISSUE' ? (
                        <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">External (Client / Buyer)</div>
                     ) : (
-                       <select required value={movForm.destId} onChange={e=>setMovForm({...movForm, destId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
+                       <select required value={movForm.destId} onChange={e=>setMovForm({...movForm, destId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400 cursor-pointer">
                          <option value="">Select Destination...</option>
                          {warehouses.map(w => <option key={w.id} value={w.id} disabled={movForm.sourceId === String(w.id)}>{w.name}</option>)}
                        </select>
@@ -1139,44 +1140,42 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
 
-              {/* TRANSACTION QUANTITY TABLE */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mt-2">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Product</th>
-                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Mst Stock</th>
-                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Hub Stock</th>
-                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">{txModal.type === 'ADJUST' ? 'New True Master Qty' : 'Movement Qty'}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {txModal.products.map(p => {
-                      const totalHubStock = hubStock.filter(h => 
-                        (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
-                        warehouses.some(w => String(w.id) === String(h.warehouseId))
-                      ).reduce((acc, val) => acc + val.quantity, 0);
-                      return (
-                        <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4"><div className="font-black text-sm uppercase text-slate-900">{p.name}</div><div className="text-[10px] font-medium text-slate-500">{p.sku}</div></td>
-                          <td className="p-4 text-sm font-bold text-slate-700">{p.currentStock}</td>
-                          <td className="p-4 text-sm font-bold text-slate-700">{totalHubStock}</td>
-                          <td className="p-4">
-                            <input 
-                              type="number" 
-                              min={txModal.type === 'ADJUST' ? "0" : "1"} 
-                              required
-                              placeholder={txModal.type === 'ADJUST' ? String(p.currentStock) : "Enter Qty..."} 
-                              value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} 
-                              onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} 
-                              className={`w-full max-w-[150px] px-4 py-2 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500 text-lg' : 'border-slate-300 focus:ring-blue-500'}`} 
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              {/* DEDICATED PRODUCT QUANTITY CARDS */}
+              <div className="flex flex-col gap-3">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  {txModal.type === 'ADJUST' ? 'Specify True Physical Counts' : 'Quantities To Transact'}
+                </div>
+                {txModal.products.map(p => {
+                  const totalHubStock = hubStock.filter(h => 
+                    (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
+                    warehouses.some(w => String(w.id) === String(h.warehouseId))
+                  ).reduce((acc, val) => acc + val.quantity, 0);
+
+                  return (
+                    <div key={p.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div>
+                        <div className="text-base font-black uppercase text-slate-900">{p.name}</div>
+                        <div className="text-xs font-semibold text-slate-500 mt-0.5">
+                          {p.sku} | Current Master: <strong className="text-blue-600">{p.currentStock} {p.unit}</strong> | Total Hubs: <strong className="text-slate-700">{totalHubStock} {p.unit}</strong>
+                        </div>
+                      </div>
+                      <div className="w-full sm:w-auto flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          {txModal.type === 'ADJUST' ? 'New True Master Stock' : `Quantity to ${txModal.type}`}
+                        </label>
+                        <input 
+                          type="number" 
+                          min={txModal.type === 'ADJUST' ? "0" : "1"} 
+                          required
+                          placeholder="Enter quantity..." 
+                          value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} 
+                          onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} 
+                          className={`px-4 py-2.5 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm w-full sm:w-44 text-lg ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500' : 'border-slate-300 focus:ring-blue-500 bg-slate-50 focus:bg-white'}`} 
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 border-t border-slate-200 pt-6 mt-2">
