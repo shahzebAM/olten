@@ -32,6 +32,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
   const [warehouseSearchQuery, setWarehouseSearchQuery] = useState('');
 
+  // --- MODAL CONTROLLERS ---
+  const [activeWarehouseModal, setActiveWarehouseModal] = useState<'REGISTER' | 'ADJUST' | 'TRANSFER' | null>(null);
+
   const [ledgerFilterType, setLedgerFilterType] = useState('ALL');
   const [ledgerStartDate, setLedgerStartDate] = useState('');
   const [ledgerEndDate, setLedgerEndDate] = useState('');
@@ -237,6 +240,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     await processDirectWarehouseAdjustment(directStockForm.warehouseId, prod, Number(directStockForm.quantity), 'Adjusted via Warehouse module');
     setDirectStockForm({ warehouseId: '', productId: '', quantity: '' });
     setProductSearchTerm('');
+    setActiveWarehouseModal(null);
   };
 
   const handleHubTransferSubmit = async (e: React.FormEvent) => {
@@ -280,6 +284,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
        showToast("Transfer successful.", "success");
        setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' });
        setHubTransferSearch('');
+       setActiveWarehouseModal(null);
        fetchAllData();
     } catch (e) {
        showToast("Transfer failed.", "error");
@@ -321,6 +326,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         showToast(`Warehouse ${editingWarehouseId ? 'updated' : 'registered'}.`, "success");
         setWarehouseForm({ name: '', address: '', status: 'Active' });
         setEditingWarehouseId(null);
+        setActiveWarehouseModal(null);
         fetchAllData();
       }
     } catch (e) { showToast("Failed to process warehouse.", "error"); }
@@ -566,11 +572,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const displayedWarehouses = warehouses.filter(w => {
     if (!warehouseSearchQuery) return true;
     const q = warehouseSearchQuery.toLowerCase();
-    
-    // Check if the warehouse name or address matches
     if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
     
-    // Otherwise, check if ANY product stored in this warehouse matches the search
     const wStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
     const hasMatchingStock = wStocks.some(stk => {
        const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
@@ -846,6 +849,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {activeView === 'warehouses' && (
             <div className="max-w-7xl mx-auto space-y-8">
               
+              {/* SEARCH & WIPE HEADER */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-4">
                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouse Control Center</h2>
                  <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -865,140 +869,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                  </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* WAREHOUSE REGISTRATION / EDIT FORM */}
-                {isAuthorizedAdmin ? (
-                  <form onSubmit={handleWarehouseSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
-                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                      <h3 className="font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse' : 'Register Warehouse'}</h3>
-                      {editingWarehouseId && <button type="button" onClick={() => { setEditingWarehouseId(null); setWarehouseForm({ name: '', address: '', status: 'Active' }); }} className="text-[10px] font-bold uppercase text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded-md">Cancel</button>}
-                    </div>
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white transition-all" placeholder="e.g. Main Depot" /></div>
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label><input required type="text" value={warehouseForm.address} onChange={e=>setWarehouseForm({...warehouseForm, address: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white transition-all" placeholder="Complete address..." /></div>
-                    <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update' : 'Save'}</button>
-                  </form>
-                ) : (
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 h-max flex flex-col gap-3 justify-center items-center text-center">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Admin Clearance Required to Manage Hubs</p>
-                  </div>
+              {/* MINI TABS / ACTION BUTTONS */}
+              <div className="flex flex-wrap gap-3">
+                {isAuthorizedAdmin && (
+                  <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-slate-800 transition-colors">+ Register Warehouse</button>
                 )}
-
-                {/* DIRECT ADD / ADJUST STOCK TO WAREHOUSE FORM */}
-                <form onSubmit={handleDirectStockSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
-                  <h3 className="font-black text-slate-900 uppercase tracking-tight border-b border-slate-100 pb-4">Adjust Hub Stock</h3>
-                  
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
-                    <select required value={directStockForm.warehouseId} onChange={e=>setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all cursor-pointer">
-                      <option value="">Select Warehouse...</option>
-                      {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5 relative">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
-                    <input 
-                      type="text" 
-                      placeholder="Type name or SKU..." 
-                      value={productSearchTerm} 
-                      onChange={e => { setProductSearchTerm(e.target.value); setIsProductDropdownOpen(true); }}
-                      onFocus={() => setIsProductDropdownOpen(true)}
-                      className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all" 
-                    />
-                    {isProductDropdownOpen && (
-                      <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
-                        {filteredProductsForDropdown.length === 0 ? (
-                          <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
-                        ) : (
-                          filteredProductsForDropdown.map(p => (
-                            <div 
-                              key={p.id} 
-                              onClick={() => { setDirectStockForm({...directStockForm, productId: String(p.id)}); setProductSearchTerm(`${p.name} (${p.sku})`); setIsProductDropdownOpen(false); }}
-                              className="p-3 hover:bg-slate-50 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors"
-                            >
-                              <span className="text-slate-700">{p.name}</span>
-                              <span className="text-slate-400 font-mono bg-slate-100 px-2 py-1 rounded">[{p.sku}]</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Adjust Qty (-/+)</label>
-                    <input required type="number" placeholder="e.g. 50 or -10" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-indigo-200 rounded-xl text-sm font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-indigo-900" />
-                  </div>
-
-                  <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
-                </form>
-
-                {/* TRANSFER BETWEEN HUBS FORM */}
-                <form onSubmit={handleHubTransferSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
-                  <h3 className="font-black text-slate-900 uppercase tracking-tight border-b border-slate-100 pb-4">Transfer Between Hubs</h3>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">From (Source)</label>
-                      <select required value={hubTransferForm.sourceId} onChange={e=>setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all cursor-pointer">
-                        <option value="">Source...</option>
-                        {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">To (Dest)</label>
-                      <select required value={hubTransferForm.destId} onChange={e=>setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all cursor-pointer">
-                        <option value="">Dest...</option>
-                        {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5 relative">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
-                    <input 
-                      type="text" 
-                      placeholder="Type name or SKU..." 
-                      value={hubTransferSearch} 
-                      onChange={e => { setHubTransferSearch(e.target.value); setIsHubDropdownOpen(true); }}
-                      onFocus={() => setIsHubDropdownOpen(true)}
-                      className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all" 
-                    />
-                    {isHubDropdownOpen && (
-                      <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
-                        {filteredProductsForHubDropdown.length === 0 ? (
-                          <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
-                        ) : (
-                          filteredProductsForHubDropdown.map(p => {
-                             const curStk = hubStock.find(h => String(h.warehouseId) === hubTransferForm.sourceId && (String(h.sku) === String(p.sku) || Number(h.productId) === Number(p.id)))?.quantity || 0;
-                             return (
-                              <div 
-                                key={p.id} 
-                                onClick={() => { setHubTransferForm({...hubTransferForm, productId: String(p.id)}); setHubTransferSearch(`${p.name} (${p.sku})`); setIsHubDropdownOpen(false); }}
-                                className={`p-3 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors ${curStk > 0 ? 'hover:bg-amber-50 text-slate-700' : 'bg-slate-50 text-slate-400 opacity-50'}`}
-                              >
-                                <span>{p.name}</span>
-                                <span className="font-mono bg-slate-100 px-2 py-1 rounded">Stock: {curStk}</span>
-                              </div>
-                            )
-                          })
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Transfer Qty</label>
-                    <input required type="number" min="1" placeholder="e.g. 50" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-amber-200 rounded-xl text-sm font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-amber-900" />
-                  </div>
-
-                  <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
-                </form>
-
+                <button onClick={() => setActiveWarehouseModal('ADJUST')} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-indigo-700 transition-colors">Adjust Hub Stock</button>
+                <button onClick={() => setActiveWarehouseModal('TRANSFER')} className="px-5 py-2.5 bg-amber-500 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-amber-600 transition-colors">Transfer Between Hubs</button>
               </div>
 
-              {/* WAREHOUSE DIRECTORY TABLE */}
+              {/* WAREHOUSE DIRECTORY TABLE (MOVED TO TOP) */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[800px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
@@ -1013,7 +893,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     {displayedWarehouses.map(w => {
                       const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
                       
-                      // Secondary filter to only show specific items inside the warehouse row if the user is searching for a product
                       const filteredWhStocks = whStocks.filter(stk => {
                         if (!warehouseSearchQuery) return true;
                         const q = warehouseSearchQuery.toLowerCase();
@@ -1056,7 +935,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           {isAuthorizedAdmin && (
                             <td className="py-5 px-5 text-right align-top">
                               <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => { setEditingWarehouseId(w.id); setWarehouseForm({ name: w.name, address: w.address, status: w.status }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors">Edit</button>
+                                <button onClick={() => { setEditingWarehouseId(w.id); setWarehouseForm({ name: w.name, address: w.address, status: w.status }); setActiveWarehouseModal('REGISTER'); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors">Edit</button>
                                 <button onClick={() => handleWarehouseDelete(w.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors">Delete</button>
                               </div>
                             </td>
@@ -1070,6 +949,160 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   </tbody>
                 </table>
               </div>
+
+              {/* WAREHOUSE MODALS */}
+              
+              {/* 1. REGISTER WAREHOUSE MODAL */}
+              {activeWarehouseModal === 'REGISTER' && isAuthorizedAdmin && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                      <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse' : 'Register Warehouse'}</h2>
+                      <button onClick={() => { setActiveWarehouseModal(null); setEditingWarehouseId(null); }} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <form onSubmit={handleWarehouseSubmit} className="p-8 flex flex-col gap-5">
+                      <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="e.g. Main Depot" /></div>
+                      <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label><input required type="text" value={warehouseForm.address} onChange={e=>setWarehouseForm({...warehouseForm, address: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="Complete address..." /></div>
+                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update' : 'Save'}</button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. ADJUST HUB STOCK MODAL */}
+              {activeWarehouseModal === 'ADJUST' && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-500 text-white">
+                      <h2 className="text-xl font-black uppercase tracking-tight">Adjust Hub Stock</h2>
+                      <button onClick={() => setActiveWarehouseModal(null)} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <form onSubmit={handleDirectStockSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
+                        <select required value={directStockForm.warehouseId} onChange={e=>setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-indigo-500 cursor-pointer">
+                          <option value="">Select Warehouse...</option>
+                          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 relative">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
+                        <input 
+                          type="text" 
+                          placeholder="Type name or SKU..." 
+                          value={productSearchTerm} 
+                          onChange={e => { setProductSearchTerm(e.target.value); setIsProductDropdownOpen(true); }}
+                          onFocus={() => setIsProductDropdownOpen(true)}
+                          className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-white shadow-sm focus:ring-2 focus:ring-indigo-500" 
+                        />
+                        {isProductDropdownOpen && (
+                          <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
+                            {filteredProductsForDropdown.length === 0 ? (
+                              <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
+                            ) : (
+                              filteredProductsForDropdown.map(p => (
+                                <div 
+                                  key={p.id} 
+                                  onClick={() => { setDirectStockForm({...directStockForm, productId: String(p.id)}); setProductSearchTerm(`${p.name} (${p.sku})`); setIsProductDropdownOpen(false); }}
+                                  className="p-3 hover:bg-slate-50 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors"
+                                >
+                                  <span className="text-slate-700">{p.name}</span>
+                                  <span className="text-slate-400 font-mono bg-slate-100 px-2 py-1 rounded">[{p.sku}]</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 mt-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Adjust Qty (-/+)</label>
+                        <input required type="number" placeholder="e.g. 50 or -10" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-indigo-200 rounded-xl text-sm font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 text-indigo-900 shadow-sm" />
+                      </div>
+
+                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. TRANSFER BETWEEN HUBS MODAL */}
+              {activeWarehouseModal === 'TRANSFER' && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+                    <div className="p-6 border-b border-white/10 flex justify-between items-center bg-amber-500 text-white">
+                      <h2 className="text-xl font-black uppercase tracking-tight">Transfer Between Hubs</h2>
+                      <button onClick={() => setActiveWarehouseModal(null)} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <form onSubmit={handleHubTransferSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">From (Source)</label>
+                          <select required value={hubTransferForm.sourceId} onChange={e=>setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500 cursor-pointer">
+                            <option value="">Source...</option>
+                            {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">To (Dest)</label>
+                          <select required value={hubTransferForm.destId} onChange={e=>setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500 cursor-pointer">
+                            <option value="">Dest...</option>
+                            {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 relative">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
+                        <input 
+                          type="text" 
+                          placeholder="Type name or SKU..." 
+                          value={hubTransferSearch} 
+                          onChange={e => { setHubTransferSearch(e.target.value); setIsHubDropdownOpen(true); }}
+                          onFocus={() => setIsHubDropdownOpen(true)}
+                          className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500" 
+                        />
+                        {isHubDropdownOpen && (
+                          <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
+                            {filteredProductsForHubDropdown.length === 0 ? (
+                              <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
+                            ) : (
+                              filteredProductsForHubDropdown.map(p => {
+                                 const curStk = hubStock.find(h => String(h.warehouseId) === hubTransferForm.sourceId && (String(h.sku) === String(p.sku) || Number(h.productId) === Number(p.id)))?.quantity || 0;
+                                 return (
+                                  <div 
+                                    key={p.id} 
+                                    onClick={() => { setHubTransferForm({...hubTransferForm, productId: String(p.id)}); setHubTransferSearch(`${p.name} (${p.sku})`); setIsHubDropdownOpen(false); }}
+                                    className={`p-3 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors ${curStk > 0 ? 'hover:bg-amber-50 text-slate-700' : 'bg-slate-50 text-slate-400 opacity-50'}`}
+                                  >
+                                    <span>{p.name}</span>
+                                    <span className="font-mono bg-slate-100 px-2 py-1 rounded">Stock: {curStk}</span>
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 mt-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Transfer Qty</label>
+                        <input required type="number" min="1" placeholder="e.g. 50" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-amber-200 rounded-xl text-sm font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 text-amber-900 shadow-sm" />
+                      </div>
+
+                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
