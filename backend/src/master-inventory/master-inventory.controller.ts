@@ -38,11 +38,11 @@ export class MasterInventoryController {
               productId: product.id,
               productName: product.name,
               sku: product.sku,
-              type: 'ADJUST', // Locked to ADJUST per your instructions
+              type: 'RECEIVE',
               quantity: parseInt(data.initialQuantity),
               previousStock: 0,
               newStock: parseInt(data.initialQuantity),
-              remarks: 'Initial Master Audit',
+              remarks: 'Initial System Entry (Master Stock)',
               user: data.username || 'System Admin',
               warehouseId: null, 
               employeeId: null,
@@ -66,6 +66,7 @@ export class MasterInventoryController {
 
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() data: any) {
+    // Strip all non-schema or immutable parameters to prevent Prisma validation crashes
     const { 
       id: _id, 
       username, 
@@ -131,12 +132,6 @@ export class MasterInventoryController {
       orderBy: { date: 'desc' },
       include: { warehouse: true, employee: true }
     });
-  }
-
-  // --- NEW: Single Row Reversal / Deletion Endpoint ---
-  @Delete('inventory-movements/:id')
-  async removeMovement(@Param('id') id: string) {
-    return this.prisma.inventoryMovement.delete({ where: { id } });
   }
 
   @Delete('inventory-movements/clear/:company')
