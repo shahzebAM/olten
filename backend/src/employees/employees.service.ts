@@ -14,12 +14,14 @@ export class EmployeesService {
   }
 
   async createEmployee(data: any) {
-    // Explicitly mapping fields to ensure the new loan parameters are safely written
+    // SECURITY FIX: Forces empty strings to NULL to prevent Unique Constraint crashes
+    const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
+
     return await prisma.employee.create({ 
       data: {
         employeeId: data.employeeId,
         firstName: data.firstName,
-        middleName: data.middleName,
+        middleName: sanitize(data.middleName),
         lastName: data.lastName,
         company: data.company,
         dateOfBirth: data.dateOfBirth,
@@ -27,14 +29,13 @@ export class EmployeesService {
         civilStatus: data.civilStatus,
         baseRate: data.baseRate,
         employmentStatus: data.employmentStatus,
-        tin: data.tin,
-        sssNumber: data.sssNumber,
-        philhealth: data.philhealth,
-        pagIbig: data.pagIbig,
-        bankAccount: data.bankAccount,
+        tin: sanitize(data.tin),
+        sssNumber: sanitize(data.sssNumber),
+        philhealth: sanitize(data.philhealth),
+        pagIbig: sanitize(data.pagIbig),
+        bankAccount: sanitize(data.bankAccount),
         cashAdvanceBalance: data.cashAdvanceBalance || 0,
         cashAdvanceInstallment: data.cashAdvanceInstallment || 0,
-        // --- NEW LOAN FIELDS ---
         loanBalance: data.loanBalance || 0,
         loanInstallment: data.loanInstallment || 0,
       } 
@@ -42,8 +43,18 @@ export class EmployeesService {
   }
 
   async updateEmployee(id: number, data: any) {
-    // Strips the 'id' field out of the data payload so Prisma doesn't throw an error
     const { id: _id, ...cleanData } = data;
+    
+    // SECURITY FIX: Strip out empty values on updates too
+    const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
+    
+    if (cleanData.tin !== undefined) cleanData.tin = sanitize(cleanData.tin);
+    if (cleanData.sssNumber !== undefined) cleanData.sssNumber = sanitize(cleanData.sssNumber);
+    if (cleanData.philhealth !== undefined) cleanData.philhealth = sanitize(cleanData.philhealth);
+    if (cleanData.pagIbig !== undefined) cleanData.pagIbig = sanitize(cleanData.pagIbig);
+    if (cleanData.bankAccount !== undefined) cleanData.bankAccount = sanitize(cleanData.bankAccount);
+    if (cleanData.middleName !== undefined) cleanData.middleName = sanitize(cleanData.middleName);
+
     return await prisma.employee.update({
       where: { id },
       data: cleanData,
@@ -95,7 +106,6 @@ export class EmployeesService {
         daysWorked: data.daysWorked,
         totalHours: data.totalHours,
         cashAdvance: data.cashAdvance || 0,
-        // --- NEW LOAN FIELD ---
         companyLoan: data.companyLoan || 0,
         sssDeduction: data.sssDeduction || 0,
         pagIbigDeduct: data.pagIbigDeduct || 0,
