@@ -33,7 +33,7 @@ export default function UserControlModule({
   const initialFormState = {
     username: '',
     password: '',
-    role: 'Admin', // CRITICAL FIX: Reverted to 'Admin' to match Auth system
+    role: 'Admin', // Rigid mapping to match the Auth DB schema
     status: 'Active',
     modules: {
       payroll: false,
@@ -116,15 +116,24 @@ export default function UserControlModule({
         : `${API_BASE_URL}/admins`;
       const method = editingUserId ? 'PATCH' : 'POST';
 
+      // CRITICAL FIX: Attach legacy module keys so the Login Gateway doesn't crash when parsing permissions
+      const safeModules = {
+        ...formData.modules,
+        inventory: formData.modules.master_inventory,
+        products: formData.modules.master_inventory,
+        warehouses: formData.modules.master_inventory
+      };
+
       const payload: any = {
         username: formData.username.trim(),
         role: formData.role,
         status: formData.status,
-        modules: formData.modules
+        modules: safeModules
       };
 
+      // Only attach password if typed, and aggressively trim accidental copy-paste spaces
       if (formData.password && formData.password.trim() !== '') {
-        payload.password = formData.password;
+        payload.password = formData.password.trim();
       }
 
       const res = await fetch(url, {
