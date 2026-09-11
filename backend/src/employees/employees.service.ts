@@ -14,13 +14,50 @@ export class EmployeesService {
   }
 
   async createEmployee(data: any) {
-    return await prisma.employee.create({ data });
+    // SECURITY FIX: Forces empty strings to NULL to prevent Unique Constraint crashes
+    const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
+
+    return await prisma.employee.create({ 
+      data: {
+        employeeId: data.employeeId,
+        firstName: data.firstName,
+        middleName: sanitize(data.middleName),
+        lastName: data.lastName,
+        company: data.company,
+        dateOfBirth: data.dateOfBirth,
+        address: data.address,
+        civilStatus: data.civilStatus,
+        baseRate: data.baseRate,
+        employmentStatus: data.employmentStatus,
+        tin: sanitize(data.tin),
+        sssNumber: sanitize(data.sssNumber),
+        philhealth: sanitize(data.philhealth),
+        pagIbig: sanitize(data.pagIbig),
+        bankAccount: sanitize(data.bankAccount),
+        cashAdvanceBalance: data.cashAdvanceBalance || 0,
+        cashAdvanceInstallment: data.cashAdvanceInstallment || 0,
+        loanBalance: data.loanBalance || 0,
+        loanInstallment: data.loanInstallment || 0,
+      } 
+    });
   }
 
   async updateEmployee(id: number, data: any) {
+    const { id: _id, ...cleanData } = data;
+    
+    // SECURITY FIX: Strip out empty values on updates too
+    const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
+    
+    if (cleanData.tin !== undefined) cleanData.tin = sanitize(cleanData.tin);
+    if (cleanData.sssNumber !== undefined) cleanData.sssNumber = sanitize(cleanData.sssNumber);
+    if (cleanData.philhealth !== undefined) cleanData.philhealth = sanitize(cleanData.philhealth);
+    if (cleanData.pagIbig !== undefined) cleanData.pagIbig = sanitize(cleanData.pagIbig);
+    if (cleanData.bankAccount !== undefined) cleanData.bankAccount = sanitize(cleanData.bankAccount);
+    if (cleanData.middleName !== undefined) cleanData.middleName = sanitize(cleanData.middleName);
+
     return await prisma.employee.update({
       where: { id },
-      data,
+      data: cleanData,
     });
   }
 
@@ -42,9 +79,10 @@ export class EmployeesService {
   }
 
   async updateAttendance(id: number, data: any) {
+    const { id: _id, ...cleanData } = data;
     return await prisma.attendance.update({
       where: { id },
-      data,
+      data: cleanData,
     });
   }
 
@@ -58,12 +96,32 @@ export class EmployeesService {
   // PAYROLLS
   // ==========================================
   async getPayrolls() {
-    // Note: Change 'payroll' to 'payrollRecord' if your prisma schema uses that name
     return await prisma.payroll.findMany(); 
   }
 
   async createPayroll(data: any) {
-    return await prisma.payroll.create({ data });
+    return await prisma.payroll.create({ 
+      data: {
+        employeeId: data.employeeId,
+        daysWorked: data.daysWorked,
+        totalHours: data.totalHours,
+        cashAdvance: data.cashAdvance || 0,
+        companyLoan: data.companyLoan || 0,
+        sssDeduction: data.sssDeduction || 0,
+        pagIbigDeduct: data.pagIbigDeduct || 0,
+        philhealthDeduct: data.philhealthDeduct || 0,
+        tax: data.tax || 0,
+        grossPay: data.grossPay,
+        netPay: data.netPay,
+        pagIbigLoan: data.pagIbigLoan || 0,
+        pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
+        sssProvident: data.sssProvident || 0,
+        sssSalaryLoan: data.sssSalaryLoan || 0,
+        sssCalamityLoan: data.sssCalamityLoan || 0,
+        pagIbigCalamity: data.pagIbigCalamity || 0,
+        pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+      } 
+    });
   }
 
   async deletePayroll(id: number) {
@@ -78,7 +136,6 @@ export class EmployeesService {
   async getSettings() {
     let settings = await prisma.settings.findFirst();
     
-    // If database is empty, create a default setting row
     if (!settings) {
       settings = await prisma.settings.create({
         data: { shiftStart: "08:00", shiftEnd: "17:00" }
@@ -90,7 +147,6 @@ export class EmployeesService {
   async updateSettings(data: any) {
     const existing = await prisma.settings.findFirst();
     
-    // Upsert logic: Update if exists, Create if it doesn't
     if (existing) {
       return await prisma.settings.update({
         where: { id: existing.id },
