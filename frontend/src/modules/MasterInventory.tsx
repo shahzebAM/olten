@@ -97,6 +97,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setTxModal({ isOpen: true, products: [product], type });
     setAllocations({}); setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
     setTransferForm({ source: '', destination: '', quantity: '' });
+    setAdjustQty(product.currentStock); // Pre-fill adjust form with current master stock
   };
 
   const openBulkTx = (type: any) => {
@@ -153,8 +154,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const handleBulkDelete = () => {
     if (!window.confirm(`Permanently delete ${selectedProductIds.length} items?`)) return;
-    const prodsToDelete = products.filter(p => selectedProductIds.includes(p.id));
-    
     setProducts((prev: Product[]) => prev.filter(p => !selectedProductIds.includes(p.id)));
     
     Promise.all(selectedProductIds.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })))
@@ -198,7 +197,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     try {
       await Promise.all([
         fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: warehouseId, productId: prod.id, sku: prod.sku, quantity: deltaQty }) }),
-        // FORCE THE TYPE TO 'ADJUST' IN THE LEDGER
         fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: absQty, previousStock: currentHubStock, newStock: currentHubStock + deltaQty, reference: 'Direct Hub Adjustment', remarks: remarks, user: loginUsername, company: selectedCompany, warehouseId: warehouseId }) })
       ]);
       showToast("Warehouse stock successfully adjusted.", "success");
@@ -273,6 +271,19 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     finally { setIsProcessing(false); }
   };
 
+  const handleClearAllHubStocks = async () => {
+    if (!window.confirm("CRITICAL WARNING: This will permanently wipe ALL stock quantities across ALL warehouses. Your Master/Office Stock will NOT be touched. Proceed?")) return;
+    setIsProcessing(true);
+    try {
+      await fetch(`${API_BASE_URL}/warehouse-stock/clear/${selectedCompany}`, { method: 'DELETE' });
+      showToast("All hub stocks wiped successfully.", "success");
+      fetchAllData();
+    } catch (e) { 
+      showToast("Failed to clear hub stocks.", "error"); 
+      fetchAllData();
+    } finally { setIsProcessing(false); }
+  };
+
   const executeTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (txModal.products.length === 0) return;
@@ -310,7 +321,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           const dId = isBulk ? bulkForm.destId : transferForm.destination;
           const q = Number(isBulk ? bulkQtys[prod.id] : transferForm.quantity) || 0;
 
-          if (!sId || !dId || sId === dId) throw new Error("Source and Destination must be valid and distinct.");
+          if (!sId || !dId) throw new Error("Source and Destination must both be selected.");
+          if (sId === dId) throw new Error("A location cannot transfer or return stock to itself.");
           if (q > 0) movementsToProcess.push({ source: sId, dest: dId, qty: q });
         } else {
           const isIssue = txModal.type === 'ISSUE';
@@ -634,6 +646,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <button onClick={() => openSingleTx(p, 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors">Ret</button>
                             <button onClick={() => openSingleTx(p, 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors">Iss</button>
                             <button onClick={() => openSingleTx(p, 'TRANSFER')} className="px-2.5 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-bold uppercase hover:bg-amber-100 transition-colors">Trns</button>
+                            <button onClick={() => openSingleTx(p, 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors">Adj</button>
                             <button onClick={() => { setProductForm({ ...p, previousImageUrl: globalImageVault[p.sku] || p.imageUrl || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
                             {isAuthorizedAdmin && (
                               <button onClick={() => handleProductDelete(p.id)} className="px-2.5 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-50 transition-colors">Del</button>
@@ -728,6 +741,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {/* VIEW: WAREHOUSES */}
           {activeView === 'warehouses' && (
             <div className="max-w-7xl mx-auto space-y-8">
+              {isAuthorizedAdmin && (
+                <div className="flex justify-end mb-[-1rem]">
+                   <button onClick={handleClearAllHubStocks} disabled={isProcessing} className="px-5 py-2.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold uppercase text-xs hover:bg-rose-100 transition-colors disabled:opacity-50">Wipe All Hub Stocks</button>
+                </div>
+              )}
+              
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 
                 {/* WAREHOUSE REGISTRATION / EDIT FORM */}
@@ -966,7 +985,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       {txModal.isOpen && txModal.products.length > 0 && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden ${txModal.products.length > 1 ? 'max-w-4xl' : 'max-w-lg'}`}>
-            <div className={`p-6 border-b border-white/10 flex justify-between items-center ${txModal.type === 'RECEIVE' ? 'bg-emerald-500 text-white' : txModal.type === 'RETURN' ? 'bg-sky-500 text-white' : txModal.type === 'ISSUE' ? 'bg-rose-500 text-white' : txModal.type === 'TRANSFER' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-900'}`}>
+            <div className={`p-6 border-b border-white/10 flex justify-between items-center ${txModal.type === 'RECEIVE' ? 'bg-emerald-500 text-white' : txModal.type === 'RETURN' ? 'bg-sky-500 text-white' : txModal.type === 'ISSUE' ? 'bg-rose-500 text-white' : txModal.type === 'TRANSFER' ? 'bg-amber-500 text-white' : 'bg-indigo-500 text-white'}`}>
               <h2 className="text-xl font-black uppercase tracking-tight">{txModal.type} BATCH ({txModal.products.length} Items)</h2>
               <button onClick={() => setTxModal({ isOpen: false, products: [], type: 'RECEIVE' })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -1093,7 +1112,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       })}
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-amber-700">True Physical Count (Master/Office Stock Only)</label><input type="number" required min="0" value={adjustQty} onChange={e=>setAdjustQty(e.target.value === '' ? '' : Number(e.target.value))} className="px-5 py-4 border border-amber-300 rounded-xl text-xl font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 text-amber-900 shadow-sm" /></div>
+                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">True Physical Count (Master/Office Stock Only)</label><input type="number" required min="0" value={adjustQty} onChange={e=>setAdjustQty(e.target.value === '' ? '' : Number(e.target.value))} className="px-5 py-4 border border-indigo-300 rounded-xl text-xl font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 text-indigo-900 shadow-sm" /></div>
                   )}
                 </>
               )}
