@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
 import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -95,11 +96,20 @@ export class EmployeesController {
 
   @Post('admins')
   async createAdmin(@Body() data: any) {
+    if (data.password) {
+      const salt = await bcrypt.genSalt(10);
+      data.password = await bcrypt.hash(data.password, salt);
+    }
     return await prisma.admin.create({ data });
   }
 
   @Patch('admins/:id')
   async updateAdmin(@Param('id') id: string, @Body() data: any) {
+    if (data.password) {
+      const salt = await bcrypt.genSalt(10);
+      data.password = await bcrypt.hash(data.password, salt);
+    }
+    
     return await prisma.admin.update({
       where: { id: Number(id) },
       data
