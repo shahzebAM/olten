@@ -31,7 +31,6 @@ export class MasterInventoryController {
           }
         });
 
-        // ONLY apply initial stock to the Master Office Ledger
         if (data.initialQuantity && parseInt(data.initialQuantity) > 0) {
           await tx.inventoryMovement.create({
             data: {
@@ -45,7 +44,7 @@ export class MasterInventoryController {
               newStock: parseInt(data.initialQuantity),
               remarks: 'Initial System Entry (Master Stock)',
               user: data.username || 'System Admin',
-              warehouseId: null, // STRICTLY MASTER STOCK - NO HUB INTERFERENCE
+              warehouseId: null, 
               employeeId: null,
               batchNumber: data.batchNumber || null,
               expirationDate: data.expirationDate ? new Date(data.expirationDate).toISOString() : null,
@@ -152,18 +151,13 @@ export class MasterInventoryController {
   async removeWarehouse(@Param('id') id: string) {
     const wId = parseInt(id);
     return await this.prisma.$transaction(async (tx) => {
-      // 1. Release ledger movements to preserve audit history
       await tx.inventoryMovement.updateMany({
         where: { warehouseId: wId },
         data: { warehouseId: null, remarks: 'Facility Deleted (Archived Record)' }
       });
-
-      // 2. Instantly wipe all stocks associated with this warehouse
       await tx.warehouseStock.deleteMany({
-        where: { warehouseId: id } // Intentionally string to match Prisma schema
+        where: { warehouseId: id } 
       });
-
-      // 3. Finally, delete the warehouse itself
       return tx.warehouse.delete({ where: { id: wId } });
     });
   }
@@ -203,5 +197,11 @@ export class MasterInventoryController {
   async getStock(@Query('company') company: string) {
     if (!company) return [];
     return this.prisma.warehouseStock.findMany({ where: { company } });
+  }
+
+  // --- NEW: Wipe all hub stocks for a company ---
+  @Delete('warehouse-stock/clear/:company')
+  async clearAllHubStocks(@Param('company') company: string) {
+    return this.prisma.warehouseStock.deleteMany({ where: { company } });
   }
 }
