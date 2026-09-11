@@ -33,6 +33,8 @@ model Employee {
   attendances            Attendance[]
   payrolls               Payroll[]
   inventoryMovements     InventoryMovement[]  // Ties employee to stock audits
+  loanBalance            Float    @default(0)
+  loanInstallment        Float    @default(0)
 }
 
 model Admin {

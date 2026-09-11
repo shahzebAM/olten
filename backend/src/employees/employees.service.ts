@@ -14,13 +14,39 @@ export class EmployeesService {
   }
 
   async createEmployee(data: any) {
-    return await prisma.employee.create({ data });
+    // Explicitly mapping fields to ensure the new loan parameters are safely written
+    return await prisma.employee.create({ 
+      data: {
+        employeeId: data.employeeId,
+        firstName: data.firstName,
+        middleName: data.middleName,
+        lastName: data.lastName,
+        company: data.company,
+        dateOfBirth: data.dateOfBirth,
+        address: data.address,
+        civilStatus: data.civilStatus,
+        baseRate: data.baseRate,
+        employmentStatus: data.employmentStatus,
+        tin: data.tin,
+        sssNumber: data.sssNumber,
+        philhealth: data.philhealth,
+        pagIbig: data.pagIbig,
+        bankAccount: data.bankAccount,
+        cashAdvanceBalance: data.cashAdvanceBalance || 0,
+        cashAdvanceInstallment: data.cashAdvanceInstallment || 0,
+        // --- NEW LOAN FIELDS ---
+        loanBalance: data.loanBalance || 0,
+        loanInstallment: data.loanInstallment || 0,
+      } 
+    });
   }
 
   async updateEmployee(id: number, data: any) {
+    // Strips the 'id' field out of the data payload so Prisma doesn't throw an error
+    const { id: _id, ...cleanData } = data;
     return await prisma.employee.update({
       where: { id },
-      data,
+      data: cleanData,
     });
   }
 
@@ -42,9 +68,10 @@ export class EmployeesService {
   }
 
   async updateAttendance(id: number, data: any) {
+    const { id: _id, ...cleanData } = data;
     return await prisma.attendance.update({
       where: { id },
-      data,
+      data: cleanData,
     });
   }
 
@@ -58,12 +85,33 @@ export class EmployeesService {
   // PAYROLLS
   // ==========================================
   async getPayrolls() {
-    // Note: Change 'payroll' to 'payrollRecord' if your prisma schema uses that name
     return await prisma.payroll.findMany(); 
   }
 
   async createPayroll(data: any) {
-    return await prisma.payroll.create({ data });
+    return await prisma.payroll.create({ 
+      data: {
+        employeeId: data.employeeId,
+        daysWorked: data.daysWorked,
+        totalHours: data.totalHours,
+        cashAdvance: data.cashAdvance || 0,
+        // --- NEW LOAN FIELD ---
+        companyLoan: data.companyLoan || 0,
+        sssDeduction: data.sssDeduction || 0,
+        pagIbigDeduct: data.pagIbigDeduct || 0,
+        philhealthDeduct: data.philhealthDeduct || 0,
+        tax: data.tax || 0,
+        grossPay: data.grossPay,
+        netPay: data.netPay,
+        pagIbigLoan: data.pagIbigLoan || 0,
+        pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
+        sssProvident: data.sssProvident || 0,
+        sssSalaryLoan: data.sssSalaryLoan || 0,
+        sssCalamityLoan: data.sssCalamityLoan || 0,
+        pagIbigCalamity: data.pagIbigCalamity || 0,
+        pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+      } 
+    });
   }
 
   async deletePayroll(id: number) {
@@ -78,7 +126,6 @@ export class EmployeesService {
   async getSettings() {
     let settings = await prisma.settings.findFirst();
     
-    // If database is empty, create a default setting row
     if (!settings) {
       settings = await prisma.settings.create({
         data: { shiftStart: "08:00", shiftEnd: "17:00" }
@@ -90,7 +137,6 @@ export class EmployeesService {
   async updateSettings(data: any) {
     const existing = await prisma.settings.findFirst();
     
-    // Upsert logic: Update if exists, Create if it doesn't
     if (existing) {
       return await prisma.settings.update({
         where: { id: existing.id },
