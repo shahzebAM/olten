@@ -153,6 +153,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const handleBulkDelete = () => {
     if (!window.confirm(`Permanently delete ${selectedProductIds.length} items?`)) return;
+    const prodsToDelete = products.filter(p => selectedProductIds.includes(p.id));
+    
     setProducts((prev: Product[]) => prev.filter(p => !selectedProductIds.includes(p.id)));
     
     Promise.all(selectedProductIds.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })))
@@ -196,7 +198,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     try {
       await Promise.all([
         fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: warehouseId, productId: prod.id, sku: prod.sku, quantity: deltaQty }) }),
-        fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: isAdd ? 'RECEIVE' : 'ISSUE', quantity: absQty, previousStock: prod.currentStock, newStock: prod.currentStock, reference: 'Direct Hub Adjustment', remarks: remarks, user: loginUsername, company: selectedCompany, warehouseId: warehouseId }) })
+        // FORCE THE TYPE TO 'ADJUST' IN THE LEDGER
+        fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: absQty, previousStock: currentHubStock, newStock: currentHubStock + deltaQty, reference: 'Direct Hub Adjustment', remarks: remarks, user: loginUsername, company: selectedCompany, warehouseId: warehouseId }) })
       ]);
       showToast("Warehouse stock successfully adjusted.", "success");
       fetchAllData();
@@ -403,7 +406,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             .company-name { font-size: 36px; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; margin: 0; }
             .doc-type { font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 3px; margin-top: 4px; }
             .receipt-title { font-size: 28px; font-weight: 900; margin: 0; text-align: right; text-transform: uppercase; letter-spacing: 1px; 
-                             color: ${type === 'RECEIVE' ? '#059669' : type === 'RETURN' ? '#0284c7' : type === 'ISSUE' || type === 'DELETE' ? '#e11d48' : '#d97706'}; }
+                             color: ${type === 'RECEIVE' ? '#059669' : type === 'RETURN' ? '#0284c7' : type === 'ISSUE' || type === 'DELETE' ? '#e11d48' : type === 'ADJUST' ? '#4f46e5' : '#d97706'}; }
             .tx-details { font-size: 13px; color: #64748b; text-align: right; font-weight: 600; margin-top: 6px; }
             .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 40px; background: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; }
             .info-block span { display: block; font-size: 11px; text-transform: uppercase; font-weight: 900; color: #94a3b8; margin-bottom: 6px; letter-spacing: 1px; }
@@ -698,12 +701,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <div className="text-[10px] font-bold text-slate-500 mt-0.5">{m.sku}</div>
                         </td>
                         <td className="py-4 px-5">
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase ${m.type === 'RECEIVE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : m.type === 'RETURN' ? 'bg-sky-50 text-sky-700 border border-sky-200' : m.type === 'ISSUE' ? 'bg-rose-50 text-rose-700 border border-rose-200' : m.type === 'TRANSFER' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>{m.type}</span>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase ${m.type === 'RECEIVE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : m.type === 'RETURN' ? 'bg-sky-50 text-sky-700 border border-sky-200' : m.type === 'ISSUE' ? 'bg-rose-50 text-rose-700 border border-rose-200' : m.type === 'TRANSFER' ? 'bg-amber-50 text-amber-700 border border-amber-200' : m.type === 'ADJUST' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>{m.type}</span>
                           <span className="ml-3 font-black text-slate-900">{m.quantity}</span>
                         </td>
                         <td className="py-4 px-5">
                           <div className="text-xs font-bold text-slate-900">{m.warehouse?.name || (m.type === 'TRANSFER' || m.type === 'RETURN' ? 'Transfer / Return Log' : 'Master Adjustment')}</div>
-                          <div className="text-[10px] font-medium text-slate-500 mt-1">Ref: {m.reference || 'N/A'} | User: {m.user}</div>
+                          <div className="text-[10px] font-medium text-slate-500 mt-1">Ref: {m.reference || 'N/A'} | User: {m.user} | Bal: {m.previousStock} → {m.newStock}</div>
                           {(m.batchNumber || m.expirationDate) && (
                             <div className="text-[10px] font-bold text-blue-600 mt-1 uppercase">Batch: {m.batchNumber || '-'} | Exp: {m.expirationDate?.split('T')[0] || '-'}</div>
                           )}
