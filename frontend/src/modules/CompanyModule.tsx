@@ -186,33 +186,22 @@ export default function CompanyModule({
             </div>
           </button>
         )}
-        {hasProducts && (
-          <button onClick={() => onSelectModule('products')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-purple-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+
+        {/* UNIFIED MASTER INVENTORY MODULE */}
+        {(hasProducts || hasInventory || hasWarehouses) && (
+          <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
-              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-purple-950 transition-colors group-hover:text-purple-700">Product Manager</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Master database of inventory items.</p>
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-blue-950 transition-colors group-hover:text-blue-700">Master Inventory</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Consolidated catalog, stock ledger, and facilities.</p>
             </div>
           </button>
         )}
-        {hasInventory && (
-          <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-sky-950 transition-colors group-hover:text-sky-700">Inventory Control</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Track physical stock, receipts, and issuing.</p>
-            </div>
-          </button>
-        )}
-        {hasWarehouses && (
-          <button onClick={() => onSelectModule('warehouses')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-teal-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-teal-950 transition-colors group-hover:text-teal-700">Multi-Warehouse</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage hubs and location-based routing.</p>
-            </div>
-          </button>
-        )}
+
         {hasPayroll && (
           <button onClick={() => onSelectModule('payroll')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
@@ -222,6 +211,7 @@ export default function CompanyModule({
             </div>
           </button>
         )}
+        
         {hasAiDocs && (
           <button onClick={() => onSelectModule('ai_docs')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-rose-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>

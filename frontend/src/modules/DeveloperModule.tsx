@@ -1,80 +1,164 @@
 import React, { useState } from 'react';
 
-export default function DeveloperModule({ onLogout, globalModules, setGlobalModules }: any) {
-  const [toast, setToast] = useState<{ message: string } | null>(null);
+interface DeveloperModuleProps {
+  onLogout: () => void;
+  globalModules: Record<string, boolean>;
+  setGlobalModules: React.Dispatch<React.SetStateAction<any>>;
+}
 
-  const toggleModule = (key: string) => {
-    const updated = { ...globalModules, [key]: !globalModules[key] };
-    setGlobalModules(updated);
-    localStorage.setItem('dev_global_modules', JSON.stringify(updated));
-    setToast({ message: `System Module: ${key.toUpperCase()} is now ${updated[key] ? 'ENABLED' : 'DISABLED'}.` });
+export default function DeveloperModule({ onLogout, globalModules, setGlobalModules }: DeveloperModuleProps) {
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showNotification = (msg: string) => {
+    setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
 
-  const systemModules = [
-    { id: 'sales', name: 'Sales & CRM Engine', desc: 'Customer and Sales Management', icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z', color: 'text-emerald-600', bg: 'bg-emerald-100', border: 'border-emerald-200' },
-    { id: 'purchasing', name: 'Procurement Engine', desc: 'Supplier and PO Management', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z', color: 'text-amber-600', bg: 'bg-amber-100', border: 'border-amber-200' },
-    { id: 'products', name: 'Product Manager', desc: 'Master SKUs and Pricing', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', color: 'text-purple-600', bg: 'bg-purple-100', border: 'border-purple-200' },
-    { id: 'inventory', name: 'Inventory Control', desc: 'Stock Ledger and Adjustments', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', color: 'text-sky-600', bg: 'bg-sky-100', border: 'border-sky-200' },
-    { id: 'warehouses', name: 'Multi-Warehouse', desc: 'Hub Routing and Transfers', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', color: 'text-teal-600', bg: 'bg-teal-100', border: 'border-teal-200' },
-    { id: 'payroll', name: 'Payroll Engine', desc: 'Salaries and Deductions', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z', color: 'text-indigo-600', bg: 'bg-indigo-100', border: 'border-indigo-200' },
-    { id: 'ai_docs', name: 'AI Docs Engine', desc: 'Automated Document Generation', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', color: 'text-rose-600', bg: 'bg-rose-100', border: 'border-rose-200' }
+  const handleToggle = (moduleKey: string) => {
+    setGlobalModules((prev: any) => {
+      let updated = { ...prev };
+      
+      // If toggling Master Inventory, synchronize all three underlying sub-modules
+      if (moduleKey === 'master_inventory') {
+        const nextState = !prev.inventory;
+        updated.inventory = nextState;
+        updated.products = nextState;
+        updated.warehouses = nextState;
+      } else {
+        updated[moduleKey] = !prev[moduleKey];
+      }
+
+      localStorage.setItem('dev_global_modules', JSON.stringify(updated));
+      return updated;
+    });
+
+    showNotification(`Updated ${moduleKey.replace('_', ' ').toUpperCase()} status`);
+  };
+
+  const handleResetAll = () => {
+    const defaults = {
+      payroll: true,
+      ai_docs: true,
+      products: true,
+      inventory: true,
+      warehouses: true,
+      purchasing: true,
+      sales: true
+    };
+    setGlobalModules(defaults);
+    localStorage.setItem('dev_global_modules', JSON.stringify(defaults));
+    showNotification("All system modules restored to Active.");
+  };
+
+  const moduleDefinitions = [
+    {
+      key: 'master_inventory',
+      label: 'Master Inventory Control',
+      description: 'Consolidated master catalog, stock ledger audit, and warehouse facilities.',
+      isActive: Boolean(globalModules.inventory && globalModules.products)
+    },
+    {
+      key: 'purchasing',
+      label: 'Purchasing & PO System',
+      description: 'Supplier tracking, purchase orders, and wholesale supply procurement.',
+      isActive: Boolean(globalModules.purchasing)
+    },
+    {
+      key: 'sales',
+      label: 'Sales Orders & Invoicing',
+      description: 'Client invoices, wholesale accounts receivable, and order fulfillment.',
+      isActive: Boolean(globalModules.sales)
+    },
+    {
+      key: 'payroll',
+      label: 'Payroll Engine',
+      description: 'Automated time records, salary deductions, PhilHealth, SSS, and Pag-IBIG.',
+      isActive: Boolean(globalModules.payroll)
+    },
+    {
+      key: 'ai_docs',
+      label: 'AI Document Intelligence',
+      description: 'Document uploads, PDF vector scanning, and analytical search.',
+      isActive: Boolean(globalModules.ai_docs)
+    }
   ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-300 flex flex-col font-mono selection:bg-slate-700">
-      
+    <div className="min-h-screen w-full bg-slate-950 text-slate-100 font-sans flex flex-col selection:bg-rose-500 selection:text-white">
       {toast && (
-        <div className="fixed top-6 right-6 z-50 px-5 py-3.5 rounded-xl shadow-2xl font-bold flex items-center gap-3 animate-in slide-in-from-top-4 fade-in bg-slate-800 text-emerald-400 border border-slate-700">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-          {toast.message}
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border-2 border-rose-500 text-white px-5 py-3 shadow-[6px_6px_0px_0px_rgba(244,63,94,1)] font-bold text-xs uppercase tracking-wider animate-in fade-in">
+          {toast}
         </div>
       )}
 
-      <header className="bg-slate-900 border-b border-slate-800 px-6 sm:px-10 py-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-white tracking-widest uppercase">System Developer Console</h1>
-          <p className="text-slate-500 text-xs mt-1">Global Feature Flags & Module Configuration</p>
+      {/* TERMINAL HEADER */}
+      <header className="h-20 border-b-2 border-slate-800 bg-slate-900/60 backdrop-blur px-6 sm:px-12 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 bg-rose-500 animate-pulse rounded-full"></div>
+          <div>
+            <h1 className="text-lg font-black uppercase tracking-widest text-white">System Developer Console</h1>
+            <p className="text-[10px] font-mono text-slate-400">Global Feature Gates & Engine Override</p>
+          </div>
         </div>
-        <button onClick={onLogout} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-bold transition-colors border border-slate-700">Exit Console</button>
+        <button 
+          onClick={onLogout}
+          className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-black uppercase text-xs tracking-wider border-2 border-rose-400 shadow-[4px_4px_0px_0px_rgba(244,63,94,0.4)] transition-all"
+        >
+          Exit Dev
+        </button>
       </header>
 
-      <main className="flex-1 p-6 sm:p-10 max-w-7xl mx-auto w-full">
-        <div className="mb-8 border-l-4 border-amber-500 bg-amber-500/10 p-4 rounded-r-lg">
-          <h2 className="text-amber-500 font-bold uppercase tracking-widest text-sm mb-1">Global Module State</h2>
-          <p className="text-slate-400 text-xs leading-relaxed">Changes made here globally mount or unmount core business logic modules across the entire SaaS infrastructure. Disabling a module removes it from all workspaces instantly.</p>
+      {/* MAIN CONSOLE BODY */}
+      <main className="flex-1 max-w-5xl w-full mx-auto p-6 sm:p-12 space-y-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 border-2 border-slate-800 p-6">
+          <div>
+            <h2 className="text-base font-black uppercase tracking-wider text-white">System Runtime Gateways</h2>
+            <p className="text-xs text-slate-400 mt-1">Disabling a module here instantly removes it across all workspaces and active user sessions.</p>
+          </div>
+          <button 
+            onClick={handleResetAll}
+            className="px-4 py-2 border-2 border-slate-700 hover:border-slate-500 text-slate-300 font-black uppercase text-xs tracking-wider transition-colors"
+          >
+            Enable All
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {systemModules.map((mod) => {
-            const isEnabled = globalModules[mod.id];
-            
-            return (
-              <div key={mod.id} className={`p-6 rounded-2xl border transition-all duration-300 ${isEnabled ? 'bg-slate-900 border-slate-700' : 'bg-slate-900/40 border-slate-800/50 grayscale opacity-60'}`}>
-                <div className="flex justify-between items-start mb-6">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${isEnabled ? `${mod.bg} ${mod.color} ${mod.border}` : 'bg-slate-800 text-slate-500 border-slate-700'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d={mod.icon} /></svg>
-                  </div>
-                  
-                  {/* Toggle Switch */}
-                  <button 
-                    onClick={() => toggleModule(mod.id)} 
-                    className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors duration-300 ${isEnabled ? 'bg-emerald-500' : 'bg-slate-700'}`}
-                  >
-                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-300 ${isEnabled ? 'translate-x-8' : 'translate-x-1'}`} />
-                  </button>
+        <div className="grid grid-cols-1 gap-4">
+          {moduleDefinitions.map((item) => (
+            <div 
+              key={item.key} 
+              className={`p-6 border-2 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                item.isActive 
+                  ? 'bg-slate-900/80 border-slate-700' 
+                  : 'bg-slate-950 border-slate-800 opacity-60'
+              }`}
+            >
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">{item.label}</h3>
+                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 border ${
+                    item.isActive 
+                      ? 'border-emerald-500 text-emerald-400 bg-emerald-950/30' 
+                      : 'border-rose-500 text-rose-400 bg-rose-950/30'
+                  }`}>
+                    {item.isActive ? 'Active' : 'Disabled'}
+                  </span>
                 </div>
-                
-                <h3 className={`text-lg font-bold ${isEnabled ? 'text-white' : 'text-slate-500'}`}>{mod.name}</h3>
-                <p className="text-xs text-slate-400 mt-1">{mod.desc}</p>
-                
-                <div className="mt-6 pt-4 border-t border-slate-800 flex justify-between items-center text-[10px] font-bold uppercase tracking-widest">
-                  <span className="text-slate-500">Status</span>
-                  <span className={isEnabled ? 'text-emerald-400' : 'text-rose-500'}>{isEnabled ? 'Mounted' : 'Unmounted'}</span>
-                </div>
+                <p className="text-xs text-slate-400 mt-1 max-w-xl">{item.description}</p>
               </div>
-            );
-          })}
+
+              <button
+                onClick={() => handleToggle(item.key)}
+                className={`px-6 py-3 font-black uppercase text-xs tracking-wider border-2 transition-all shrink-0 ${
+                  item.isActive 
+                    ? 'bg-rose-500/10 border-rose-500 text-rose-400 hover:bg-rose-500 hover:text-white' 
+                    : 'bg-emerald-500/10 border-emerald-500 text-emerald-400 hover:bg-emerald-500 hover:text-white'
+                }`}
+              >
+                {item.isActive ? 'Turn Off' : 'Turn On'}
+              </button>
+            </div>
+          ))}
         </div>
       </main>
     </div>

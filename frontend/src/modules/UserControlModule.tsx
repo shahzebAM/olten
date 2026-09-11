@@ -1,360 +1,434 @@
 import React, { useState } from 'react';
 
-export default function UserControlModule({ 
-  adminUsers, setAdminUsers, fetchAdmins, loginUsername, 
-  isCurrentUserSuperAdmin, API_BASE_URL, globalModules, onBack, onLogout,
-  companiesList = [] 
-}: any) {
-  
-  const getInitialCompanies = () => companiesList.reduce((acc: any, c: string) => ({...acc, [c]: true}), {});
+interface UserControlModuleProps {
+  adminUsers: any[];
+  setAdminUsers: React.Dispatch<React.SetStateAction<any[]>>;
+  fetchAdmins: () => void;
+  loginUsername: string;
+  isCurrentUserSuperAdmin: boolean;
+  API_BASE_URL: string;
+  globalModules: Record<string, boolean>;
+  companiesList: string[];
+  onBack: () => void;
+  onLogout: () => void;
+}
 
-  const [newAdminModules, setNewAdminModules] = useState({ 
-    payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true,
-    companies: getInitialCompanies()
-  });
-  
-  const [newAdminUsername, setNewAdminUsername] = useState('');
-  const [newAdminPassword, setNewAdminPassword] = useState('');
-  const [editingPasswordId, setEditingPasswordId] = useState<number | null>(null);
-  const [newResetPassword, setNewResetPassword] = useState('');
-  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+export default function UserControlModule({
+  adminUsers,
+  setAdminUsers,
+  fetchAdmins,
+  loginUsername,
+  isCurrentUserSuperAdmin,
+  API_BASE_URL,
+  globalModules,
+  companiesList,
+  onBack,
+  onLogout
+}: UserControlModuleProps) {
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
 
-  // Global Feature Flags controlled by DeveloperModule
-  const isPayrollEnabled = globalModules?.payroll;
-  const isAiDocsEnabled = globalModules?.ai_docs;
-  const isProductsEnabled = globalModules?.products;
-  const isInventoryEnabled = globalModules?.inventory;
-  const isWarehousesEnabled = globalModules?.warehouses;
-  const isPurchasingEnabled = globalModules?.purchasing;
-  const isSalesEnabled = globalModules?.sales;
+  const initialFormState = {
+    username: '',
+    password: '',
+    role: 'Staff',
+    status: 'Active',
+    modules: {
+      payroll: false,
+      ai_docs: false,
+      inventory: true,
+      products: true,
+      warehouses: true,
+      purchasing: false,
+      sales: false,
+      companies: {} as Record<string, boolean>
+    }
+  };
+
+  const [formData, setFormData] = useState(initialFormState);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
-    setTimeout(() => { setToast(null); }, 3500);
+    setTimeout(() => setToast(null), 3500);
   };
 
-  const handleAddAdmin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAdminUsername || !newAdminPassword) return;
-    setIsSaving(true);
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: newAdminUsername.trim(), password: newAdminPassword, modules: newAdminModules })
-      });
-      if (!response.ok) throw new Error("Username already exists");
-      await fetchAdmins(); 
-      setNewAdminUsername('');
-      setNewAdminPassword('');
-      setNewAdminModules({ 
-        payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true,
-        companies: getInitialCompanies() 
-      });
-      showToast("New user added successfully!", "success");
-    } catch (error) { showToast("Failed to add user. Username might exist.", "error"); } 
-    finally { setIsSaving(false); }
+  const openCreateModal = () => {
+    setFormData(initialFormState);
+    setEditingUserId(null);
+    setModalOpen(true);
   };
 
-  const handleDeleteAdmin = async (id: number, role: string) => {
-    if (role === 'Super Admin') {
-      const superAdminCount = adminUsers.filter((u: any) => u.role === 'Super Admin').length;
-      if (superAdminCount <= 1) { showToast("Action Denied: Cannot delete the last Super Admin.", "error"); return; }
-    }
-    const targetUser = adminUsers.find((u: any) => u.id === id);
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error();
-      showToast("User removed successfully.", "success");
-      if (targetUser?.username.toLowerCase() === loginUsername.trim().toLowerCase()) {
-        setTimeout(() => { onLogout(); }, 1500); return;
+  const openEditModal = (user: any) => {
+    setEditingUserId(user.id);
+    setFormData({
+      username: user.username,
+      password: '', // Leave blank to keep existing password
+      role: user.role || 'Staff',
+      status: user.status || 'Active',
+      modules: {
+        payroll: Boolean(user.modules?.payroll),
+        ai_docs: Boolean(user.modules?.ai_docs),
+        inventory: Boolean(user.modules?.inventory ?? true),
+        products: Boolean(user.modules?.products ?? true),
+        warehouses: Boolean(user.modules?.warehouses ?? true),
+        purchasing: Boolean(user.modules?.purchasing),
+        sales: Boolean(user.modules?.sales),
+        companies: user.modules?.companies || {}
       }
-      await fetchAdmins(); 
-    } catch (error) { showToast("Failed to delete user.", "error"); }
+    });
+    setModalOpen(true);
   };
 
-  const handleUpdateRole = async (id: number, newRole: string) => {
-    const user = adminUsers.find((u: any) => u.id === id);
-    if (user?.role === 'Super Admin' && newRole !== 'Super Admin') {
-      const superAdminCount = adminUsers.filter((u: any) => u.role === 'Super Admin').length;
-      if (superAdminCount <= 1) { showToast("Action Denied: System requires at least one Super Admin.", "error"); return; }
+  const handleModuleToggle = (moduleKey: string) => {
+    setFormData(prev => {
+      const nextModules = { ...prev.modules };
+      if (moduleKey === 'inventory') {
+        const toggled = !nextModules.inventory;
+        nextModules.inventory = toggled;
+        nextModules.products = toggled;
+        nextModules.warehouses = toggled;
+      } else {
+        (nextModules as any)[moduleKey] = !(nextModules as any)[moduleKey];
+      }
+      return { ...prev, modules: nextModules };
+    });
+  };
+
+  const handleCompanyToggle = (companyName: string) => {
+    setFormData(prev => {
+      const nextCompanies = { ...prev.modules.companies };
+      nextCompanies[companyName] = !nextCompanies[companyName];
+      return {
+        ...prev,
+        modules: {
+          ...prev.modules,
+          companies: nextCompanies
+        }
+      };
+    });
+  };
+
+ const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsProcessing(true);
+
+    try {
+      const url = editingUserId 
+        ? `${API_BASE_URL}/admins/${editingUserId}` 
+        : `${API_BASE_URL}/admins`;
+      const method = editingUserId ? 'PATCH' : 'POST';
+
+      const payload: any = {
+        username: formData.username.trim(),
+        role: formData.role,
+        status: formData.status,
+        modules: formData.modules
+      };
+
+      // Only attach password if the user actually typed one
+      if (formData.password && formData.password.trim() !== '') {
+        payload.password = formData.password;
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        // 🔥 Catch the specific NestJS backend error message
+        const errorData = await res.json().catch(() => ({}));
+        const backendMessage = Array.isArray(errorData.message) 
+          ? errorData.message.join(', ') 
+          : errorData.message || `HTTP Error ${res.status}`;
+        throw new Error(backendMessage);
+      }
+
+      showToast(editingUserId ? "User permissions updated." : "New user created successfully.", "success");
+      setModalOpen(false);
+      fetchAdmins();
+    } catch (err: any) {
+      // Display the actual backend error on the screen
+      showToast(err.message || "Operation failed. Verify database connectivity.", "error");
+    } finally {
+      setIsProcessing(false);
     }
-    if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, role: newRole } : u));
-    try {
-      await fetch(`${API_BASE_URL}/admins/${id}/role`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: newRole }) });
-      showToast(`User role changed to ${newRole}`, "success");
-      await fetchAdmins();
-    } catch (e) { showToast("Failed to update role.", "error"); fetchAdmins(); }
   };
 
-  const handleUpdateModules = async (id: number, currentModules: any, toggleModule: string, isChecked: boolean) => {
-    const safeModules = currentModules || {};
-    const newModules = { ...safeModules, [toggleModule]: isChecked };
-    if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
+  const handleDeleteUser = async (id: number, targetUsername: string) => {
+    if (targetUsername.toLowerCase() === loginUsername.toLowerCase()) {
+      return showToast("Cannot delete your own active account.", "error");
+    }
+    if (!window.confirm(`Permanently remove access for user "${targetUsername}"?`)) return;
+
     try {
-      const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modules: newModules }) });
-      if (!response.ok) throw new Error();
-      await fetchAdmins();
-    } catch (e) { showToast("Failed to update module access.", "error"); fetchAdmins(); }
+      const res = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      showToast("User removed from workspace.", "success");
+      fetchAdmins();
+    } catch (e) {
+      showToast("Failed to delete user.", "error");
+    }
   };
-
-  const handleUpdateCompanyAccess = async (id: number, currentModules: any, toggleCompany: string, isChecked: boolean) => {
-    const safeModules = currentModules || { companies: {} };
-    const safeCompanies = safeModules.companies || {};
-    const newModules = { ...safeModules, companies: { ...safeCompanies, [toggleCompany]: isChecked } };
-    if (setAdminUsers) setAdminUsers(adminUsers.map((u: any) => u.id === id ? { ...u, modules: newModules } : u));
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins/${id}/modules`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modules: newModules }) });
-      if (!response.ok) throw new Error();
-      await fetchAdmins();
-    } catch (e) { showToast("Failed to update company access.", "error"); fetchAdmins(); }
-  };
-
-  const handleResetPassword = async (id: number) => {
-    if (!newResetPassword) { showToast("Please type a new password first.", "error"); return; }
-    setIsSaving(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins/${id}/password`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: newResetPassword }) });
-      if (!response.ok) throw new Error("Failed to reset password.");
-      showToast("User's password has been securely reset!", "success");
-      setEditingPasswordId(null); setNewResetPassword('');
-    } catch (error) { showToast("Failed to reset password.", "error"); } finally { setIsSaving(false); }
-  };
-
-  const hasAnyModuleEnabled = isPayrollEnabled || isAiDocsEnabled || isProductsEnabled || isInventoryEnabled || isWarehousesEnabled || isPurchasingEnabled || isSalesEnabled;
-
-  const sortedAdmins = [...adminUsers].sort((a: any, b: any) => {
-    if (a.role === 'Super Admin' && b.role !== 'Super Admin') return -1;
-    if (a.role !== 'Super Admin' && b.role === 'Super Admin') return 1;
-    return a.id - b.id; 
-  });
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
-      <div className="w-full max-w-6xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">Access Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Assign company access and configure role permissions.</p>
+    <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden">
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-none border-2 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] font-bold text-sm ${toast.type === 'success' ? 'bg-white border-emerald-500 text-emerald-700' : 'bg-white border-rose-500 text-rose-700'}`}>
+          {toast.message}
         </div>
-        <button onClick={onBack} className="w-full sm:w-auto justify-center px-5 py-2.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl shadow-sm font-bold transition-colors flex items-center gap-2 text-sm shrink-0">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-          Back to Organizations
-        </button>
-      </div>
+      )}
 
-      <div className="w-full max-w-6xl space-y-6 pb-12">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden w-full">
-          <div className="p-4 sm:p-6 border-b border-slate-200 bg-slate-50/50">
-            <h2 className="text-lg font-bold text-slate-800">System Users</h2>
+      {/* MAIN WORKSPACE */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-20 bg-white border-b-2 border-slate-900 flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Access & Governance</h2>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Staff Credentials & Module Privileges</p>
           </div>
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left border-collapse min-w-[1100px]">
-              <thead className="bg-slate-100 border-b border-slate-200">
+          <div className="flex gap-4">
+            <button onClick={onBack} className="px-4 py-2 bg-transparent border-2 border-slate-900 text-slate-900 font-black uppercase text-xs hover:bg-slate-900 hover:text-white transition-colors">
+              Gateway
+            </button>
+            <button onClick={onLogout} className="px-4 py-2 bg-rose-500 border-2 border-slate-900 text-white font-black uppercase text-xs shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:translate-y-1 hover:shadow-none transition-all">
+              Logout
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full space-y-6">
+          <div className="flex justify-between items-center bg-white border-2 border-slate-900 p-6 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)]">
+            <div>
+              <h3 className="font-black text-slate-900 uppercase tracking-wider">Registered Personnel</h3>
+              <p className="text-xs text-slate-500 font-medium">Control module availability and workspace memberships per account.</p>
+            </div>
+            {isCurrentUserSuperAdmin && (
+              <button 
+                onClick={openCreateModal}
+                className="px-6 py-3 bg-blue-600 border-2 border-slate-900 text-white font-black uppercase text-xs shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:translate-y-1 hover:shadow-none transition-all"
+              >
+                + Register New Account
+              </button>
+            )}
+          </div>
+
+          {/* ACCOUNTS TABLE */}
+          <div className="bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead className="bg-slate-900 text-white">
                 <tr>
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Username</th>
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase w-1/6">Role Level</th>
-                  {isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-1/6">Workspace Access</th>}
-                  {hasAnyModuleEnabled && isCurrentUserSuperAdmin && <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-center w-2/6">Modules Assignment</th>}
-                  <th className="py-3.5 px-4 sm:px-6 text-xs font-semibold text-slate-600 uppercase text-right w-1/6">Action</th>
+                  <th className="py-3 px-4 text-xs font-black uppercase tracking-widest border-2 border-slate-900">User ID</th>
+                  <th className="py-3 px-4 text-xs font-black uppercase tracking-widest border-2 border-slate-900">Role</th>
+                  <th className="py-3 px-4 text-xs font-black uppercase tracking-widest border-2 border-slate-900">Status</th>
+                  <th className="py-3 px-4 text-xs font-black uppercase tracking-widest border-2 border-slate-900">Assigned Modules</th>
+                  <th className="py-3 px-4 text-xs font-black uppercase tracking-widest border-2 border-slate-900 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sortedAdmins.map((user: any) => (
-                  <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-4 px-4 sm:px-6 font-bold text-slate-800 flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs shrink-0 ${user.role === 'Super Admin' ? 'bg-slate-800' : 'bg-slate-400'}`}>
-                        {user.username.charAt(0).toUpperCase()}
-                      </div>
-                      <span className="truncate">{user.username}</span>
-                    </td>
-                    <td className="py-4 px-4 sm:px-6 text-sm text-slate-600">
-                      {isCurrentUserSuperAdmin ? (
-                        <select value={user.role || 'Admin'} onChange={(e) => handleUpdateRole(user.id, e.target.value)} className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-slate-500 shadow-sm cursor-pointer w-full sm:w-auto">
-                          <option value="Admin">Standard Admin</option>
-                          <option value="Super Admin">Super Admin</option>
-                        </select>
-                      ) : (user.role || 'Admin')}
-                    </td>
-                    {isCurrentUserSuperAdmin && (
-                      <td className="py-4 px-4 sm:px-6">
-                        {user.role !== 'Super Admin' ? (
-                          <div className="flex items-center justify-center gap-3 flex-wrap">
-                            {companiesList.map((c: string) => (
-                              <label htmlFor={`comp-${user.id}-${c}`} key={c} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`comp-${user.id}-${c}`} type="checkbox" checked={user.modules?.companies?.[c] || false} onChange={(e) => handleUpdateCompanyAccess(user.id, user.modules, c, e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[50px]">{c.substring(0,4)}</span>
-                              </label>
-                            ))}
-                          </div>
-                        ) : (<div className="text-center text-[10px] text-slate-400 uppercase tracking-widest font-bold">Unrestricted</div>)}
+              <tbody className="divide-y-2 divide-slate-200">
+                {adminUsers.map(user => {
+                  const isSuper = user.role === 'Super Admin';
+                  return (
+                    <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-4 px-4 font-black uppercase text-sm border-r-2 border-slate-200">
+                        {user.username}
+                        {user.username.toLowerCase() === loginUsername.toLowerCase() && (
+                          <span className="ml-2 text-[9px] font-black uppercase px-1.5 py-0.5 bg-blue-100 text-blue-800 border border-blue-300">You</span>
+                        )}
                       </td>
-                    )}
-                    {hasAnyModuleEnabled && isCurrentUserSuperAdmin && (
-                      <td className="py-4 px-4 sm:px-6">
-                        {user.role !== 'Super Admin' ? (
-                          <div className="flex items-center justify-center gap-3 flex-wrap">
-                            {isSalesEnabled && (
-                              <label htmlFor={`mod-sales-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-sales-${user.id}`} type="checkbox" checked={user.modules?.sales || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'sales', e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Sales</span>
-                              </label>
-                            )}
-                            {isPurchasingEnabled && (
-                              <label htmlFor={`mod-pur-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-pur-${user.id}`} type="checkbox" checked={user.modules?.purchasing || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'purchasing', e.target.checked)} className="w-4 h-4 text-amber-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Purchasing</span>
-                              </label>
-                            )}
-                            {isProductsEnabled && (
-                              <label htmlFor={`mod-prod-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-prod-${user.id}`} type="checkbox" checked={user.modules?.products || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'products', e.target.checked)} className="w-4 h-4 text-purple-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Products</span>
-                              </label>
-                            )}
-                            {isInventoryEnabled && (
-                              <label htmlFor={`mod-inv-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-inv-${user.id}`} type="checkbox" checked={user.modules?.inventory || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'inventory', e.target.checked)} className="w-4 h-4 text-sky-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Inventory</span>
-                              </label>
-                            )}
-                            {isWarehousesEnabled && (
-                              <label htmlFor={`mod-wh-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-wh-${user.id}`} type="checkbox" checked={user.modules?.warehouses || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'warehouses', e.target.checked)} className="w-4 h-4 text-teal-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Hubs</span>
-                              </label>
-                            )}
-                            {isPayrollEnabled && (
-                              <label htmlFor={`mod-pay-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-pay-${user.id}`} type="checkbox" checked={user.modules?.payroll || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'payroll', e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Payroll</span>
-                              </label>
-                            )}
-                            {isAiDocsEnabled && (
-                              <label htmlFor={`mod-ai-${user.id}`} className="flex items-center gap-1.5 cursor-pointer group hover:opacity-80">
-                                <input id={`mod-ai-${user.id}`} type="checkbox" checked={user.modules?.ai_docs || false} onChange={(e) => handleUpdateModules(user.id, user.modules, 'ai_docs', e.target.checked)} className="w-4 h-4 text-rose-600 rounded border-slate-300 cursor-pointer shrink-0" />
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">AI</span>
-                              </label>
+                      <td className="py-4 px-4 border-r-2 border-slate-200">
+                        <span className={`px-2 py-1 text-[10px] font-black uppercase border-2 ${isSuper ? 'border-purple-600 bg-purple-50 text-purple-700' : 'border-slate-800 bg-slate-100 text-slate-800'}`}>
+                          {user.role}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 border-r-2 border-slate-200">
+                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase border ${user.status === 'Active' ? 'border-emerald-500 text-emerald-700 bg-emerald-50' : 'border-rose-500 text-rose-700 bg-rose-50'}`}>
+                          {user.status || 'Active'}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 border-r-2 border-slate-200">
+                        {isSuper ? (
+                          <span className="text-xs font-bold text-purple-700 uppercase">Universal System Clearance</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {user.modules?.inventory && <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 font-bold text-[10px] uppercase">Master Inventory</span>}
+                            {user.modules?.purchasing && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Purchasing</span>}
+                            {user.modules?.sales && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Sales</span>}
+                            {user.modules?.payroll && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Payroll</span>}
+                            {user.modules?.ai_docs && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">AI Docs</span>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        {isCurrentUserSuperAdmin && (
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => openEditModal(user)} className="px-3 py-1.5 bg-white border-2 border-slate-900 text-slate-900 text-[10px] font-black uppercase hover:bg-slate-900 hover:text-white transition-colors">
+                              Edit
+                            </button>
+                            {user.username.toLowerCase() !== loginUsername.toLowerCase() && (
+                              <button onClick={() => handleDeleteUser(user.id, user.username)} className="px-3 py-1.5 bg-white border-2 border-slate-900 text-rose-600 text-[10px] font-black uppercase hover:bg-rose-50 transition-colors">
+                                Del
+                              </button>
                             )}
                           </div>
-                        ) : (<div className="text-center text-[10px] text-slate-400 uppercase tracking-widest font-bold">Unrestricted</div>)}
+                        )}
                       </td>
-                    )}
-                    <td className="py-4 px-4 sm:px-6 text-right">
-                      {editingPasswordId === user.id ? (
-                        <div className="flex items-center justify-end gap-2 mb-2">
-                          <input type="text" placeholder="New Pwd" value={newResetPassword} onChange={e => setNewResetPassword(e.target.value)} className="px-2 py-1 border border-slate-300 rounded text-xs w-20 sm:w-24 shadow-sm outline-none" />
-                          <button onClick={() => handleResetPassword(user.id)} className="text-emerald-600 font-bold text-xs uppercase hover:underline">Save</button>
-                          <button onClick={() => setEditingPasswordId(null)} className="text-slate-400 font-bold text-xs uppercase hover:underline">X</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => setEditingPasswordId(user.id)} className="text-slate-600 hover:text-slate-900 text-[10px] tracking-wide font-bold uppercase transition-colors bg-white px-2 py-1 mb-2 sm:mb-0 mr-0 sm:mr-3 rounded border border-slate-200 shadow-sm hover:shadow block sm:inline-block ml-auto">Reset Pwd</button>
-                      )}
-                      <button onClick={() => handleDeleteAdmin(user.id, user.role)} className="text-red-500 hover:text-red-700 text-[11px] tracking-wider font-bold uppercase transition-colors">Delete</button>
-                    </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </div>
+        </main>
+      </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-8 w-full">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Register New User</h3>
-          <form onSubmit={handleAddAdmin} className="flex flex-col gap-6">
-            <div className="flex flex-col sm:flex-row gap-4 sm:gap-5 items-start sm:items-end w-full">
-              <div className="flex flex-col gap-1.5 w-full">
-                <label className="text-sm font-medium text-slate-600">Username</label>
-                <input type="text" required value={newAdminUsername} onChange={(e) => setNewAdminUsername(e.target.value)} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-500 shadow-sm" placeholder="New username" />
-              </div>
-              <div className="flex flex-col gap-1.5 w-full">
-                <label className="text-sm font-medium text-slate-600">Password</label>
-                <input type="password" required value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-500 shadow-sm" placeholder="••••••••" />
-              </div>
+      {/* EDIT / CREATE MODAL */}
+      {modalOpen && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+            <div className="p-5 border-b-2 border-slate-900 flex justify-between items-center bg-slate-100">
+              <h2 className="text-xl font-black text-slate-900 uppercase">
+                {editingUserId ? `Configure Account: ${formData.username}` : 'Create Staff Member'}
+              </h2>
+              <button onClick={() => setModalOpen(false)} className="font-black text-slate-900 hover:text-rose-600 uppercase text-sm">
+                Close
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 pt-4 border-t border-slate-100">
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Workspace Access</label>
-                <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
-                  {companiesList.map((c: string) => (
-                    <label htmlFor={`new-comp-${c}`} key={c} className="flex items-center gap-2 cursor-pointer w-fit">
-                      <input id={`new-comp-${c}`} type="checkbox" checked={newAdminModules.companies[c] || false} onChange={e => setNewAdminModules({...newAdminModules, companies: {...newAdminModules.companies, [c]: e.target.checked}})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
-                      <span className="text-sm font-medium text-slate-700">{c}</span>
-                    </label>
-                  ))}
+            <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-black uppercase">Username</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={formData.username} 
+                    onChange={e => setFormData({ ...formData, username: e.target.value })} 
+                    className="px-4 py-2 border-2 border-slate-900 font-bold outline-none" 
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-black uppercase">Password {editingUserId && '(Leave blank to retain)'}</label>
+                  <input 
+                    type="password" 
+                    required={!editingUserId} 
+                    value={formData.password} 
+                    onChange={e => setFormData({ ...formData, password: e.target.value })} 
+                    className="px-4 py-2 border-2 border-slate-900 font-bold outline-none" 
+                  />
                 </div>
               </div>
 
-              {hasAnyModuleEnabled && (
-                <div className="flex flex-col gap-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-100">
-                  <label className="text-sm font-bold text-slate-700 uppercase tracking-wide">Assign Module Access</label>
-                  <div className="flex flex-row flex-wrap gap-4 sm:gap-6 mt-2">
-                    {isSalesEnabled && (
-                      <label htmlFor="new-mod-sales" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-sales" type="checkbox" checked={newAdminModules.sales} onChange={e => setNewAdminModules({...newAdminModules, sales: e.target.checked})} className="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Sales & CRM</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-black uppercase">Account Role</label>
+                  <select 
+                    value={formData.role} 
+                    onChange={e => setFormData({ ...formData, role: e.target.value })}
+                    className="px-4 py-2 border-2 border-slate-900 font-bold outline-none bg-white"
+                  >
+                    <option value="Staff">Staff / Operator</option>
+                    <option value="Super Admin">Super Admin</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-black uppercase">Account Status</label>
+                  <select 
+                    value={formData.status} 
+                    onChange={e => setFormData({ ...formData, status: e.target.value })}
+                    className="px-4 py-2 border-2 border-slate-900 font-bold outline-none bg-white"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Suspended">Suspended</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* MODULE ACCESS ASSIGNMENT */}
+              {formData.role !== 'Super Admin' && (
+                <div className="space-y-4">
+                  <div className="border-2 border-slate-900 p-4 bg-slate-50">
+                    <label className="text-xs font-black uppercase block mb-3 text-slate-800">Module Access Clearances</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.modules.inventory} 
+                          onChange={() => handleModuleToggle('inventory')}
+                          className="w-5 h-5 border-2 border-slate-900" 
+                        />
+                        <span className="font-bold text-xs uppercase">Master Inventory (Catalog & Hubs)</span>
                       </label>
-                    )}
-                    {isPurchasingEnabled && (
-                      <label htmlFor="new-mod-pur" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-pur" type="checkbox" checked={newAdminModules.purchasing} onChange={e => setNewAdminModules({...newAdminModules, purchasing: e.target.checked})} className="w-5 h-5 text-amber-600 rounded border-slate-300 focus:ring-amber-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Procurement Engine</span>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.modules.purchasing} 
+                          onChange={() => handleModuleToggle('purchasing')}
+                          className="w-5 h-5 border-2 border-slate-900" 
+                        />
+                        <span className="font-bold text-xs uppercase">Purchasing & POs</span>
                       </label>
-                    )}
-                    {isProductsEnabled && (
-                      <label htmlFor="new-mod-prod" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-prod" type="checkbox" checked={newAdminModules.products} onChange={e => setNewAdminModules({...newAdminModules, products: e.target.checked})} className="w-5 h-5 text-purple-600 rounded border-slate-300 focus:ring-purple-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Product Manager</span>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.modules.sales} 
+                          onChange={() => handleModuleToggle('sales')}
+                          className="w-5 h-5 border-2 border-slate-900" 
+                        />
+                        <span className="font-bold text-xs uppercase">Sales & Orders</span>
                       </label>
-                    )}
-                    {isInventoryEnabled && (
-                      <label htmlFor="new-mod-inv" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-inv" type="checkbox" checked={newAdminModules.inventory} onChange={e => setNewAdminModules({...newAdminModules, inventory: e.target.checked})} className="w-5 h-5 text-sky-600 rounded border-slate-300 focus:ring-sky-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Inventory Control</span>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.modules.payroll} 
+                          onChange={() => handleModuleToggle('payroll')}
+                          className="w-5 h-5 border-2 border-slate-900" 
+                        />
+                        <span className="font-bold text-xs uppercase">Payroll System</span>
                       </label>
-                    )}
-                    {isWarehousesEnabled && (
-                      <label htmlFor="new-mod-wh" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-wh" type="checkbox" checked={newAdminModules.warehouses} onChange={e => setNewAdminModules({...newAdminModules, warehouses: e.target.checked})} className="w-5 h-5 text-teal-600 rounded border-slate-300 focus:ring-teal-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Multi-Warehouse</span>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.modules.ai_docs} 
+                          onChange={() => handleModuleToggle('ai_docs')}
+                          className="w-5 h-5 border-2 border-slate-900" 
+                        />
+                        <span className="font-bold text-xs uppercase">AI Document Workspace</span>
                       </label>
-                    )}
-                    {isPayrollEnabled && (
-                      <label htmlFor="new-mod-pay" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-pay" type="checkbox" checked={newAdminModules.payroll} onChange={e => setNewAdminModules({...newAdminModules, payroll: e.target.checked})} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Payroll Engine</span>
-                      </label>
-                    )}
-                    {isAiDocsEnabled && (
-                      <label htmlFor="new-mod-ai" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input id="new-mod-ai" type="checkbox" checked={newAdminModules.ai_docs} onChange={e => setNewAdminModules({...newAdminModules, ai_docs: e.target.checked})} className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-600 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">AI Documentation</span>
-                      </label>
-                    )}
+                    </div>
+                  </div>
+
+                  {/* WORKSPACE CLEARANCES */}
+                  <div className="border-2 border-slate-900 p-4 bg-slate-50">
+                    <label className="text-xs font-black uppercase block mb-3 text-slate-800">Allowed Companies & Workspaces</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {companiesList.map(comp => (
+                        <label key={comp} className="flex items-center gap-2 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={Boolean(formData.modules.companies[comp])} 
+                            onChange={() => handleCompanyToggle(comp)}
+                            className="w-4 h-4 border-2 border-slate-900" 
+                          />
+                          <span className="font-bold text-xs uppercase">{comp}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
-            </div>
 
-            <div className="pt-4 sm:pt-2">
-              <button type="submit" disabled={isSaving} className="w-full sm:w-auto px-8 py-3.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl shadow-sm whitespace-nowrap disabled:opacity-50 transition-colors">
-                {isSaving ? 'Registering...' : 'Save Database User'}
+              <button 
+                type="submit" 
+                disabled={isProcessing} 
+                className="w-full py-4 bg-slate-900 text-white font-black uppercase border-2 border-slate-900 hover:bg-transparent hover:text-slate-900 transition-colors disabled:opacity-50 mt-2"
+              >
+                {isProcessing ? 'Saving...' : 'Apply User Credentials'}
               </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 slide-in-from-bottom-2 fade-in duration-300 ease-out border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
-          {toast.type === 'success' ? (
-            <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-          ) : (
-            <svg className="w-5 h-5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-          )}
-          {toast.message}
+            </form>
+          </div>
         </div>
       )}
     </div>
