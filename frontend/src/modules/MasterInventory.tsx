@@ -33,7 +33,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [ledgerEndDate, setLedgerEndDate] = useState('');
 
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
-  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
+  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' }>({ isOpen: false, products: [], type: 'RECEIVE' });
 
   const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
@@ -1139,6 +1139,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
 
+              {/* TRANSACTION QUANTITY TABLE */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mt-2">
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-slate-50 border-b border-slate-200">
@@ -1164,10 +1165,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <input 
                               type="number" 
                               min={txModal.type === 'ADJUST' ? "0" : "1"} 
-                              placeholder={txModal.type === 'ADJUST' ? String(p.currentStock) : "0"} 
+                              required
+                              placeholder={txModal.type === 'ADJUST' ? String(p.currentStock) : "Enter Qty..."} 
                               value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} 
                               onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} 
-                              className={`w-32 px-4 py-2 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500 text-lg' : 'border-slate-300 focus:ring-blue-500'}`} 
+                              className={`w-full max-w-[150px] px-4 py-2 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500 text-lg' : 'border-slate-300 focus:ring-blue-500'}`} 
                             />
                           </td>
                         </tr>
