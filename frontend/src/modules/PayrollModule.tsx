@@ -707,7 +707,7 @@ const handleImportAttendance = async (event: any) => {
     setFormData(prev => ({ ...prev, [field]: val }));
   };   
 
-  const handleSubmitEmployee = async (e: React.FormEvent) => {
+const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
       showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
@@ -718,9 +718,14 @@ const handleImportAttendance = async (event: any) => {
       ...formData, 
       employeeId: formData.employeeId.trim(), 
       company: selectedCompany, 
-      baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
-      middleName: formData.middleName || null, bankAccount: formData.bankAccount || '', tin: formData.tin || null,
-      sssNumber: formData.sssNumber || null, philhealth: formData.philhealth || null, pagIbig: formData.pagIbig || null,
+      baseRate: parseFloat(formData.baseRate), 
+      dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+      middleName: formData.middleName?.trim() || null, 
+      bankAccount: formData.bankAccount?.trim() || null, 
+      tin: formData.tin?.trim() || null,
+      sssNumber: formData.sssNumber?.trim() || null, 
+      philhealth: formData.philhealth?.trim() || null, 
+      pagIbig: formData.pagIbig?.trim() || null,
       cashAdvanceBalance: parseFloat(formData.cashAdvanceBalance) || 0,
       cashAdvanceInstallment: parseFloat(formData.cashAdvanceInstallment) || 0,
       loanBalance: parseFloat(formData.loanBalance) || 0,
@@ -732,7 +737,12 @@ const handleImportAttendance = async (event: any) => {
 
     try {
       const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) { showToast("Failed to save. Employee ID or Government ID might already exist.", "error"); setIsSaving(false); return; }
+      if (!response.ok) { 
+        const errorData = await response.json().catch(() => ({}));
+        showToast(errorData.message || "Failed to save. Employee ID or Govt ID already exists.", "error"); 
+        setIsSaving(false); 
+        return; 
+      }
       
       await fetchEmployees();
       setIsEditModalOpen(false);
