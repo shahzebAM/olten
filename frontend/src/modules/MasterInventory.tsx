@@ -33,18 +33,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [ledgerEndDate, setLedgerEndDate] = useState('');
 
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
-  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' }>({ isOpen: false, products: [], type: 'RECEIVE' });
+  const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
 
   const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
-  const [allocations, setAllocations] = useState<Record<string, number>>({});
-  const [adjustQty, setAdjustQty] = useState<number | ''>('');
-  const [transferForm, setTransferForm] = useState({ source: '', destination: '', quantity: '' });
-
-  const [bulkForm, setBulkForm] = useState({ warehouseId: '', sourceId: '', destId: '' });
-  const [bulkQtys, setBulkQtys] = useState<Record<number, string>>({});
+  // --- UNIFIED TX MODAL STATE ---
+  const [movForm, setMovForm] = useState({ sourceId: '', destId: '' });
+  const [movQtys, setMovQtys] = useState<Record<number, string>>({});
   
   const [editingWarehouseId, setEditingWarehouseId] = useState<string | null>(null);
   const [warehouseForm, setWarehouseForm] = useState({ name: '', address: '', status: 'Active' });
@@ -52,6 +49,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [directStockForm, setDirectStockForm] = useState({ warehouseId: '', productId: '', quantity: '' });
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
+
+  // --- HUB TRANSFER STATE ---
+  const [hubTransferForm, setHubTransferForm] = useState({ sourceId: '', destId: '', productId: '', quantity: '' });
+  const [hubTransferSearch, setHubTransferSearch] = useState('');
+  const [isHubDropdownOpen, setIsHubDropdownOpen] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -93,18 +95,29 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     else setSelectedProductIds(filtered.map(p => p.id));
   };
 
-  const openSingleTx = (product: Product, type: any) => {
-    setTxModal({ isOpen: true, products: [product], type });
-    setAllocations({}); setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
-    setTransferForm({ source: '', destination: '', quantity: '' });
-    setAdjustQty(product.currentStock);
+  const openTx = (prods: Product[], type: string) => {
+    setTxModal({ isOpen: true, products: prods, type: type as any });
+    setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
+    
+    let initialSource = '';
+    let initialDest = '';
+    
+    if (type === 'RECEIVE') { initialDest = 'MASTER'; }
+    if (type === 'RETURN') { initialSource = 'MASTER'; }
+    if (type === 'ISSUE') { initialDest = 'EXTERNAL'; }
+
+    setMovForm({ sourceId: initialSource, destId: initialDest });
+    
+    const initialQtys: Record<number, string> = {};
+    if (type === 'ADJUST' && prods.length === 1) {
+         initialQtys[prods[0].id] = String(prods[0].currentStock);
+    }
+    setMovQtys(initialQtys);
   };
 
   const openBulkTx = (type: any) => {
     const prods = products.filter(p => selectedProductIds.includes(p.id));
-    setTxModal({ isOpen: true, products: prods, type });
-    setBulkForm({ warehouseId: '', sourceId: '', destId: '' });
-    setBulkQtys({}); setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
+    openTx(prods, type);
   };
 
   const handleModalImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -222,6 +235,56 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setProductSearchTerm('');
   };
 
+  const handleHubTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hubTransferForm.sourceId || !hubTransferForm.destId || !hubTransferForm.productId || !hubTransferForm.quantity || hubTransferForm.quantity === '0') {
+        return showToast("Please fill all fields with a valid quantity.", "error");
+    }
+    if (hubTransferForm.sourceId === hubTransferForm.destId) {
+        return showToast("Source and Destination cannot be the same.", "error");
+    }
+    
+    const prod = products.find(p => String(p.id) === String(hubTransferForm.productId));
+    if (!prod) return showToast("Product not found.", "error");
+
+    const qty = Number(hubTransferForm.quantity);
+    if (qty < 0) return showToast("Transfer quantity must be positive.", "error");
+
+    const currentSourceStock = hubStock.find(h => String(h.warehouseId) === hubTransferForm.sourceId && Number(h.productId) === Number(prod.id))?.quantity || 0;
+    if (currentSourceStock < qty) return showToast("Insufficient stock in Source Warehouse.", "error");
+
+    setIsProcessing(true);
+
+    setHubStock(prev => {
+       const next = [...prev];
+       const sIdx = next.findIndex(h => String(h.warehouseId) === hubTransferForm.sourceId && Number(h.productId) === Number(prod.id));
+       if (sIdx > -1) next[sIdx].quantity -= qty;
+       
+       const dIdx = next.findIndex(h => String(h.warehouseId) === hubTransferForm.destId && Number(h.productId) === Number(prod.id));
+       if (dIdx > -1) next[dIdx].quantity += qty;
+       else next.push({ id: 'temp', warehouseId: hubTransferForm.destId, productId: prod.id, sku: prod.sku, quantity: qty });
+       
+       return next;
+    });
+
+    try {
+       await Promise.all([
+          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.sourceId, productId: prod.id, sku: prod.sku, quantity: -qty }) }),
+          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.destId, productId: prod.id, sku: prod.sku, quantity: qty }) }),
+          fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'TRANSFER', quantity: qty, previousStock: currentSourceStock, newStock: currentSourceStock - qty, reference: 'Inter-Hub Transfer', remarks: `From WH-${hubTransferForm.sourceId.padStart(3,'0')} to WH-${hubTransferForm.destId.padStart(3,'0')}`, user: loginUsername, company: selectedCompany, warehouseId: hubTransferForm.destId }) })
+       ]);
+       showToast("Transfer successful.", "success");
+       setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' });
+       setHubTransferSearch('');
+       fetchAllData();
+    } catch (e) {
+       showToast("Transfer failed.", "error");
+       fetchAllData();
+    } finally {
+       setIsProcessing(false);
+    }
+  };
+
   const handleEditWarehouseStock = async (warehouseId: string, product: Product, currentQty: number) => {
     const input = window.prompt(`Adjust stock for [${product.sku}] ${product.name}\nCurrent quantity: ${currentQty}\n\nEnter the NEW TOTAL quantity for this facility:`, String(currentQty));
     if (input === null || input.trim() === '') return;
@@ -290,9 +353,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     if (txModal.products.length === 0) return;
     setIsProcessing(true);
 
-    const isBulk = txModal.products.length > 1;
     const apiPromises: Promise<any>[] = []; 
-    
     let nextProducts = [...products];
     let nextHubStock = [...hubStock];
 
@@ -302,8 +363,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const pIdx = nextProducts.findIndex(p => p.id === prod.id);
 
         if (txModal.type === 'ADJUST') {
-          const adjQ = isBulk ? Number(bulkQtys[prod.id]) : Number(adjustQty);
-          if (isNaN(adjQ) || adjQ < 0) { if (!isBulk) throw new Error("Invalid count."); else continue; }
+          const adjQ = Number(movQtys[prod.id]);
+          if (isNaN(adjQ) || adjQ < 0) continue;
           const delta = Math.abs(adjQ - currentMasterStock);
           if (delta === 0) continue;
 
@@ -315,58 +376,44 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           continue;
         }
 
-        let movementsToProcess: {source: string, dest: string, qty: number}[] = [];
+        const q = Number(movQtys[prod.id]) || 0;
+        if (q <= 0) continue;
 
-        if (txModal.type === 'TRANSFER' || txModal.type === 'RETURN') {
-          const sId = isBulk ? bulkForm.sourceId : transferForm.source;
-          const dId = isBulk ? bulkForm.destId : transferForm.destination;
-          const q = Number(isBulk ? bulkQtys[prod.id] : transferForm.quantity) || 0;
+        const source = movForm.sourceId;
+        const dest = movForm.destId;
 
-          if (!sId || !dId) throw new Error("Source and Destination must both be selected.");
-          if (sId === dId) throw new Error("A location cannot transfer or return stock to itself.");
-          if (q > 0) movementsToProcess.push({ source: sId, dest: dId, qty: q });
-        } else {
-          const isIssue = txModal.type === 'ISSUE';
-          if (isBulk) {
-            const locId = bulkForm.warehouseId;
-            const q = Number(bulkQtys[prod.id]) || 0;
-            if (!locId) throw new Error("Target location required.");
-            if (q > 0) movementsToProcess.push({ source: isIssue ? locId : 'EXTERNAL', dest: isIssue ? 'EXTERNAL' : locId, qty: q });
-          } else {
-            if (Object.keys(allocations).length === 0) throw new Error("Allocate quantity to a location.");
-            Object.entries(allocations).forEach(([locId, q]) => {
-              if (q > 0) movementsToProcess.push({ source: isIssue ? locId : 'EXTERNAL', dest: isIssue ? 'EXTERNAL' : locId, qty: q });
-            });
-          }
+        if (!source || !dest) throw new Error("Source and Destination must be fully assigned.");
+        if (source === dest) throw new Error("Cannot move stock to the exact same location.");
+
+        const prevMasterForLog = currentMasterStock;
+
+        // 1. DEDUCT FROM SOURCE
+        if (source === 'MASTER') {
+          if (currentMasterStock < q) throw new Error(`Not enough Master Stock for ${prod.sku}.`);
+          currentMasterStock -= q;
+        } else if (source !== 'EXTERNAL') {
+          const sourceStock = hubStock.find(h => String(h.warehouseId) === String(source) && Number(h.productId) === Number(prod.id))?.quantity || 0;
+          if (sourceStock < q) throw new Error(`Not enough stock of ${prod.sku} in Source Location.`);
+          const sIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(source) && Number(h.productId) === Number(prod.id));
+          if(sIdx > -1) nextHubStock[sIdx].quantity -= q;
+          apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
         }
 
-        for (const mov of movementsToProcess) {
-          const prevMasterForLog = currentMasterStock;
-
-          if (mov.source === 'MASTER') {
-            if (currentMasterStock < mov.qty) throw new Error(`Not enough Master / Office Stock for ${prod.sku}.`);
-            currentMasterStock -= mov.qty;
-          } else if (mov.source !== 'EXTERNAL') {
-            const sourceStock = hubStock.find(h => String(h.warehouseId) === String(mov.source) && Number(h.productId) === Number(prod.id))?.quantity || 0;
-            if (sourceStock < mov.qty) throw new Error(`Not enough stock of ${prod.sku} in Source Location.`);
-            const sIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(mov.source) && Number(h.productId) === Number(prod.id));
-            if(sIdx > -1) nextHubStock[sIdx].quantity -= mov.qty;
-            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: mov.source, productId: prod.id, sku: prod.sku, quantity: -mov.qty }) }));
-          }
-
-          if (mov.dest === 'MASTER') {
-            currentMasterStock += mov.qty;
-          } else if (mov.dest !== 'EXTERNAL') {
-            const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(mov.dest) && Number(h.productId) === Number(prod.id));
-            if(dIdx > -1) nextHubStock[dIdx].quantity += mov.qty;
-            else nextHubStock.push({ id: 'temp', warehouseId: mov.dest, productId: prod.id, sku: prod.sku, quantity: mov.qty });
-            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: mov.dest, productId: prod.id, sku: prod.sku, quantity: mov.qty }) }));
-          }
-
-          const logWarehouseId = (mov.dest !== 'MASTER' && mov.dest !== 'EXTERNAL') ? mov.dest : ((mov.source !== 'MASTER' && mov.source !== 'EXTERNAL') ? mov.source : null);
-          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: mov.qty, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
+        // 2. ADD TO DESTINATION
+        if (dest === 'MASTER') {
+          currentMasterStock += q;
+        } else if (dest !== 'EXTERNAL') {
+          const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(dest) && Number(h.productId) === Number(prod.id));
+          if(dIdx > -1) nextHubStock[dIdx].quantity += q;
+          else nextHubStock.push({ id: 'temp', warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q });
+          apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
         }
 
+        // 3. LOG MOVEMENT
+        const logWarehouseId = (dest !== 'MASTER' && dest !== 'EXTERNAL') ? dest : ((source !== 'MASTER' && source !== 'EXTERNAL') ? source : null);
+        apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
+
+        // 4. MASTER STOCK PATCH
         if (currentMasterStock !== (Number(prod.currentStock) || 0)) {
           if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
           apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
@@ -388,13 +435,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     finally { setIsProcessing(false); }
   };
 
-  const handleBulkPrintReceipt = (type: string, receiptProducts: Product[], qtys: Record<number, string>, form: any, bForm: any) => {
+  const handleBulkPrintReceipt = (type: string, receiptProducts: Product[], qtys: Record<number, string>, form: any, destId: string) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return showToast("Pop-ups blocked. Allow them to print receipts.", "error");
 
-    const destName = type === 'TRANSFER' || type === 'RETURN'
-      ? (bForm.destId === 'MASTER' ? 'Master Office Stock' : bForm.destId === 'EXTERNAL' ? 'External / Client' : warehouses.find(w => String(w.id) === String(bForm.destId))?.name) 
-      : (bForm.warehouseId === 'MASTER' || !bForm.warehouseId ? 'Master Office Stock' : warehouses.find(w => String(w.id) === String(bForm.warehouseId))?.name);
+    const destName = (destId === 'MASTER' || !destId) ? 'Master Office Stock' : (destId === 'EXTERNAL' ? 'External / Client' : warehouses.find(w => String(w.id) === String(destId))?.name);
 
     const rowsHtml = receiptProducts.map(p => {
        const q = Number(qtys[p.id]) || 0;
@@ -444,7 +489,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
           </div>
           <div class="info-grid">
-            <div class="info-block"><span>Facility / Location</span><strong>${type === 'DELETE' ? 'Master Registry' : destName || 'Master Office Stock'}</strong></div>
+            <div class="info-block"><span>Facility / Location</span><strong>${destName}</strong></div>
             <div class="info-block"><span>Processed By</span><strong>${loginUsername}</strong></div>
             <div class="info-block"><span>Reference Code</span><strong>${form.reference || 'N/A'}</strong></div>
             <div class="info-block"><span>Batch & Expiration</span><strong>${form.batchNumber ? `Batch: ${form.batchNumber}` : 'N/A'} ${form.expirationDate ? ` | Exp: ${form.expirationDate.split('T')[0]}` : ''}</strong></div>
@@ -478,10 +523,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const receiptProds = related.map(r => ({ id: r.productId, name: r.productName, sku: r.sku, currentStock: r.newStock } as any));
     const qtys = Object.fromEntries(related.map(r => [r.productId, String(r.quantity)]));
-    const bForm = { destId: m.warehouseId, warehouseId: m.warehouseId };
     const form = { reference: m.reference, remarks: m.remarks, batchNumber: m.batchNumber, expirationDate: m.expirationDate };
 
-    handleBulkPrintReceipt(m.type, receiptProds, qtys, form, bForm);
+    handleBulkPrintReceipt(m.type, receiptProds, qtys, form, m.warehouseId || 'MASTER');
   };
 
   const handleClearHistory = async () => {
@@ -504,6 +548,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredProductsForDropdown = products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()));
+  const filteredProductsForHubDropdown = products.filter(p => p.name.toLowerCase().includes(hubTransferSearch.toLowerCase()) || p.sku.toLowerCase().includes(hubTransferSearch.toLowerCase()));
 
   const filteredMovements = movements.filter(m => {
     let keep = true;
@@ -585,9 +630,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   <div className="font-black text-blue-900 uppercase text-sm tracking-widest px-2">{selectedProductIds.length} ITEMS SELECTED</div>
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600">Receive</button>
-                    <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600">Return / Move</button>
+                    <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600">Return to Hub</button>
                     <button onClick={() => openBulkTx('ISSUE')} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-rose-600">Issue</button>
-                    <button onClick={() => openBulkTx('TRANSFER')} className="px-4 py-2 bg-amber-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-amber-600">Transfer</button>
                     {isAuthorizedAdmin && (
                       <button onClick={handleBulkDelete} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 ml-4">Delete</button>
                     )}
@@ -637,7 +681,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5">
                           {(() => {
-                            // --- GHOST FILTER: Only count stock if the warehouse actually exists in the db ---
                             const totalHubStock = hubStock.filter(h => 
                               (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
                               warehouses.some(w => String(w.id) === String(h.warehouseId))
@@ -648,11 +691,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5 text-right">
                           <div className="flex flex-wrap justify-end gap-1.5">
-                            <button onClick={() => openSingleTx(p, 'RECEIVE')} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold uppercase hover:bg-emerald-100 transition-colors">Recv</button>
-                            <button onClick={() => openSingleTx(p, 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors">Ret</button>
-                            <button onClick={() => openSingleTx(p, 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors">Iss</button>
-                            <button onClick={() => openSingleTx(p, 'TRANSFER')} className="px-2.5 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-bold uppercase hover:bg-amber-100 transition-colors">Trns</button>
-                            <button onClick={() => openSingleTx(p, 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors">Adj</button>
+                            <button onClick={() => openTx([p], 'RECEIVE')} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold uppercase hover:bg-emerald-100 transition-colors" title="Receive to Master">Recv</button>
+                            <button onClick={() => openTx([p], 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors" title="Return to Hub">Ret</button>
+                            <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue External">Iss</button>
+                            <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Master Stock">Adj</button>
                             <button onClick={() => { setProductForm({ ...p, previousImageUrl: globalImageVault[p.sku] || p.imageUrl || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
                             {isAuthorizedAdmin && (
                               <button onClick={() => handleProductDelete(p.id)} className="px-2.5 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-50 transition-colors">Del</button>
@@ -753,18 +795,18 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
               
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
                 {/* WAREHOUSE REGISTRATION / EDIT FORM */}
                 {isAuthorizedAdmin ? (
                   <form onSubmit={handleWarehouseSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
                     <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                      <h3 className="font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse Info' : 'Register Warehouse'}</h3>
-                      {editingWarehouseId && <button type="button" onClick={() => { setEditingWarehouseId(null); setWarehouseForm({ name: '', address: '', status: 'Active' }); }} className="text-[10px] font-bold uppercase text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded-md">Cancel Edit</button>}
+                      <h3 className="font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse' : 'Register Warehouse'}</h3>
+                      {editingWarehouseId && <button type="button" onClick={() => { setEditingWarehouseId(null); setWarehouseForm({ name: '', address: '', status: 'Active' }); }} className="text-[10px] font-bold uppercase text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded-md">Cancel</button>}
                     </div>
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white transition-all" placeholder="e.g. Main Medical Depot" /></div>
+                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white transition-all" placeholder="e.g. Main Depot" /></div>
                     <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label><input required type="text" value={warehouseForm.address} onChange={e=>setWarehouseForm({...warehouseForm, address: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white transition-all" placeholder="Complete address..." /></div>
-                    <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update Warehouse' : 'Save Warehouse'}</button>
+                    <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update' : 'Save'}</button>
                   </form>
                 ) : (
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 h-max flex flex-col gap-3 justify-center items-center text-center">
@@ -774,10 +816,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
                 {/* DIRECT ADD / ADJUST STOCK TO WAREHOUSE FORM */}
                 <form onSubmit={handleDirectStockSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
-                  <h3 className="font-black text-slate-900 uppercase tracking-tight border-b border-slate-100 pb-4">Adjust Hub Stock Directly</h3>
+                  <h3 className="font-black text-slate-900 uppercase tracking-tight border-b border-slate-100 pb-4">Adjust Hub Stock</h3>
                   
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Select Target Warehouse</label>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
                     <select required value={directStockForm.warehouseId} onChange={e=>setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all cursor-pointer">
                       <option value="">Select Warehouse...</option>
                       {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -785,7 +827,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   </div>
 
                   <div className="flex flex-col gap-1.5 relative">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product / SKU</label>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
                     <input 
                       type="text" 
                       placeholder="Type name or SKU..." 
@@ -815,11 +857,73 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Quantity (Use Negative to Issue)</label>
-                    <input required type="number" placeholder="e.g. 50 or -10" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-blue-200 rounded-xl text-sm font-black outline-none bg-blue-50 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-blue-900" />
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Adjust Qty (-/+)</label>
+                    <input required type="number" placeholder="e.g. 50 or -10" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-indigo-200 rounded-xl text-sm font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-indigo-900" />
                   </div>
 
-                  <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-blue-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50">Apply Stock Adjustment</button>
+                  <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
+                </form>
+
+                {/* TRANSFER BETWEEN HUBS FORM */}
+                <form onSubmit={handleHubTransferSubmit} className="bg-white border border-slate-200 p-6 sm:p-8 rounded-2xl shadow-sm h-max flex flex-col gap-5">
+                  <h3 className="font-black text-slate-900 uppercase tracking-tight border-b border-slate-100 pb-4">Transfer Between Hubs</h3>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">From (Source)</label>
+                      <select required value={hubTransferForm.sourceId} onChange={e=>setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all cursor-pointer">
+                        <option value="">Source...</option>
+                        {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">To (Dest)</label>
+                      <select required value={hubTransferForm.destId} onChange={e=>setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all cursor-pointer">
+                        <option value="">Dest...</option>
+                        {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 relative">
+                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
+                    <input 
+                      type="text" 
+                      placeholder="Type name or SKU..." 
+                      value={hubTransferSearch} 
+                      onChange={e => { setHubTransferSearch(e.target.value); setIsHubDropdownOpen(true); }}
+                      onFocus={() => setIsHubDropdownOpen(true)}
+                      className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-slate-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all" 
+                    />
+                    {isHubDropdownOpen && (
+                      <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
+                        {filteredProductsForHubDropdown.length === 0 ? (
+                          <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
+                        ) : (
+                          filteredProductsForHubDropdown.map(p => {
+                             const curStk = hubStock.find(h => String(h.warehouseId) === hubTransferForm.sourceId && (String(h.sku) === String(p.sku) || Number(h.productId) === Number(p.id)))?.quantity || 0;
+                             return (
+                              <div 
+                                key={p.id} 
+                                onClick={() => { setHubTransferForm({...hubTransferForm, productId: String(p.id)}); setHubTransferSearch(`${p.name} (${p.sku})`); setIsHubDropdownOpen(false); }}
+                                className={`p-3 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors ${curStk > 0 ? 'hover:bg-amber-50 text-slate-700' : 'bg-slate-50 text-slate-400 opacity-50'}`}
+                              >
+                                <span>{p.name}</span>
+                                <span className="font-mono bg-slate-100 px-2 py-1 rounded">Stock: {curStk}</span>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Transfer Qty</label>
+                    <input required type="number" min="1" placeholder="e.g. 50" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-amber-200 rounded-xl text-sm font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-amber-900" />
+                  </div>
+
+                  <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
                 </form>
 
               </div>
@@ -991,7 +1095,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       {txModal.isOpen && txModal.products.length > 0 && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden ${txModal.products.length > 1 ? 'max-w-4xl' : 'max-w-lg'}`}>
-            <div className={`p-6 border-b border-white/10 flex justify-between items-center ${txModal.type === 'RECEIVE' ? 'bg-emerald-500 text-white' : txModal.type === 'RETURN' ? 'bg-sky-500 text-white' : txModal.type === 'ISSUE' ? 'bg-rose-500 text-white' : txModal.type === 'TRANSFER' ? 'bg-amber-500 text-white' : 'bg-indigo-500 text-white'}`}>
+            <div className={`p-6 border-b border-white/10 flex justify-between items-center ${txModal.type === 'RECEIVE' ? 'bg-emerald-500 text-white' : txModal.type === 'RETURN' ? 'bg-sky-500 text-white' : txModal.type === 'ISSUE' ? 'bg-rose-500 text-white' : 'bg-indigo-500 text-white'}`}>
               <h2 className="text-xl font-black uppercase tracking-tight">{txModal.type} BATCH ({txModal.products.length} Items)</h2>
               <button onClick={() => setTxModal({ isOpen: false, products: [], type: 'RECEIVE' })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -999,132 +1103,79 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
             <form onSubmit={executeTransaction} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto bg-slate-50">
               
-              {/* --- MULTIPLE PRODUCTS (BULK UI) --- */}
-              {txModal.products.length > 1 ? (
-                <>
-                  {txModal.type === 'TRANSFER' || txModal.type === 'RETURN' ? (
-                    <div className={`grid grid-cols-2 gap-5 p-5 rounded-2xl border ${txModal.type === 'RETURN' ? 'bg-sky-50 border-sky-200' : 'bg-amber-50 border-amber-200'}`}>
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RETURN' ? 'text-sky-700' : 'text-amber-700'}`}>From (Source Location)</label>
-                        <select required value={bulkForm.sourceId} onChange={e=>setBulkForm({...bulkForm, sourceId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
-                          <option value="">Select...</option>
-                          {bulkForm.destId !== 'EXTERNAL' && <option value="EXTERNAL">External (Client / Supplier)</option>}
-                          {bulkForm.destId !== 'MASTER' && <option value="MASTER">Master / Office Stock</option>}
-                          {warehouses.filter(w => bulkForm.destId !== String(w.id)).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RETURN' ? 'text-sky-700' : 'text-amber-700'}`}>To (Destination Location)</label>
-                        <select required value={bulkForm.destId} onChange={e=>setBulkForm({...bulkForm, destId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
-                          <option value="">Select...</option>
-                          {bulkForm.sourceId !== 'EXTERNAL' && <option value="EXTERNAL">External (Client / Supplier)</option>}
-                          {bulkForm.sourceId !== 'MASTER' && <option value="MASTER">Master / Office Stock</option>}
-                          {warehouses.filter(w => bulkForm.sourceId !== String(w.id)).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  ) : txModal.type !== 'ADJUST' && (
-                    <div className="flex flex-col gap-1.5 bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Target Location Assignment</label>
-                      <select required value={bulkForm.warehouseId} onChange={e=>setBulkForm({...bulkForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500">
-                        <option value="">Select Target Location...</option>
-                        <option value="MASTER">Master / Office Stock</option>
-                        {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mt-2">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-50 border-b border-slate-200">
-                        <tr>
-                          <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Product</th>
-                          <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Mst Stock</th>
-                          <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Hub Stock</th>
-                          <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Tx Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {txModal.products.map(p => {
-                          const totalHubStock = hubStock.filter(h => 
-                            (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
-                            warehouses.some(w => String(w.id) === String(h.warehouseId))
-                          ).reduce((acc, val) => acc + val.quantity, 0);
-                          return (
-                            <tr key={p.id}>
-                              <td className="p-4"><div className="font-black text-sm uppercase text-slate-900">{p.name}</div><div className="text-[10px] font-medium text-slate-500">{p.sku}</div></td>
-                              <td className="p-4 text-sm font-bold text-slate-700">{p.currentStock}</td>
-                              <td className="p-4 text-sm font-bold text-slate-700">{totalHubStock}</td>
-                              <td className="p-4"><input type="number" min="0" placeholder="0" value={bulkQtys[p.id] || ''} onChange={e=>setBulkQtys({...bulkQtys, [p.id]: e.target.value})} className="w-24 px-4 py-2 border border-slate-300 rounded-xl font-black outline-none focus:ring-2 focus:ring-blue-500 text-slate-900" /></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ) : (
-                /* --- SINGLE PRODUCT UI --- */
-                <>
-                  <div className="flex justify-between items-center bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div><div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Item</div><div className="font-black text-slate-900 text-lg uppercase tracking-tight mt-0.5">{txModal.products[0].name}</div></div>
-                    <div className="text-right"><div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Master / Office Stock</div><div className="font-black text-2xl text-blue-600 mt-0.5">{txModal.products[0].currentStock} <span className="text-sm text-slate-400">{txModal.products[0].unit}</span></div></div>
+              {/* --- UNIFIED MOVEMENT FORM UI (RECV/RET/ISSUE) --- */}
+              {txModal.type !== 'ADJUST' && (
+                <div className={`grid grid-cols-2 gap-5 p-5 rounded-2xl border ${txModal.type === 'RECEIVE' ? 'bg-emerald-50 border-emerald-200' : txModal.type === 'RETURN' ? 'bg-sky-50 border-sky-200' : 'bg-rose-50 border-rose-200'}`}>
+                  
+                  {/* SOURCE SELECTION */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RECEIVE' ? 'text-emerald-700' : txModal.type === 'RETURN' ? 'text-sky-700' : 'text-rose-700'}`}>From (Source Location)</label>
+                    {txModal.type === 'RETURN' ? (
+                       <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">Master / Office Stock</div>
+                    ) : (
+                       <select required value={movForm.sourceId} onChange={e=>setMovForm({...movForm, sourceId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
+                         <option value="">Select Source...</option>
+                         {txModal.type === 'RECEIVE' && <option value="EXTERNAL">External Supplier</option>}
+                         {txModal.type === 'ISSUE' && <option value="MASTER">Master / Office Stock</option>}
+                         {warehouses.map(w => <option key={w.id} value={w.id} disabled={movForm.destId === String(w.id)}>{w.name}</option>)}
+                       </select>
+                    )}
                   </div>
 
-                  {txModal.type === 'TRANSFER' || txModal.type === 'RETURN' ? (
-                    <div className={`border border-slate-200 rounded-2xl p-6 flex flex-col gap-5 ${txModal.type === 'RETURN' ? 'bg-sky-50' : 'bg-amber-50'}`}>
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RETURN' ? 'text-sky-700' : 'text-amber-700'}`}>From (Source)</label>
-                        <select required value={transferForm.source} onChange={e=>setTransferForm({...transferForm, source: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white focus:ring-2 focus:ring-slate-400 shadow-sm">
-                          <option value="">Select Source Location...</option>
-                          {transferForm.destination !== 'EXTERNAL' && <option value="EXTERNAL">External (Client / Supplier)</option>}
-                          {transferForm.destination !== 'MASTER' && <option value="MASTER">Master / Office Stock (Available: {txModal.products[0].currentStock})</option>}
-                          {warehouses.filter(w => transferForm.destination !== String(w.id)).map(w => {
-                            const curStk = hubStock.find(h => String(h.warehouseId) === String(w.id) && (String(h.sku) === String(txModal.products[0].sku) || Number(h.productId) === Number(txModal.products[0].id)))?.quantity || 0;
-                            return <option key={w.id} value={w.id} disabled={curStk <= 0}>{w.name} (Available: {curStk})</option>
-                          })}
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RETURN' ? 'text-sky-700' : 'text-amber-700'}`}>To (Destination)</label>
-                        <select required value={transferForm.destination} onChange={e=>setTransferForm({...transferForm, destination: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white focus:ring-2 focus:ring-slate-400 shadow-sm">
-                          <option value="">Select Destination Location...</option>
-                          {transferForm.source !== 'EXTERNAL' && <option value="EXTERNAL">External (Client / Supplier)</option>}
-                          {transferForm.source !== 'MASTER' && <option value="MASTER">Master / Office Stock</option>}
-                          {warehouses.filter(w => transferForm.source !== String(w.id)).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Transfer Quantity</label><input type="number" required min="1" value={transferForm.quantity} onChange={e=>setTransferForm({...transferForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-300 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm text-lg" /></div>
-                    </div>
-                  ) : txModal.type !== 'ADJUST' ? (
-                    <div className="border border-slate-200 rounded-2xl p-6 bg-white shadow-sm flex flex-col gap-4">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Target Location Assignment</label>
-
-                      {/* MASTER ROW */}
-                      <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input type="checkbox" checked={!!allocations['MASTER']} onChange={e => {const n = {...allocations}; if(e.target.checked) n['MASTER'] = 1; else delete n['MASTER']; setAllocations(n);}} className="w-5 h-5 rounded text-blue-600 border-slate-300 focus:ring-blue-500" />
-                          <div className="font-bold text-sm uppercase text-slate-800">Master / Office Stock <span className="text-[10px] text-slate-400 font-medium ml-1">(Cur: {txModal.products[0].currentStock})</span></div>
-                        </label>
-                        {allocations['MASTER'] !== undefined && <input type="number" min="1" required value={allocations['MASTER'] || ''} onChange={e=>setAllocations({...allocations, ['MASTER']: Number(e.target.value)})} className="w-24 px-3 py-2 border border-slate-300 rounded-lg font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-blue-500" placeholder="Qty" />}
-                      </div>
-
-                      {/* WAREHOUSE ROWS */}
-                      {warehouses.map(w => {
-                        const curStk = hubStock.find(h => String(h.warehouseId) === String(w.id) && (String(h.sku) === String(txModal.products[0].sku) || Number(h.productId) === Number(txModal.products[0].id)))?.quantity || 0;
-                        return (
-                          <div key={w.id} className="flex items-center justify-between px-3 py-1">
-                            <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={!!allocations[w.id]} onChange={e => {const n = {...allocations}; if(e.target.checked) n[w.id] = 1; else delete n[w.id]; setAllocations(n);}} className="w-5 h-5 rounded text-blue-600 border-slate-300 focus:ring-blue-500" /><div className="font-bold text-sm uppercase text-slate-700">{w.name} <span className="text-[10px] text-slate-400 font-medium ml-1">(Cur: {curStk})</span></div></label>
-                            {allocations[w.id] !== undefined && <input type="number" min="1" required value={allocations[w.id] || ''} onChange={e=>setAllocations({...allocations, [w.id]: Number(e.target.value)})} className="w-24 px-3 py-2 border border-slate-300 rounded-lg font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-blue-500" placeholder="Qty" />}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">True Physical Count (Master/Office Stock Only)</label><input type="number" required min="0" value={adjustQty} onChange={e=>setAdjustQty(e.target.value === '' ? '' : Number(e.target.value))} className="px-5 py-4 border border-indigo-300 rounded-xl text-xl font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 text-indigo-900 shadow-sm" /></div>
-                  )}
-                </>
+                  {/* DESTINATION SELECTION */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RECEIVE' ? 'text-emerald-700' : txModal.type === 'RETURN' ? 'text-sky-700' : 'text-rose-700'}`}>To (Destination Location)</label>
+                    {txModal.type === 'RECEIVE' ? (
+                       <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">Master / Office Stock</div>
+                    ) : txModal.type === 'ISSUE' ? (
+                       <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">External (Client / Buyer)</div>
+                    ) : (
+                       <select required value={movForm.destId} onChange={e=>setMovForm({...movForm, destId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400">
+                         <option value="">Select Destination...</option>
+                         {warehouses.map(w => <option key={w.id} value={w.id} disabled={movForm.sourceId === String(w.id)}>{w.name}</option>)}
+                       </select>
+                    )}
+                  </div>
+                </div>
               )}
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mt-2">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Product</th>
+                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Mst Stock</th>
+                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Hub Stock</th>
+                      <th className="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">{txModal.type === 'ADJUST' ? 'New True Master Qty' : 'Movement Qty'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {txModal.products.map(p => {
+                      const totalHubStock = hubStock.filter(h => 
+                        (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
+                        warehouses.some(w => String(w.id) === String(h.warehouseId))
+                      ).reduce((acc, val) => acc + val.quantity, 0);
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4"><div className="font-black text-sm uppercase text-slate-900">{p.name}</div><div className="text-[10px] font-medium text-slate-500">{p.sku}</div></td>
+                          <td className="p-4 text-sm font-bold text-slate-700">{p.currentStock}</td>
+                          <td className="p-4 text-sm font-bold text-slate-700">{totalHubStock}</td>
+                          <td className="p-4">
+                            <input 
+                              type="number" 
+                              min={txModal.type === 'ADJUST' ? "0" : "1"} 
+                              placeholder={txModal.type === 'ADJUST' ? String(p.currentStock) : "0"} 
+                              value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} 
+                              onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} 
+                              className={`w-32 px-4 py-2 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500 text-lg' : 'border-slate-300 focus:ring-blue-500'}`} 
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 border-t border-slate-200 pt-6 mt-2">
                 <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Ref #</label><input type="text" value={txForm.reference} onChange={e=>setTxForm({...txForm, reference: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-blue-500" /></div>
