@@ -257,6 +257,65 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }).catch(() => { showToast("Sync Error.", "error"); fetchAllData(); });
   };
 
+  // --- NEW: Ledger Cancel & Stock Reversal Engine ---
+  const handleCancelMovement = async (m: Movement) => {
+    if (!window.confirm(`DANGER: Cancel this ${m.type} transaction? This will reverse the physical stock counts and permanently delete the ledger record.`)) return;
+    setIsProcessing(true);
+
+    try {
+      const prod = products.find(p => p.id === m.productId);
+      if (!prod) throw new Error("Target product no longer exists in catalog.");
+
+      const q = m.quantity;
+      const apiPromises: Promise<any>[] = [];
+
+      // Mathematically invert whatever the original movement did
+      if (m.type === 'RECEIVE') {
+         apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: prod.currentStock - q }) }));
+      } else if (m.type === 'ISSUE') {
+         if (m.warehouseId) {
+            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: String(m.warehouseId), productId: prod.id, sku: prod.sku, quantity: q }) }));
+         } else {
+            apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: prod.currentStock + q }) }));
+         }
+      } else if (m.type === 'RETURN') {
+         apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: String(m.warehouseId), productId: prod.id, sku: prod.sku, quantity: -q }) }));
+         apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: prod.currentStock + q }) }));
+      } else if (m.type === 'ADJUST') {
+         const diff = m.previousStock - m.newStock; // Negative diff if stock went up
+         if (m.warehouseId) {
+            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: String(m.warehouseId), productId: prod.id, sku: prod.sku, quantity: diff }) }));
+         } else {
+            apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: prod.currentStock + diff }) }));
+         }
+      } else if (m.type === 'TRANSFER') {
+         const match = m.remarks?.match(/From WH-(\d+) to WH-(\d+)/);
+         if (match) {
+            const sourceId = parseInt(match[1], 10).toString();
+            const destId = parseInt(match[2], 10).toString();
+            // Invert the transfer
+            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: sourceId, productId: prod.id, sku: prod.sku, quantity: q }) }));
+            apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: -q }) }));
+         } else {
+            throw new Error("Cannot safely reverse. Missing precise Source/Dest locations.");
+         }
+      }
+
+      // 2. Destroy the original log record
+      apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements/${m.id}`, { method: 'DELETE' }));
+
+      await Promise.all(apiPromises);
+      showToast("Transaction safely cancelled and physical stock reverted.", "success");
+      fetchAllData();
+
+    } catch (e: any) {
+      showToast(e.message || "Failed to reverse transaction.", "error");
+      fetchAllData();
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const processDirectWarehouseAdjustment = async (warehouseId: string, prod: Product, deltaQty: number, remarks: string) => {
     setIsProcessing(true);
     const isAdd = deltaQty > 0;
@@ -886,7 +945,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               </div>
 
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
+                <table className="w-full text-left border-collapse min-w-[1100px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Timestamp</th>
@@ -916,7 +975,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           )}
                         </td>
                         <td className="py-4 px-5 text-right">
-                           <button onClick={() => handlePrintReceipt(m)} className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 text-[10px] font-bold uppercase hover:bg-slate-50 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 shadow-sm">PDF Receipt</button>
+                           <div className="flex justify-end gap-2">
+                             <button onClick={() => handlePrintReceipt(m)} className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 text-[10px] font-bold uppercase hover:bg-slate-50 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 shadow-sm">PDF Receipt</button>
+                             {isAuthorizedAdmin && (
+                               <button onClick={() => handleCancelMovement(m)} className="px-4 py-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-600 text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors opacity-0 group-hover:opacity-100 shadow-sm" title="Revert transaction and restore physical stock">Cancel</button>
+                             )}
+                           </div>
                         </td>
                       </tr>
                     ))}
@@ -1283,7 +1347,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:bg-slate-900/20 transition-all">
                         <button 
                           type="button" 
-                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl || '' }))} 
+                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl, previousImageUrl: '' }))} 
                           className="bg-slate-900 text-white px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-md hover:bg-slate-800 transition-transform hover:scale-105"
                         >
                           <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> Restore
