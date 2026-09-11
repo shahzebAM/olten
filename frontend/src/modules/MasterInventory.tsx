@@ -115,7 +115,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       const rawBase64 = reader.result as string;
       setProductForm((prev: any) => ({
         ...prev,
-        previousImageUrl: prev.imageUrl || prev.previousImageUrl || '',
+        previousImageUrl: prev.imageUrl ? prev.imageUrl : (prev.previousImageUrl || ''),
         imageUrl: rawBase64
       }));
     };
@@ -153,8 +153,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const handleBulkDelete = () => {
     if (!window.confirm(`Permanently delete ${selectedProductIds.length} items?`)) return;
-    const prodsToDelete = products.filter(p => selectedProductIds.includes(p.id));
-    
     setProducts((prev: Product[]) => prev.filter(p => !selectedProductIds.includes(p.id)));
     
     Promise.all(selectedProductIds.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })))
@@ -603,8 +601,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5">
                           <div className="flex items-center gap-4">
-                            {p.imageUrl ? (
-                              <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-xl object-cover border border-slate-200 cursor-pointer shadow-sm" onClick={() => setPreviewImage(p.imageUrl)} />
+                            {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
+                              <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-xl object-cover border border-slate-200 cursor-pointer shadow-sm" onClick={() => setPreviewImage(p.imageUrl || '')} />
                             ) : (
                               <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[8px] font-bold uppercase text-center text-slate-400 cursor-pointer" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
                             )}
@@ -897,7 +895,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   <input 
                     type="text" 
                     placeholder="Or Paste HTTPS URL..." 
-                    value={productForm.imageUrl?.length > 500 ? `[Local Image Attached - ${Math.round(productForm.imageUrl.length / 1024)}KB]` : productForm.imageUrl} 
+                    value={typeof productForm.imageUrl === 'string' && productForm.imageUrl.length > 500 ? `[Local Image Attached - ${Math.round(productForm.imageUrl.length / 1024)}KB]` : (productForm.imageUrl || '')} 
                     onChange={e=> {
                       const val = e.target.value;
                       if (val.includes('[Local Image Attached')) {
@@ -913,14 +911,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 {/* VAULT & LIVE PREVIEW INSIDE EDIT MODAL */}
                 <div className="flex gap-4 mt-4">
                   {/* Current Active Image */}
-                  {productForm.imageUrl && (
+                  {typeof productForm.imageUrl === 'string' && productForm.imageUrl.length > 0 && (
                     <div className="relative w-32 h-32 rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 group shrink-0 shadow-sm">
                       <img src={productForm.imageUrl.startsWith('data:') || productForm.imageUrl.startsWith('http') ? productForm.imageUrl : ''} alt="Current Preview" className="w-full h-full object-cover" />
                       <button 
                         type="button" 
                         onClick={() => {
-                          const toVault = productForm.imageUrl;
-                          if (productForm.sku && toVault.length > 5) globalImageVault[productForm.sku] = toVault;
+                          const toVault = productForm.imageUrl || '';
+                          if (productForm.sku && toVault.length > 5) {
+                             globalImageVault[productForm.sku] = toVault;
+                          }
                           setProductForm((prev: any) => ({
                             ...prev,
                             previousImageUrl: toVault,
@@ -936,13 +936,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   )}
 
                   {/* Vault Fallback Memory */}
-                  {productForm.previousImageUrl && productForm.previousImageUrl !== productForm.imageUrl && (
+                  {typeof productForm.previousImageUrl === 'string' && productForm.previousImageUrl.length > 0 && productForm.previousImageUrl !== productForm.imageUrl && (
                     <div className="relative w-32 h-32 rounded-2xl border-2 border-dashed border-slate-300 overflow-hidden bg-slate-50 shrink-0 group">
                       <img src={productForm.previousImageUrl} alt="Vault" className="w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300" />
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:bg-slate-900/20 transition-all">
                         <button 
                           type="button" 
-                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl }))} 
+                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl || '' }))} 
                           className="bg-slate-900 text-white px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-md hover:bg-slate-800 transition-transform hover:scale-105"
                         >
                           <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> Restore
