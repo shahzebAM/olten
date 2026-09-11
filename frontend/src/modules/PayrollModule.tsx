@@ -92,12 +92,13 @@ const TimePicker12h = ({ value, onChange, disabled = false, compact = false }: a
   );
 };
 
-const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false }: any) => {
+// ADDED COMPACT PROP FOR THE NEW PAYROLL MODAL
+const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false, compact = false }: any) => {
   const renderInput = () => {
     if (type === 'date') {
       return (
         <div className="relative w-full">
-          <div className={`w-full px-4 py-2.5 border rounded-lg text-sm shadow-sm flex items-center justify-between pointer-events-none ${disabled ? 'bg-slate-100 border-slate-200 text-slate-500' : 'bg-white border-slate-300 text-slate-800'}`}>
+          <div className={`w-full border rounded-lg shadow-sm flex items-center justify-between pointer-events-none ${compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'} ${disabled ? 'bg-slate-100 border-slate-200 text-slate-500' : 'bg-white border-slate-300 text-slate-800'}`}>
             <span>{value ? formatMDY(value) : 'MM/DD/YYYY'}</span>
             <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
           </div>
@@ -106,13 +107,13 @@ const InputField = ({ label, required = false, type = "text", placeholder = "", 
       );
     }
     return (
-      <input required={required} type={type} step={step} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none transition-all text-sm shadow-sm placeholder:text-slate-400 text-slate-800 ${disabled ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500' : 'bg-white border-slate-300 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600'}`} />
+      <input required={required} type={type} step={step} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} className={`w-full border rounded-lg focus:outline-none transition-all shadow-sm placeholder:text-slate-400 text-slate-800 ${compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'} ${disabled ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500' : 'bg-white border-slate-300 focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600'}`} />
     );
   };
 
   return (
-    <div className="flex flex-col gap-1.5 w-full">
-      <label className="text-sm font-medium text-slate-600">
+    <div className="flex flex-col gap-1 w-full">
+      <label className={`${compact ? 'text-[10px]' : 'text-sm'} font-medium text-slate-600`}>
         {label} {required && <span className="text-blue-600">*</span>}
       </label>
       {renderInput()}
@@ -433,7 +434,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const headers = ['System ID', 'Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
     const data = attendances.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
-const isLeave = a.timeIn === 'LEAVE';
+      const isLeave = a.timeIn === 'LEAVE';
       let niceTimeIn = isLeave ? a.timeIn : (a.timeIn ? format12Hour(a.timeIn) : 'MISSING');
       let niceTimeOut = isLeave ? a.timeOut : (a.timeOut ? format12Hour(a.timeOut) : 'MISSING');
       return [ a.employeeId, emp?.employeeId || '', a.date ? a.date.split('T')[0] : '', niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.hours, a.reason || 'Regular' ];
@@ -707,10 +708,23 @@ const handleImportAttendance = async (event: any) => {
     setFormData(prev => ({ ...prev, [field]: val }));
   };   
 
-const handleSubmitEmployee = async (e: React.FormEvent) => {
+  const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
       showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
+    }
+
+    // FRONTEND UNIQUE EMPLOYEE ID VALIDATION
+    const empIdToCheck = formData.employeeId.trim().toLowerCase();
+    const isDuplicate = employees.find(emp => 
+        emp.employeeId?.toLowerCase() === empIdToCheck && 
+        emp.id !== editingId && 
+        emp.company === selectedCompany
+    );
+
+    if (isDuplicate) {
+        showToast(`Employee ID "${formData.employeeId}" is already assigned to ${isDuplicate.firstName} ${isDuplicate.lastName}.`, "error");
+        return;
     }
 
     setIsSaving(true);
@@ -718,8 +732,7 @@ const handleSubmitEmployee = async (e: React.FormEvent) => {
       ...formData, 
       employeeId: formData.employeeId.trim(), 
       company: selectedCompany, 
-      baseRate: parseFloat(formData.baseRate), 
-      dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+      baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       middleName: formData.middleName?.trim() || null, 
       bankAccount: formData.bankAccount?.trim() || null, 
       tin: formData.tin?.trim() || null,
@@ -1411,55 +1424,55 @@ const handleSubmitEmployee = async (e: React.FormEvent) => {
       {/* PAYROLL MODAL (COMPUTE) */}
       {isPayrollModalOpen && activeEmployee && computed && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-emerald-50/50 shrink-0">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
-                <h2 className="text-lg sm:text-xl font-bold text-emerald-950">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
-                <p className="text-xs sm:text-sm text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
+                <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
+                <p className="text-[10px] sm:text-xs text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
               </div>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
+              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
             </div>
-            <div className="overflow-y-auto p-4 sm:p-5 lg:p-6 grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-8 items-start">
-              <div className="space-y-4 sm:space-y-5">
-                <h3 className="font-bold text-slate-800 border-b pb-2 text-sm uppercase tracking-wider">Time & Attendance</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  <InputField type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
+            <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
+              <div className="space-y-3">
+                <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
+                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
+                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
                 </div>
-                <h3 className="font-bold text-slate-800 border-b pb-2 mt-4 text-sm uppercase tracking-wider">Deductions</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 items-start">
+                <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
                   <div className="flex flex-col w-full">
-                    <InputField type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
+                    <InputField compact type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
                     {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
-                      <span className="text-[10px] font-bold text-amber-600 mt-1 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}</span>
+                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}</span>
                     )}
                   </div>
                   <div className="flex flex-col w-full">
-                    <InputField type="number" step="0.01" label="Company Loan" value={payrollData.companyLoan} onChange={(e: any) => setPayrollData({...payrollData, companyLoan: e.target.value})} />
+                    <InputField compact type="number" step="0.01" label="Company Loan" value={payrollData.companyLoan} onChange={(e: any) => setPayrollData({...payrollData, companyLoan: e.target.value})} />
                     {(activeEmployee?.loanBalance || 0) > 0 && (
-                      <span className="text-[10px] font-bold text-amber-600 mt-1 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.loanBalance || 0) - (parseFloat(payrollData.companyLoan) || 0)))}</span>
+                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.loanBalance || 0) - (parseFloat(payrollData.companyLoan) || 0)))}</span>
                     )}
                   </div>
-                  <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
-                  <InputField type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG MP" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG Housing" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="SSS Provident" value={payrollData.sssProvident} onChange={(e: any) => setPayrollData({...payrollData, sssProvident: e.target.value})} />
-                  <InputField type="number" step="0.01" label="SSS Salary" value={payrollData.sssSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, sssSalaryLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="SSS Calamity" value={payrollData.sssCalamityLoan} onChange={(e: any) => setPayrollData({...payrollData, sssCalamityLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG Salary" value={payrollData.pagIbigSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigSalaryLoan: e.target.value})} />
-                  <InputField type="number" step="0.01" label="Pag-IBIG Calamity" value={payrollData.pagIbigCalamity} onChange={(e: any) => setPayrollData({...payrollData, pagIbigCalamity: e.target.value})} />
-                  <div className="flex flex-col justify-end w-full h-full pb-0.5">
-                    <label className={`flex items-center gap-2.5 p-2.5 border rounded-lg cursor-pointer transition-colors shadow-sm ${payrollData.isDeclared ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
-                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0"/>
+                  <InputField compact type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Pag-IBIG MP" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Pag-IBIG Housing" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="SSS Provident" value={payrollData.sssProvident} onChange={(e: any) => setPayrollData({...payrollData, sssProvident: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="SSS Salary" value={payrollData.sssSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, sssSalaryLoan: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="SSS Calamity" value={payrollData.sssCalamityLoan} onChange={(e: any) => setPayrollData({...payrollData, sssCalamityLoan: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Pag-IBIG Salary" value={payrollData.pagIbigSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigSalaryLoan: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Pag-IBIG Calamity" value={payrollData.pagIbigCalamity} onChange={(e: any) => setPayrollData({...payrollData, pagIbigCalamity: e.target.value})} />
+                  <div className="flex flex-col justify-end w-full h-full sm:col-span-2">
+                    <label className={`flex items-center gap-2 p-1.5 border rounded-lg cursor-pointer transition-colors shadow-sm h-[42px] ${payrollData.isDeclared ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
+                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-3.5 h-3.5 ml-1 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0"/>
                       <div className="flex flex-col">
-                        <span className="text-xs font-bold text-slate-800 leading-none">Declared Salary</span>
+                        <span className="text-[10px] font-bold text-slate-800 leading-none mt-0.5">Declared Salary</span>
                         {payrollData.isDeclared ? (
-                          <span className="text-[10px] font-mono font-bold text-rose-600 mt-1.5">-₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})} Tax</span>
+                          <span className="text-[9px] font-mono font-bold text-rose-600 mt-1">-₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})} Tax</span>
                         ) : (
-                          <span className="text-[10px] text-slate-500 mt-1.5 leading-none">Apply BIR Tax</span>
+                          <span className="text-[9px] text-slate-500 mt-1">Apply BIR Tax</span>
                         )}
                       </div>
                     </label>
@@ -1467,43 +1480,43 @@ const handleSubmitEmployee = async (e: React.FormEvent) => {
                 </div>
               </div>
 
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 flex flex-col">
-                <h3 className="font-bold text-slate-800 border-b pb-2 mb-4">Calculation Breakdown</h3>
-                <div className="space-y-3 text-sm flex-1">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col h-full">
+                <h3 className="font-bold text-slate-800 border-b pb-1.5 mb-2.5 text-[11px] uppercase tracking-wider">Calculation Breakdown</h3>
+                <div className="space-y-1 text-xs flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   {computed.otHrs > 0 && (
-                    <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-100 mt-2 mb-2">
+                    <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
                       <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
                   {computed.undertimeDeduction > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-2 rounded">
+                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded text-[11px]">
                       <span>Lates/Undertime Deduction:</span> 
                       <span className="font-mono">- ₱{computed.undertimeDeduction.toFixed(2)}</span>
                     </div>
                   )}
-                  <hr className="my-2" />
-                  <div className="flex justify-between font-bold text-slate-800"><span>Gross Pay:</span> <span className="font-mono text-base sm:text-lg">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                  <hr className="my-1.5 border-slate-200" />
+                  <div className="flex justify-between font-bold text-slate-800 text-sm"><span>Gross Pay:</span> <span className="font-mono">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
                   {computed.autoTax > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-2 rounded border border-rose-100">
+                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-100 text-[11px]">
                       <span>Withholding Tax (Auto):</span> 
                       <span className="font-mono">- ₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-rose-600"><span>Total Deductions:</span> <span className="font-mono">- ₱{computed.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                  <div className="flex justify-between text-rose-600 font-semibold text-[11px]"><span>Total Deductions:</span> <span className="font-mono">- ₱{computed.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
                 </div>
 
-                <div className="mt-6 p-4 bg-emerald-950 text-white rounded-xl shadow-inner text-center overflow-hidden shrink-0">
-                  <p className="text-emerald-200 text-sm font-semibold uppercase tracking-wider mb-1">Final Net Pay</p>
-                  <p className="text-4xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                <div className="mt-3 p-3 bg-emerald-950 text-white rounded-xl shadow-inner text-center overflow-hidden shrink-0">
+                  <p className="text-emerald-200 text-[10px] font-semibold uppercase tracking-widest mb-0.5">Final Net Pay</p>
+                  <p className="text-3xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
                 </div>
 
-                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-4 w-full py-3 sm:py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm sm:text-base shrink-0">
-                  {isSaving ? "Saving to Database..." : "Close & Save Payroll"}
+                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
+                  {isSaving ? "Saving..." : "Close & Save"}
                 </button>
               </div>
             </div>
