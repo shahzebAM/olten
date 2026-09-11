@@ -92,6 +92,7 @@ const TimePicker12h = ({ value, onChange, disabled = false, compact = false }: a
   );
 };
 
+// ADDED COMPACT PROP FOR THE NEW PAYROLL MODAL
 const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false, compact = false }: any) => {
   const renderInput = () => {
     if (type === 'date') {
