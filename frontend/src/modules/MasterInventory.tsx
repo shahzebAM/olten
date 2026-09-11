@@ -97,7 +97,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setTxModal({ isOpen: true, products: [product], type });
     setAllocations({}); setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
     setTransferForm({ source: '', destination: '', quantity: '' });
-    setAdjustQty(product.currentStock); // Pre-fill adjust form with current master stock
+    setAdjustQty(product.currentStock);
   };
 
   const openBulkTx = (type: any) => {
@@ -275,11 +275,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     if (!window.confirm("CRITICAL WARNING: This will permanently wipe ALL stock quantities across ALL warehouses. Your Master/Office Stock will NOT be touched. Proceed?")) return;
     setIsProcessing(true);
     try {
-      await fetch(`${API_BASE_URL}/warehouse-stock/clear/${selectedCompany}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/warehouse-stock/clear/${selectedCompany}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Backend not updated yet. Redeploy your live backend.");
       showToast("All hub stocks wiped successfully.", "success");
       fetchAllData();
-    } catch (e) { 
-      showToast("Failed to clear hub stocks.", "error"); 
+    } catch (e: any) { 
+      showToast(e.message || "Failed to clear hub stocks.", "error"); 
       fetchAllData();
     } finally { setIsProcessing(false); }
   };
@@ -636,7 +637,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5">
                           {(() => {
-                            const totalHubStock = hubStock.filter(h => String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)).reduce((acc, val) => acc + val.quantity, 0);
+                            // --- GHOST FILTER: Only count stock if the warehouse actually exists in the db ---
+                            const totalHubStock = hubStock.filter(h => 
+                              (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
+                              warehouses.some(w => String(w.id) === String(h.warehouseId))
+                            ).reduce((acc, val) => acc + val.quantity, 0);
+                            
                             return <div className="text-lg font-black text-slate-700">{totalHubStock} <span className="text-xs text-slate-400">{p.unit}</span></div>;
                           })()}
                         </td>
@@ -1040,7 +1046,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {txModal.products.map(p => {
-                          const totalHubStock = hubStock.filter(h => String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)).reduce((acc, val) => acc + val.quantity, 0);
+                          const totalHubStock = hubStock.filter(h => 
+                            (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
+                            warehouses.some(w => String(w.id) === String(h.warehouseId))
+                          ).reduce((acc, val) => acc + val.quantity, 0);
                           return (
                             <tr key={p.id}>
                               <td className="p-4"><div className="font-black text-sm uppercase text-slate-900">{p.name}</div><div className="text-[10px] font-medium text-slate-500">{p.sku}</div></td>
