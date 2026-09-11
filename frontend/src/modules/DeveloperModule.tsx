@@ -16,18 +16,8 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
 
   const handleToggle = (moduleKey: string) => {
     setGlobalModules((prev: any) => {
-      let updated = { ...prev };
-      
-      // If toggling Master Inventory, synchronize all three underlying sub-modules
-      if (moduleKey === 'master_inventory') {
-        const nextState = !prev.inventory;
-        updated.inventory = nextState;
-        updated.products = nextState;
-        updated.warehouses = nextState;
-      } else {
-        updated[moduleKey] = !prev[moduleKey];
-      }
-
+      // Direct toggle mapping since master_inventory is now unified
+      const updated = { ...prev, [moduleKey]: !prev[moduleKey] };
       localStorage.setItem('dev_global_modules', JSON.stringify(updated));
       return updated;
     });
@@ -39,9 +29,7 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
     const defaults = {
       payroll: true,
       ai_docs: true,
-      products: true,
-      inventory: true,
-      warehouses: true,
+      master_inventory: true,
       purchasing: true,
       sales: true
     };
@@ -55,7 +43,8 @@ export default function DeveloperModule({ onLogout, globalModules, setGlobalModu
       key: 'master_inventory',
       label: 'Master Inventory Control',
       description: 'Consolidated master catalog, stock ledger audit, and warehouse facilities.',
-      isActive: Boolean(globalModules.inventory && globalModules.products)
+      // Fallback to legacy 'inventory' key if mapping an older browser cache
+      isActive: Boolean(globalModules.master_inventory ?? globalModules.inventory ?? true)
     },
     {
       key: 'purchasing',

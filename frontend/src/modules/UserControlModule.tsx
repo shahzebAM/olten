@@ -38,9 +38,7 @@ export default function UserControlModule({
     modules: {
       payroll: false,
       ai_docs: false,
-      inventory: true,
-      products: true,
-      warehouses: true,
+      master_inventory: true, // Replaces inventory, products, and warehouses
       purchasing: false,
       sales: false,
       companies: {} as Record<string, boolean>
@@ -70,9 +68,8 @@ export default function UserControlModule({
       modules: {
         payroll: Boolean(user.modules?.payroll),
         ai_docs: Boolean(user.modules?.ai_docs),
-        inventory: Boolean(user.modules?.inventory ?? true),
-        products: Boolean(user.modules?.products ?? true),
-        warehouses: Boolean(user.modules?.warehouses ?? true),
+        // Fallback to legacy 'inventory' key if mapping an older DB record
+        master_inventory: Boolean(user.modules?.master_inventory ?? user.modules?.inventory ?? true),
         purchasing: Boolean(user.modules?.purchasing),
         sales: Boolean(user.modules?.sales),
         companies: user.modules?.companies || {}
@@ -84,14 +81,7 @@ export default function UserControlModule({
   const handleModuleToggle = (moduleKey: string) => {
     setFormData(prev => {
       const nextModules = { ...prev.modules };
-      if (moduleKey === 'inventory') {
-        const toggled = !nextModules.inventory;
-        nextModules.inventory = toggled;
-        nextModules.products = toggled;
-        nextModules.warehouses = toggled;
-      } else {
-        (nextModules as any)[moduleKey] = !(nextModules as any)[moduleKey];
-      }
+      (nextModules as any)[moduleKey] = !(nextModules as any)[moduleKey];
       return { ...prev, modules: nextModules };
     });
   };
@@ -110,7 +100,7 @@ export default function UserControlModule({
     });
   };
 
- const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
 
@@ -139,7 +129,6 @@ export default function UserControlModule({
       });
 
       if (!res.ok) {
-        // 🔥 Catch the specific NestJS backend error message
         const errorData = await res.json().catch(() => ({}));
         const backendMessage = Array.isArray(errorData.message) 
           ? errorData.message.join(', ') 
@@ -151,7 +140,6 @@ export default function UserControlModule({
       setModalOpen(false);
       fetchAdmins();
     } catch (err: any) {
-      // Display the actual backend error on the screen
       showToast(err.message || "Operation failed. Verify database connectivity.", "error");
     } finally {
       setIsProcessing(false);
@@ -253,7 +241,8 @@ export default function UserControlModule({
                           <span className="text-xs font-bold text-purple-700 uppercase">Universal System Clearance</span>
                         ) : (
                           <div className="flex flex-wrap gap-1.5">
-                            {user.modules?.inventory && <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 font-bold text-[10px] uppercase">Master Inventory</span>}
+                            {/* Check both old and new keys for backward compatibility display */}
+                            {(user.modules?.master_inventory || user.modules?.inventory) && <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 font-bold text-[10px] uppercase">Master Inventory</span>}
                             {user.modules?.purchasing && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Purchasing</span>}
                             {user.modules?.sales && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Sales</span>}
                             {user.modules?.payroll && <span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] uppercase">Payroll</span>}
@@ -355,8 +344,8 @@ export default function UserControlModule({
                       <label className="flex items-center gap-3 cursor-pointer">
                         <input 
                           type="checkbox" 
-                          checked={formData.modules.inventory} 
-                          onChange={() => handleModuleToggle('inventory')}
+                          checked={formData.modules.master_inventory} 
+                          onChange={() => handleModuleToggle('master_inventory')}
                           className="w-5 h-5 border-2 border-slate-900" 
                         />
                         <span className="font-bold text-xs uppercase">Master Inventory (Catalog & Hubs)</span>
