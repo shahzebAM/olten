@@ -9,7 +9,7 @@ datasource db {
 }
 
 model Employee {
-  id                     Int          @id @default(autoincrement())
+  id                     Int      @id @default(autoincrement())
   employeeId             String?
   firstName              String
   middleName             String?
@@ -19,25 +19,27 @@ model Employee {
   civilStatus            String
   baseRate               Float
   employmentStatus       String
-  tin                    String?      @unique
-  sssNumber              String?      @unique
-  philhealth             String?      @unique
-  pagIbig                String?      @unique
+  tin                    String?  @unique
+  sssNumber              String?  @unique
+  philhealth             String?  @unique
+  pagIbig                String?  @unique
   bankAccount            String?
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @default(now()) @updatedAt
-  cashAdvanceBalance     Float        @default(0)
-  cashAdvanceInstallment Float        @default(0)
-  company                String       @default("Olten")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @default(now()) @updatedAt
+  cashAdvanceBalance     Float    @default(0)
+  cashAdvanceInstallment Float    @default(0)
+  company                String   @default("Olten")
+  
   attendances            Attendance[]
   payrolls               Payroll[]
+  inventoryMovements     InventoryMovement[]  // Ties employee to stock audits
 }
 
 model Admin {
   id       Int    @id @default(autoincrement())
   username String @unique
   password String
-  role     String @default("Super Admin")
+  role     String @default("Admin") // CRITICAL FIX: Prevent accidental Super Admin creation
   modules  Json?
   status   String @default("Active")
 }
@@ -143,7 +145,7 @@ model InventoryMovement {
   productId     Int
   productName   String
   sku           String
-  type          String   // 'RECEIVE' | 'ISSUE' | 'ADJUST'
+  type          String   // 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER'
   quantity      Int
   previousStock Int
   newStock      Int
@@ -152,15 +154,27 @@ model InventoryMovement {
   date          DateTime @default(now())
   user          String
   company       String
+
+  // --- Deep Accountability & Tracking ---
+  batchNumber    String?
+  expirationDate DateTime?
+  
+  warehouseId    Int?
+  warehouse      Warehouse? @relation(fields: [warehouseId], references: [id])
+  
+  employeeId     Int?
+  employee       Employee?  @relation(fields: [employeeId], references: [id])
 }
 
 model Warehouse {
-  id          String   @id @default(uuid())
-  company     String
-  name        String
-  location    String
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  company   String   // Ties the warehouse to the specific workspace
+  name      String   // e.g., "Main Medical Depot"
+  address   String   @default("Not Specified") 
+  status    String   @default("Active") // "Active" or "Inactive"
+  createdAt DateTime @default(now())
+
+  inventoryMovements InventoryMovement[] // Tracks all ledger items hitting this warehouse
 }
 
 model WarehouseStock {
@@ -176,45 +190,45 @@ model WarehouseStock {
 }
 
 model WarehouseTransfer {
-  id              String   @id @default(uuid())
-  sourceId        String
-  destinationId   String
-  productId       Int
-  sku             String
-  quantity        Int
-  transferDate    DateTime @default(now())
-  reference       String?
-  user            String
-  company         String
+  id            String   @id @default(uuid())
+  sourceId      String
+  destinationId String
+  productId     Int
+  sku           String
+  quantity      Int
+  transferDate  DateTime @default(now())
+  reference     String?
+  user          String
+  company       String
 }
 
 model Supplier {
-  id        String   @id @default(uuid())
-  company   String
-  name      String
-  contact   String?
-  phone     String?
-  email     String?
-  balance   Float    @default(0) 
-  isActive  Boolean  @default(true)
-  pos       PurchaseOrder[]
+  id       String          @id @default(uuid())
+  company  String
+  name     String
+  contact  String?
+  phone    String?
+  email    String?
+  balance  Float           @default(0) 
+  isActive Boolean         @default(true)
+  pos      PurchaseOrder[]
 }
 
 model PurchaseOrder {
-  id          String   @id @default(uuid())
+  id          String              @id @default(uuid())
   company     String
   poNumber    String
   supplierId  String
-  supplier    Supplier @relation(fields: [supplierId], references: [id])
-  date        DateTime @default(now())
-  status      String   @default("PENDING") // PENDING, APPROVED, RECEIVED, CANCELLED
-  totalAmount Float    @default(0)
+  supplier    Supplier            @relation(fields: [supplierId], references: [id])
+  date        DateTime            @default(now())
+  status      String              @default("PENDING") // PENDING, APPROVED, RECEIVED, CANCELLED
+  totalAmount Float               @default(0)
   items       PurchaseOrderItem[]
   user        String
 }
 
 model PurchaseOrderItem {
-  id          String @id @default(uuid())
+  id          String        @id @default(uuid())
   poId        String
   po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
   productId   Int

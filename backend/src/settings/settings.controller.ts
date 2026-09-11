@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -6,6 +6,10 @@ const prisma = new PrismaClient();
 @Controller('settings')
 export class SettingsController {
   
+  // ==========================================
+  // 1. SHIFT SETTINGS
+  // ==========================================
+
   @Get()
   async getSettings(@Query('company') company: string) {
     if (!company) return []; 
@@ -56,6 +60,57 @@ export class SettingsController {
       }
     } catch (error: any) {
       console.error("POST Settings Error:", error);
+      throw new HttpException(`Database error: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // ==========================================
+  // 2. WAREHOUSE MANAGEMENT
+  // ==========================================
+
+  @Get('warehouses')
+  async getWarehouses(@Query('company') company: string) {
+    if (!company) return [];
+    try {
+      return await prisma.warehouse.findMany({
+        where: { company: company },
+        orderBy: { id: 'asc' }
+      });
+    } catch (error) {
+      console.error("GET Warehouses Error:", error);
+      return [];
+    }
+  }
+
+  @Post('warehouses')
+  async createWarehouse(@Body() data: { company: string, name: string, address: string, status: string }) {
+    if (!data.company || !data.name || !data.address) {
+      throw new HttpException("Missing required fields", HttpStatus.BAD_REQUEST);
+    }
+    try {
+      return await prisma.warehouse.create({
+        data: {
+          company: data.company,
+          name: data.name,
+          address: data.address,
+          status: data.status || 'Active'
+        }
+      });
+    } catch (error: any) {
+      console.error("POST Warehouse Error:", error);
+      throw new HttpException(`Database error: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Patch('warehouses/:id')
+  async updateWarehouseStatus(@Param('id') id: string, @Body() data: { status: string }) {
+    try {
+      return await prisma.warehouse.update({
+        where: { id: parseInt(id) },
+        data: { status: data.status }
+      });
+    } catch (error: any) {
+      console.error("PATCH Warehouse Error:", error);
       throw new HttpException(`Database error: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }

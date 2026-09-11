@@ -1,5 +1,8 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 @Controller() 
 export class EmployeesController {
@@ -80,5 +83,33 @@ export class EmployeesController {
   @Post('settings')
   async updateSettings(@Body() data: any) {
     return await this.employeesService.updateSettings(data);
+  }
+
+  // ==========================================
+  // ADMINS / USER CONTROL
+  // ==========================================
+  @Get('admins')
+  async getAdmins() {
+    return await prisma.admin.findMany();
+  }
+
+  @Post('admins')
+  async createAdmin(@Body() data: any) {
+    return await prisma.admin.create({ data });
+  }
+
+  @Patch('admins/:id')
+  async updateAdmin(@Param('id') id: string, @Body() data: any) {
+    return await prisma.admin.update({
+      where: { id: Number(id) },
+      data
+    });
+  }
+
+  @Delete('admins/:id')
+  async deleteAdmin(@Param('id') id: string) {
+    return await prisma.admin.delete({
+      where: { id: Number(id) }
+    });
   }
 }

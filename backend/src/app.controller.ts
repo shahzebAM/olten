@@ -21,7 +21,6 @@ export class AppController {
   // AUTHENTICATION & ADMIN ROUTES
   // ==========================================
 
-  // Catches requests to /auth/setup, /api/auth/setup, or /setup
   @Post(['auth/setup', 'api/auth/setup', 'setup', 'api/setup'])
   async setupAdmin(@Body() body: any) {
     const { username, password } = body;
@@ -33,21 +32,23 @@ export class AppController {
     
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // First admin ever created is forced to be a Super Admin
+    // First admin ever created gets access to everything
     await prisma.admin.create({ 
-      // @ts-ignore (Ignores temporary VS code warning)
-      data: { username, password: hashedPassword, role: 'Super Admin' } 
+      data: { 
+        username, 
+        password: hashedPassword, 
+        role: 'Super Admin',
+        modules: { payroll: true, ai_docs: true, inventory: true, sales: true, purchasing: true }
+      } 
     });
     
     return { message: "Setup complete!" };
   }
 
-  // Catches requests to /auth/login, /api/auth/login, /login, or /api/login
   @Post(['auth/login', 'api/auth/login', 'login', 'api/login'])
   async login(@Body() body: any) {
     const { username, password } = body;
     
-    // 1. Find the user (using the globally instantiated 'prisma', NOT 'this.prisma')
     const admin = await prisma.admin.findFirst({
       where: { username: username.toLowerCase() }
     });
@@ -56,7 +57,6 @@ export class AppController {
       throw new UnauthorizedException('Access Denied: Invalid credentials.');
     }
 
-    // 2. Securely compare the provided password against the database hash
     const isPasswordValid = await bcrypt.compare(password, admin.password);
     
     if (!isPasswordValid) {
@@ -66,28 +66,22 @@ export class AppController {
     return { message: "Login successful!" };
   }
 
-  // Catches requests to /admins or /api/admins
   @Get(['admins', 'api/admins'])
   async getAdmins() {
     const admins = await prisma.admin.findMany();
     return admins.map(a => ({
       id: a.id,
       username: a.username,
-      // @ts-ignore
-      role: a.role || 'Admin', // Pulls the real role from the database!
-      // FIXED: Actually return the modules to the frontend so checkboxes stay checked!
-      // @ts-ignore
-      modules: a.modules || { payroll: false, ai_docs: false }, 
+      role: a.role || 'Admin', 
+      modules: a.modules || { payroll: false, ai_docs: false, inventory: false, sales: false, purchasing: false }, 
       status: 'Active'
     }));
   }
 
   @Post(['admins', 'api/admins'])
   async createAdmin(@Body() body: any) {
-    // FIXED: Extract the modules from the frontend payload
     const { username, password, modules } = body; 
     
-    // FIXED: Case-insensitive check to prevent duplicate names like "admin" and "Admin"
     const admins = await prisma.admin.findMany();
     const existing = admins.find(a => a.username.toLowerCase() === username.toLowerCase());
     
@@ -95,13 +89,11 @@ export class AppController {
     
     const hashedPassword = await bcrypt.hash(password, 10);
     await prisma.admin.create({ 
-      // @ts-ignore
       data: { 
         username, 
         password: hashedPassword, 
         role: 'Admin',
-        // FIXED: Save the modules to the database when adding a user!
-        modules: modules || { payroll: false, ai_docs: false } 
+        modules: modules || { payroll: false, ai_docs: false, inventory: false, sales: false, purchasing: false } 
       } 
     });
     
@@ -129,17 +121,13 @@ export class AppController {
     const targetAdmin = await prisma.admin.findUnique({ where: { id } });
     if (!targetAdmin) throw new NotFoundException("Admin not found");
 
-    // Protect the last Super Admin from being demoted
     if (body.role !== 'Super Admin') {
-      // @ts-ignore
       const superAdminCount = await prisma.admin.count({ where: { role: 'Super Admin' } });
-      // @ts-ignore
       if (targetAdmin.role === 'Super Admin' && superAdminCount <= 1) {
         throw new HttpException('System must have at least one Super Admin', HttpStatus.FORBIDDEN);
       }
     }
     
-    // @ts-ignore
     await prisma.admin.update({ where: { id }, data: { role: body.role } });
     return { message: "Role updated" };
   }
@@ -154,7 +142,6 @@ export class AppController {
 
     await prisma.admin.update({ 
       where: { id }, 
-      // @ts-ignore
       data: { modules: body.modules } 
     });
     return { message: "Module access updated" };
@@ -165,10 +152,7 @@ export class AppController {
     const targetAdmin = await prisma.admin.findUnique({ where: { id } });
     if (!targetAdmin) throw new NotFoundException("Admin not found");
 
-    // Protect the last Super Admin from being deleted
-    // @ts-ignore
     if (targetAdmin.role === 'Super Admin') {
-      // @ts-ignore
       const superAdminCount = await prisma.admin.count({ where: { role: 'Super Admin' } });
       if (superAdminCount <= 1) {
         throw new HttpException('Cannot delete the last Super Admin', HttpStatus.FORBIDDEN);

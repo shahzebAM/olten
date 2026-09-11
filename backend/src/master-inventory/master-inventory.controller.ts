@@ -1,0 +1,206 @@
+import { Controller, Get, Post, Body, Query, Delete, Param, Patch, Header, NotFoundException } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+
+@Controller() // Empty base controller so we can specify exact paths below
+export class MasterInventoryController {
+  private prisma = new PrismaClient();
+
+  // ==========================================
+  // 1. PRODUCTS (Master Catalog)
+  // ==========================================
+  @Post('products')
+  async createProduct(@Body() data: any) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.create({
+          data: {
+            company: data.company,
+            name: data.name,
+            sku: data.sku,
+            category: data.category,
+            purchasePrice: parseFloat(data.purchasePrice) || 0,
+            sellingPrice: parseFloat(data.sellingPrice) || 0,
+            minQuantity: parseInt(data.minQuantity) || 10,
+            reorderLevel: parseInt(data.reorderLevel) || 20,
+            unit: data.unit || 'pcs',
+            vatSetting: data.vatSetting || 'NONE',
+            currentStock: parseInt(data.initialQuantity) || 0,
+            imageUrl: data.imageUrl || null,
+            barcode: data.barcode || null,
+            createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+          }
+        });
+
+        if (data.initialQuantity && parseInt(data.initialQuantity) > 0) {
+          await tx.inventoryMovement.create({
+            data: {
+              company: data.company,
+              productId: product.id,
+              productName: product.name,
+              sku: product.sku,
+              type: 'RECEIVE',
+              quantity: parseInt(data.initialQuantity),
+              previousStock: 0,
+              newStock: parseInt(data.initialQuantity),
+              remarks: 'Initial System Entry',
+              user: data.username || 'System Admin',
+              warehouseId: data.warehouseId ? parseInt(data.warehouseId) : null,
+              employeeId: data.employeeId ? parseInt(data.employeeId) : null,
+              batchNumber: data.batchNumber || null,
+              expirationDate: data.expirationDate ? new Date(data.expirationDate).toISOString() : null,
+            }
+          });
+
+          if (data.warehouseId) {
+             await tx.warehouseStock.create({
+               data: {
+                 company: data.company,
+                 warehouseId: data.warehouseId.toString(),
+                 productId: product.id,
+                 sku: product.sku,
+                 quantity: parseInt(data.initialQuantity)
+               }
+             });
+          }
+        }
+        return product;
+      });
+    } catch (error: any) {
+      throw new Error(`Unified Product Creation Error: ${error.message}`);
+    }
+  }
+
+  @Get('products')
+  async findAllProducts(@Query('company') company: string) {
+    if (!company) return [];
+    return this.prisma.product.findMany({ where: { company }, orderBy: { id: 'desc' } });
+  }
+
+  @Patch('products/:id')
+  async updateProduct(@Param('id') id: string, @Body() data: any) {
+    const updateData = { ...data };
+    if (updateData.createdAt) updateData.createdAt = new Date(updateData.createdAt);
+    if (updateData.deletedAt) updateData.deletedAt = new Date(updateData.deletedAt);
+    return this.prisma.product.update({ where: { id: parseInt(id) }, data: updateData });
+  }
+
+  @Delete('products/:id')
+  async removeProduct(@Param('id') id: string) {
+    return this.prisma.product.delete({ where: { id: parseInt(id) } });
+  }
+
+
+  // ==========================================
+  // 2. INVENTORY MOVEMENTS (Ledger)
+  // ==========================================
+  @Post('inventory-movements')
+  async createMovement(@Body() data: any) {
+    return this.prisma.inventoryMovement.create({
+      data: {
+        productId: data.productId,
+        productName: data.productName,
+        sku: data.sku,
+        type: data.type,
+        quantity: data.quantity,
+        previousStock: data.previousStock,
+        newStock: data.newStock,
+        reference: data.reference,
+        remarks: data.remarks,
+        user: data.user,
+        company: data.company,
+        date: new Date(),
+        batchNumber: data.batchNumber || null,
+        expirationDate: data.expirationDate ? new Date(data.expirationDate).toISOString() : null,
+        warehouseId: data.warehouseId ? parseInt(data.warehouseId) : null,
+        employeeId: data.employeeId ? parseInt(data.employeeId) : null,
+      }
+    });
+  }
+
+  @Get('inventory-movements')
+  async findAllMovements(@Query('company') company: string) {
+    return this.prisma.inventoryMovement.findMany({
+      where: { company },
+      orderBy: { date: 'desc' },
+      include: { warehouse: true, employee: true }
+    });
+  }
+
+  @Delete('inventory-movements/clear/:company')
+  async clearHistory(@Param('company') company: string) {
+    return this.prisma.inventoryMovement.deleteMany({ where: { company } });
+  }
+
+
+  // ==========================================
+  // 3. WAREHOUSE DIRECTORY
+  // ==========================================
+  @Post('warehouses')
+  async createWarehouse(@Body() data: any) {
+    return this.prisma.warehouse.create({
+      data: {
+        company: data.company,
+        name: data.name,
+        address: data.location || data.address || 'Not Specified',
+        status: data.status || 'Active',
+      }
+    });
+  }
+
+  @Get('warehouses')
+  async findAllWarehouses(@Query('company') company: string) {
+    if (!company) return [];
+    return this.prisma.warehouse.findMany({ where: { company }, orderBy: { id: 'asc' } });
+  }
+
+  @Patch('warehouses/:id')
+  async updateWarehouse(@Param('id') id: string, @Body() data: any) {
+    return this.prisma.warehouse.update({
+      where: { id: parseInt(id) },
+      data: { name: data.name, address: data.location || data.address, status: data.status }
+    });
+  }
+
+  @Delete('warehouses/:id')
+  async removeWarehouse(@Param('id') id: string) {
+    return this.prisma.warehouse.delete({ where: { id: parseInt(id) } });
+  }
+
+
+  // ==========================================
+  // 4. WAREHOUSE STOCK (Live Hub Balances)
+  // ==========================================
+  @Post('warehouse-stock')
+  async assignStock(@Body() data: any) {
+    const safeProductId = parseInt(data.productId);
+    const safeWarehouseId = String(data.warehouseId); 
+    const safeQuantity = parseInt(data.quantity);
+
+    const existingStock = await this.prisma.warehouseStock.findFirst({
+      where: { warehouseId: safeWarehouseId, productId: safeProductId }
+    });
+
+    if (existingStock) {
+      return this.prisma.warehouseStock.update({
+        where: { id: existingStock.id },
+        data: { quantity: existingStock.quantity + safeQuantity, lastUpdated: new Date() }
+      });
+    } else {
+      return this.prisma.warehouseStock.create({
+        data: {
+          warehouseId: safeWarehouseId,
+          productId: safeProductId,
+          sku: data.sku,
+          quantity: safeQuantity,
+          company: data.company
+        }
+      });
+    }
+  }
+
+  @Get('warehouse-stock')
+  async getStock(@Query('company') company: string) {
+    if (!company) return [];
+    return this.prisma.warehouseStock.findMany({ where: { company } });
+  }
+}
