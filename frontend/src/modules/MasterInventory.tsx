@@ -10,6 +10,7 @@ interface WarehouseStock { id: string; warehouseId: string; productId: number; s
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
 let currentValidImages: Record<string, string> = {};
+let deletedImageVault: Record<string, string> = {}; // Fixed: Explicitly declared the Recycle Bin
 
 export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
   
@@ -686,13 +687,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               )}
 
               <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-sm">
-                <table className="w-full text-left border-collapse min-w-[1100px]">
+                <table className="w-full text-left border-collapse min-w-[1200px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
                       <th className="py-4 px-5 w-12 text-center">
                         <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-4 h-4 rounded border-slate-300 cursor-pointer" />
                       </th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">SKU / Item</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Category</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Pricing</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Master Stock</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">
@@ -718,9 +720,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             )}
                             <div>
                               <div className="font-black text-slate-900 uppercase text-sm">{p.name}</div>
-                              <div className="text-xs font-medium text-slate-500 mt-0.5">{p.sku} | {p.category}</div>
+                              <div className="text-xs font-medium text-slate-500 mt-0.5">{p.sku}</div>
                             </div>
                           </div>
+                        </td>
+                        <td className="py-4 px-5">
+                           <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-black uppercase rounded-md border border-slate-200">{p.category}</span>
                         </td>
                         <td className="py-4 px-5">
                           <div className="text-sm font-black text-slate-900">₱{p.sellingPrice}</div>
@@ -754,7 +759,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <button onClick={() => openTx([p], 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors" title="Return to Warehouse Hub">Ret</button>
                             <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue to External Client">Iss</button>
                             <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Physical Master Stock">Adj</button>
-                            <button onClick={() => { setProductForm({ ...p, previousImageUrl: globalImageVault[p.sku] || p.imageUrl || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
+                            <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
                             {isAuthorizedAdmin && (
                               <button onClick={() => handleProductDelete(p.id)} className="px-2.5 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-50 transition-colors">Del</button>
                             )}
@@ -1092,7 +1097,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         )}
                       </div>
 
-                      <div className="flex flex-col gap-1.5 mt-2">
+                      <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Transfer Qty</label>
                         <input required type="number" min="1" placeholder="e.g. 50" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-amber-200 rounded-xl text-sm font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 text-amber-900 shadow-sm" />
                       </div>
@@ -1146,20 +1151,23 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     Upload Image
                     <input type="file" accept="image/*" className="hidden" onChange={handleModalImageUpload} />
                   </label>
-                  <input 
-                    type="text" 
-                    placeholder="Or Paste HTTPS URL..." 
-                    value={typeof productForm.imageUrl === 'string' && productForm.imageUrl.length > 500 ? `[Local Image Attached - ${Math.round(productForm.imageUrl.length / 1024)}KB]` : (productForm.imageUrl || '')} 
-                    onChange={e=> {
-                      const val = e.target.value;
-                      if (val.includes('[Local Image Attached')) {
-                        setProductForm((prev: any) => ({...prev, imageUrl: ''}));
-                      } else {
-                        setProductForm((prev: any) => ({...prev, imageUrl: val}));
-                      }
-                    }} 
-                    className="flex-1 px-4 py-3 border border-slate-200 rounded-xl font-medium text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" 
-                  />
+                  <div className="relative flex-1">
+                    <input 
+                      type="text" 
+                      placeholder={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') ? '' : "Or Paste HTTPS URL..."} 
+                      value={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') ? '' : (productForm.imageUrl || '')} 
+                      onChange={e => setProductForm((prev: any) => ({...prev, imageUrl: e.target.value}))} 
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl font-medium text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm disabled:bg-slate-50 disabled:cursor-not-allowed" 
+                      disabled={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image')}
+                    />
+                    {typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') && (
+                      <div className="absolute inset-0 flex items-center px-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                        <span className="text-sm font-bold text-emerald-700 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> Local Image Attached
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 {/* VAULT & LIVE PREVIEW INSIDE EDIT MODAL */}
@@ -1173,7 +1181,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         onClick={() => {
                           const toVault = productForm.imageUrl || '';
                           if (productForm.sku && toVault.length > 5) {
-                             globalImageVault[productForm.sku] = toVault;
+                             deletedImageVault[productForm.sku] = toVault;
                           }
                           setProductForm((prev: any) => ({
                             ...prev,
@@ -1196,7 +1204,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:bg-slate-900/20 transition-all">
                         <button 
                           type="button" 
-                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl || '' }))} 
+                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl, previousImageUrl: '' }))} 
                           className="bg-slate-900 text-white px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-md hover:bg-slate-800 transition-transform hover:scale-105"
                         >
                           <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> Restore
