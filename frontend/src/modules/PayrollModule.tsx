@@ -92,7 +92,6 @@ const TimePicker12h = ({ value, onChange, disabled = false, compact = false }: a
   );
 };
 
-// ADDED COMPACT PROP FOR THE NEW PAYROLL MODAL
 const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false, compact = false }: any) => {
   const renderInput = () => {
     if (type === 'date') {
@@ -934,9 +933,11 @@ const handleImportAttendance = async (event: any) => {
     const requiredHrs = days * 8; 
     const otPay = otHrs * (ratePerHour * 1.25); 
 
-    const regularHoursWorked = totalHoursWorked - otHrs;
+    // CRITICAL MATH FIX: Treat all logged hours (Total) as an offset to Required Hours
     let undertimeDeduction = 0;
-    if (regularHoursWorked < requiredHrs) { undertimeDeduction = (requiredHrs - regularHoursWorked) * ratePerHour; }
+    if (totalHoursWorked < requiredHrs) { 
+        undertimeDeduction = (requiredHrs - totalHoursWorked) * ratePerHour; 
+    }
 
     const grossPay = (basicSalary + otPay) - undertimeDeduction;
     
@@ -1265,9 +1266,13 @@ const handleImportAttendance = async (event: any) => {
                   const requiredHrs = days * 8;
                   const otHours = Math.max(0, rec.totalHours - requiredHrs);
                   const otPay = otHours * (ratePerHour * 1.25); 
-                  const regularHoursWorked = rec.totalHours - otHours;
+                  
+                  // Same strict Undertime calc logic
                   let undertimeDeduction = 0;
-                  if (regularHoursWorked < requiredHrs) { undertimeDeduction = (requiredHrs - regularHoursWorked) * ratePerHour; }
+                  if (rec.totalHours < requiredHrs) { 
+                      undertimeDeduction = (requiredHrs - rec.totalHours) * ratePerHour; 
+                  }
+                  
                   const regularPay = baseSalary - undertimeDeduction;
                   const totalEarnings = regularPay + otPay; 
                   const totalDeductionsCalc = rec.cashAdvance + (rec.companyLoan || 0) + rec.sssDeduction + rec.pagIbigDeduct + rec.philhealthDeduct + rec.tax;
@@ -1424,7 +1429,7 @@ const handleImportAttendance = async (event: any) => {
       {/* PAYROLL MODAL (COMPUTE) */}
       {isPayrollModalOpen && activeEmployee && computed && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
