@@ -73,6 +73,7 @@ model Payroll {
   daysWorked         Float
   totalHours         Float
   cashAdvance        Float    @default(0)
+  companyLoan        Float    @default(0)
   sssDeduction       Float    @default(0)
   pagIbigDeduct      Float    @default(0)
   philhealthDeduct   Float    @default(0)
