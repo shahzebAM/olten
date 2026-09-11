@@ -9,8 +9,7 @@ interface WarehouseStock { id: string; warehouseId: string; productId: number; s
 
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
-let currentValidImages: Record<string, string> = {};
-let deletedImageVault: Record<string, string> = {}; // Fixed: Explicitly declared the Recycle Bin
+let deletedImageVault: Record<string, string> = {}; 
 
 export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
   
@@ -70,12 +69,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const updateImageVault = (data: Product[]) => {
     data.forEach(p => {
-      if (!p.sku) return;
-      const current = currentValidImages[p.sku];
-      if ((!p.imageUrl || !p.imageUrl.startsWith('data:image')) && current) globalImageVault[p.sku] = current;
-      else if (p.imageUrl && p.imageUrl.startsWith('data:image')) {
-        if (current && current !== p.imageUrl) globalImageVault[p.sku] = current;
-        currentValidImages[p.sku] = p.imageUrl;
+      if (p.sku && p.imageUrl) {
+        globalImageVault[p.sku] = p.imageUrl;
       }
     });
   };
@@ -128,18 +123,44 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     openTx(prods, type);
   };
 
+  // High-Resolution Client-Side Canvas Compression (Protects against 413 Payload Too Large)
   const handleModalImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = () => {
-      const rawBase64 = reader.result as string;
-      setProductForm((prev: any) => ({
-        ...prev,
-        previousImageUrl: prev.imageUrl ? prev.imageUrl : (prev.previousImageUrl || ''),
-        imageUrl: rawBase64
-      }));
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1200; 
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+          setProductForm((prev: any) => ({
+            ...prev,
+            previousImageUrl: prev.imageUrl || prev.previousImageUrl || '',
+            imageUrl: compressedBase64
+          }));
+        }
+      };
+      img.src = event.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
@@ -148,14 +169,41 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     e.preventDefault();
     setIsProcessing(true);
     
-    const { previousImageUrl, ...cleanFormData } = productForm;
-    const finalData = { ...cleanFormData, company: selectedCompany, barcode: cleanFormData.barcode || cleanFormData.sku.toUpperCase(), username: loginUsername };
+    // Explicitly package only database columns accepted by Prisma
+    const cleanPayload: any = {
+      name: productForm.name,
+      sku: productForm.sku,
+      category: productForm.category || 'General',
+      purchasePrice: parseFloat(productForm.purchasePrice) || 0,
+      sellingPrice: parseFloat(productForm.sellingPrice) || 0,
+      minQuantity: parseInt(productForm.minQuantity) || 10,
+      reorderLevel: parseInt(productForm.reorderLevel) || 20,
+      unit: productForm.unit || 'pcs',
+      vatSetting: productForm.vatSetting || 'NONE',
+      imageUrl: productForm.imageUrl || null,
+      barcode: productForm.barcode || productForm.sku.toUpperCase(),
+      company: selectedCompany,
+    };
+
+    if (!productModal.editingId) {
+      cleanPayload.initialQuantity = parseInt(productForm.initialQuantity) || 0;
+      cleanPayload.batchNumber = productForm.batchNumber || null;
+      cleanPayload.expirationDate = productForm.expirationDate || null;
+      cleanPayload.username = loginUsername;
+    }
 
     const tempId = productModal.editingId || Date.now();
     setProducts((prev: Product[]) => {
-      if (productModal.editingId) return prev.map(p => p.id === tempId ? { ...p, ...finalData } as Product : p);
-      return [{ ...finalData, id: tempId, currentStock: finalData.initialQuantity || 0 } as Product, ...prev];
+      if (productModal.editingId) {
+        return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload } as Product : p);
+      }
+      return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0 } as Product, ...prev];
     });
+
+    if (cleanPayload.sku && cleanPayload.imageUrl) {
+      globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
+    }
+
     setProductModal({ isOpen: false, editingId: null });
     setProductForm(initialProductForm);
     showToast("Saving to database...", "success");
@@ -163,11 +211,20 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     Promise.resolve().then(async () => {
       try {
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
-        const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalData) });
-        if (!res.ok) throw new Error("Database rejected payload.");
+        const res = await fetch(url, { 
+          method: productModal.editingId ? 'PATCH' : 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(cleanPayload) 
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.message || `Server rejected request (${res.status})`);
+        }
         fetchAllData(); 
-      } catch (error) { 
-        showToast("Sync Error. Request rejected by server.", "error"); 
+      } catch (error: any) { 
+        console.error("Save error:", error);
+        showToast(`Sync Error: ${error.message}`, "error"); 
         fetchAllData(); 
       }
     }).finally(() => setIsProcessing(false));
@@ -1182,6 +1239,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           const toVault = productForm.imageUrl || '';
                           if (productForm.sku && toVault.length > 5) {
                              deletedImageVault[productForm.sku] = toVault;
+                             globalImageVault[productForm.sku] = toVault;
                           }
                           setProductForm((prev: any) => ({
                             ...prev,
