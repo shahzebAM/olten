@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, Query, Delete, Param, Patch, Header, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Delete, Param, Patch, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
-@Controller() // Empty base controller so we can specify exact paths below
+@Controller() 
 export class MasterInventoryController {
   private prisma = new PrismaClient();
 
@@ -31,6 +31,7 @@ export class MasterInventoryController {
           }
         });
 
+        // ONLY apply initial stock to the Master Office Ledger
         if (data.initialQuantity && parseInt(data.initialQuantity) > 0) {
           await tx.inventoryMovement.create({
             data: {
@@ -42,26 +43,14 @@ export class MasterInventoryController {
               quantity: parseInt(data.initialQuantity),
               previousStock: 0,
               newStock: parseInt(data.initialQuantity),
-              remarks: 'Initial System Entry',
+              remarks: 'Initial System Entry (Master Stock)',
               user: data.username || 'System Admin',
-              warehouseId: data.warehouseId ? parseInt(data.warehouseId) : null,
-              employeeId: data.employeeId ? parseInt(data.employeeId) : null,
+              warehouseId: null, // STRICTLY MASTER STOCK - NO HUB INTERFERENCE
+              employeeId: null,
               batchNumber: data.batchNumber || null,
               expirationDate: data.expirationDate ? new Date(data.expirationDate).toISOString() : null,
             }
           });
-
-          if (data.warehouseId) {
-             await tx.warehouseStock.create({
-               data: {
-                 company: data.company,
-                 warehouseId: data.warehouseId.toString(),
-                 productId: product.id,
-                 sku: product.sku,
-                 quantity: parseInt(data.initialQuantity)
-               }
-             });
-          }
         }
         return product;
       });
@@ -88,7 +77,6 @@ export class MasterInventoryController {
   async removeProduct(@Param('id') id: string) {
     return this.prisma.product.delete({ where: { id: parseInt(id) } });
   }
-
 
   // ==========================================
   // 2. INVENTORY MOVEMENTS (Ledger)
@@ -131,7 +119,6 @@ export class MasterInventoryController {
     return this.prisma.inventoryMovement.deleteMany({ where: { company } });
   }
 
-
   // ==========================================
   // 3. WAREHOUSE DIRECTORY
   // ==========================================
@@ -163,9 +150,23 @@ export class MasterInventoryController {
 
   @Delete('warehouses/:id')
   async removeWarehouse(@Param('id') id: string) {
-    return this.prisma.warehouse.delete({ where: { id: parseInt(id) } });
-  }
+    const wId = parseInt(id);
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. Release ledger movements to preserve audit history
+      await tx.inventoryMovement.updateMany({
+        where: { warehouseId: wId },
+        data: { warehouseId: null, remarks: 'Facility Deleted (Archived Record)' }
+      });
 
+      // 2. Instantly wipe all stocks associated with this warehouse
+      await tx.warehouseStock.deleteMany({
+        where: { warehouseId: id } // Intentionally string to match Prisma schema
+      });
+
+      // 3. Finally, delete the warehouse itself
+      return tx.warehouse.delete({ where: { id: wId } });
+    });
+  }
 
   // ==========================================
   // 4. WAREHOUSE STOCK (Live Hub Balances)
