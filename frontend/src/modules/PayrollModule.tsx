@@ -123,7 +123,6 @@ const InputField = ({ label, required = false, type = "text", placeholder = "", 
 const EmployeeFormFields = ({ formData, handleChange }: any) => (
   <>
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-      {/* NEW EMPLOYEE ID FIELD */}
       <InputField required label="Employee ID" placeholder="Biometric ID" value={formData.employeeId} onChange={handleChange('employeeId', 'standard')} />
       <InputField required label="First Name" value={formData.firstName} onChange={handleChange('firstName', 'standard')} />
       <InputField label="Middle Name" placeholder="Optional" value={formData.middleName} onChange={handleChange('middleName', 'standard')} />
@@ -173,9 +172,11 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
     
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-      <InputField type="number" step="0.01" label="Total Cash Advance Balance (₱)" placeholder="0.00" value={formData.cashAdvanceBalance} onChange={handleChange('cashAdvanceBalance', 'standard')} />
-      <InputField type="number" step="0.01" label="Standard Deduction per Cutoff (₱)" placeholder="0.00" value={formData.cashAdvanceInstallment} onChange={handleChange('cashAdvanceInstallment', 'standard')} />
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <InputField type="number" step="0.01" label="Cash Advance Bal (₱)" placeholder="0.00" value={formData.cashAdvanceBalance} onChange={handleChange('cashAdvanceBalance', 'standard')} />
+      <InputField type="number" step="0.01" label="Advance Deduct/Cutoff (₱)" placeholder="0.00" value={formData.cashAdvanceInstallment} onChange={handleChange('cashAdvanceInstallment', 'standard')} />
+      <InputField type="number" step="0.01" label="Company Loan Bal (₱)" placeholder="0.00" value={formData.loanBalance} onChange={handleChange('loanBalance', 'standard')} />
+      <InputField type="number" step="0.01" label="Loan Deduct/Cutoff (₱)" placeholder="0.00" value={formData.loanInstallment} onChange={handleChange('loanInstallment', 'standard')} />
     </div>
 
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
@@ -195,7 +196,7 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 
 interface Employee {
   id: number;
-  employeeId?: string; // New Database ID field
+  employeeId?: string; 
   firstName: string;
   middleName: string;
   lastName: string;
@@ -212,6 +213,8 @@ interface Employee {
   bankAccount: string;
   cashAdvanceBalance: number;
   cashAdvanceInstallment: number;
+  loanBalance: number;
+  loanInstallment: number;
 }
 
 interface AttendanceRecord {
@@ -232,6 +235,7 @@ interface PayrollRecord {
   daysWorked: number;
   totalHours: number;
   cashAdvance: number;
+  companyLoan: number;
   sssDeduction: number;
   pagIbigDeduct: number;
   philhealthDeduct: number;
@@ -304,16 +308,17 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [dailyTimeLogs, setDailyTimeLogs] = useState<Record<number, { timeIn: string, timeOut: string, type: string, reason: string }>>({});
 
   const initialFormState = {
-    employeeId: '', // NEW FIELD
+    employeeId: '',
     firstName: '', middleName: '', lastName: '', dateOfBirth: '', 
     civilStatus: 'Single', address: '', employmentStatus: 'Probationary', 
     baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: '',
-    cashAdvanceBalance: '', cashAdvanceInstallment: ''
+    cashAdvanceBalance: '', cashAdvanceInstallment: '',
+    loanBalance: '', loanInstallment: ''
   };
   const [formData, setFormData] = useState(initialFormState);
 
   const [payrollData, setPayrollData] = useState({
-    daysWorked: '13', cashAdvance: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
+    daysWorked: '13', cashAdvance: '', companyLoan: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
     pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0',
     sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0'
   });
@@ -440,7 +445,7 @@ const isLeave = a.timeIn === 'LEAVE';
     const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
     const data = payrolls.map(p => {
       const emp = employees.find(e => e.id === p.employeeId);
-      const totalDeds = p.cashAdvance + p.sssDeduction + p.pagIbigDeduct + p.philhealthDeduct + p.tax + (p.pagIbigLoan || 0) + (p.pagIbigHousingLoan || 0);
+      const totalDeds = p.cashAdvance + (p.companyLoan || 0) + p.sssDeduction + p.pagIbigDeduct + p.philhealthDeduct + p.tax + (p.pagIbigLoan || 0) + (p.pagIbigHousingLoan || 0);
       return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
     });
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
@@ -518,7 +523,6 @@ const handleImportAttendance = async (event: any) => {
         const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
         if (rows.length < 2) throw new Error("File empty or missing data");
 
-        // Standard CSV Parser that respects quotes
         const parseCSVRow = (str: string) => {
             const result = [];
             let cell = '';
@@ -534,12 +538,10 @@ const handleImportAttendance = async (event: any) => {
             return result;
         };
 
-        // 1. DYNAMIC HEADER DETECTION: Scans down the file until it finds the actual data table
         let headerRowIdx = -1;
         let headers: string[] = [];
         for (let i = 0; i < Math.min(15, rows.length); i++) {
           const cols = parseCSVRow(rows[i]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-          // Looks for Personnel No/ID, Date, IN, and OUT
           if ((cols.includes('personnelno') || cols.includes('employeeid')) && cols.includes('date') && cols.includes('in') && cols.includes('out')) {
             headerRowIdx = i;
             headers = cols;
@@ -548,7 +550,7 @@ const handleImportAttendance = async (event: any) => {
         }
 
         if (headerRowIdx === -1) {
-          showToast("Import Aborted! Could not detect 'Personnel No', 'Date', 'IN', and 'OUT' columns.", "error");
+          showToast("Import Aborted! Could not detect required columns.", "error");
           setIsSaving(false);
           event.target.value = '';
           return;
@@ -584,16 +586,13 @@ const handleImportAttendance = async (event: any) => {
            return '';
         };
 
-// Use an Object dictionary instead of an Array to prevent CSV duplicates
         const validPayloads: any = {};
         let currentPersonnelNo = '';
-        let incompleteEmployees = new Set<string>(); // Track names for the toast
+        let incompleteEmployees = new Set<string>();
 
-        // 2. DATA PROCESSING LOOP
         for (let i = headerRowIdx + 1; i < rows.length; i++) {
           const cols = parseCSVRow(rows[i]);
           
-          // Smart Tracking: If the cell has an ID, update our tracker. If blank, it assumes the previous employee.
           if (cols[empIdIdx] && cols[empIdIdx].trim() !== '') {
             currentPersonnelNo = cols[empIdIdx].trim();
           }
@@ -610,33 +609,29 @@ const handleImportAttendance = async (event: any) => {
 
           if (!safeDate) continue;
 
-          // Maps the internal DTR Personnel No (e.g., S-00001) to your system's employees
           const matchedEmployee = employees.find(emp => 
             emp.employeeId === currentPersonnelNo || emp.id.toString() === currentPersonnelNo
           );
 
-          if (!matchedEmployee) continue; // Skips IDs that aren't registered in your NestJS app yet
+          if (!matchedEmployee) continue; 
 
           let hours = 0;
-          // Only compute full hours if both punches exist
           if (tIn && tOut && tIn.includes(':') && tOut.includes(':')) { 
              hours = calculateShiftHours(tIn, tOut, shiftStart, shiftEnd).total; 
           } else if (tOut === 'PAID') { 
              hours = 8; 
           }
 
-          // If either punch is missing, register their name for the warning toast
           if (!tIn || !tOut) {
              incompleteEmployees.add(`${matchedEmployee.firstName} ${matchedEmployee.lastName}`);
           }
 
-          // Smart Deduplication: Keys entries by Employee ID + Date to merge Excel duplicates
           const payloadKey = `${matchedEmployee.id}_${safeDate}`;
           validPayloads[payloadKey] = { 
             employeeId: matchedEmployee.id, 
             date: safeDate, 
-            timeIn: tIn || '', // Defaults to empty string (nill) if missing
-            timeOut: tOut || '', // Defaults to empty string (nill) if missing
+            timeIn: tIn || '', 
+            timeOut: tOut || '', 
             hours, 
             reason: null, 
             shiftStart, 
@@ -653,7 +648,6 @@ const handleImportAttendance = async (event: any) => {
 
         let successCount = 0;
         for (const payload of payloadArray as any[]) {
-          // Checks current system state to Update existing records instead of cloning them
           const existingLog = attendances.find(a => a.employeeId === payload.employeeId && a.date && a.date.split('T')[0] === payload.date);
           
           const url = existingLog ? `${API_BASE_URL}/employees/attendance/${existingLog.id}` : `${API_BASE_URL}/employees/attendance`;
@@ -673,7 +667,6 @@ const handleImportAttendance = async (event: any) => {
         
         showToast(`Imported ${successCount} logs successfully!`, "success");
 
-        // Delay the incomplete attendance warning slightly so it doesn't collide with the success message
         if (incompleteEmployees.size > 0) {
           setTimeout(() => {
             const arr = Array.from(incompleteEmployees);
@@ -714,7 +707,7 @@ const handleImportAttendance = async (event: any) => {
     setFormData(prev => ({ ...prev, [field]: val }));
   };   
 
-  const handleSubmitEmployee = async (e: React.FormEvent) => {
+const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
       showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
@@ -723,13 +716,20 @@ const handleImportAttendance = async (event: any) => {
     setIsSaving(true);
     const payload = {
       ...formData, 
-      employeeId: formData.employeeId.trim(), // Sent to backend
+      employeeId: formData.employeeId.trim(), 
       company: selectedCompany, 
-      baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
-      middleName: formData.middleName || null, bankAccount: formData.bankAccount || '', tin: formData.tin || null,
-      sssNumber: formData.sssNumber || null, philhealth: formData.philhealth || null, pagIbig: formData.pagIbig || null,
+      baseRate: parseFloat(formData.baseRate), 
+      dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+      middleName: formData.middleName?.trim() || null, 
+      bankAccount: formData.bankAccount?.trim() || null, 
+      tin: formData.tin?.trim() || null,
+      sssNumber: formData.sssNumber?.trim() || null, 
+      philhealth: formData.philhealth?.trim() || null, 
+      pagIbig: formData.pagIbig?.trim() || null,
       cashAdvanceBalance: parseFloat(formData.cashAdvanceBalance) || 0,
       cashAdvanceInstallment: parseFloat(formData.cashAdvanceInstallment) || 0,
+      loanBalance: parseFloat(formData.loanBalance) || 0,
+      loanInstallment: parseFloat(formData.loanInstallment) || 0,
     };
     
     const url = editingId ? `${API_BASE_URL}/employees/${editingId}` : `${API_BASE_URL}/employees`;
@@ -737,7 +737,12 @@ const handleImportAttendance = async (event: any) => {
 
     try {
       const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) { showToast("Failed to save. Employee ID or Government ID might already exist.", "error"); setIsSaving(false); return; }
+      if (!response.ok) { 
+        const errorData = await response.json().catch(() => ({}));
+        showToast(errorData.message || "Failed to save. Employee ID or Govt ID already exists.", "error"); 
+        setIsSaving(false); 
+        return; 
+      }
       
       await fetchEmployees();
       setIsEditModalOpen(false);
@@ -758,14 +763,16 @@ const handleImportAttendance = async (event: any) => {
 
   const openEditModal = (emp: Employee) => {
     setFormData({
-      employeeId: emp.employeeId || '', // Pre-fill Database ID
+      employeeId: emp.employeeId || '', 
       firstName: emp.firstName, middleName: emp.middleName || '', lastName: emp.lastName,
       dateOfBirth: emp.dateOfBirth ? emp.dateOfBirth.split('T')[0] : '', civilStatus: emp.civilStatus,
       address: emp.address, employmentStatus: emp.employmentStatus, baseRate: emp.baseRate.toString(),
       bankAccount: emp.bankAccount || '', tin: emp.tin || '', sssNumber: emp.sssNumber || '',
       philhealth: emp.philhealth || '', pagIbig: emp.pagIbig || '',
       cashAdvanceBalance: emp.cashAdvanceBalance ? emp.cashAdvanceBalance.toString() : '',
-      cashAdvanceInstallment: emp.cashAdvanceInstallment ? emp.cashAdvanceInstallment.toString() : ''
+      cashAdvanceInstallment: emp.cashAdvanceInstallment ? emp.cashAdvanceInstallment.toString() : '',
+      loanBalance: emp.loanBalance ? emp.loanBalance.toString() : '',
+      loanInstallment: emp.loanInstallment ? emp.loanInstallment.toString() : ''
     });
     setEditingId(emp.id); setIsEditModalOpen(true); 
   };
@@ -800,7 +807,7 @@ const handleImportAttendance = async (event: any) => {
     else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
 
     let totalGrossHours = Math.max(0, tOut - tIn);
-    if (totalGrossHours >= 5) totalGrossHours -= 1; // Lunch Break
+    if (totalGrossHours >= 5) totalGrossHours -= 1; 
 
     const maxRegularHours = 8;
     let regHrs = Math.min(totalGrossHours, maxRegularHours);
@@ -887,9 +894,10 @@ const handleImportAttendance = async (event: any) => {
     const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
     const actualDays = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
     const defaultDays = actualDays > 0 ? actualDays.toString() : '13';
-    const safeDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
+    const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
+    const safeLoanDeduction = (emp.loanBalance || 0) > 0 ? Math.min((emp.loanInstallment || 0), emp.loanBalance) : 0;
 
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0' });
+    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0' });
     setIsPayrollModalOpen(true);
   };
 
@@ -924,6 +932,9 @@ const handleImportAttendance = async (event: any) => {
     let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
     if (activeEmployee && cashAdvanceDed > (activeEmployee.cashAdvanceBalance || 0)) { cashAdvanceDed = activeEmployee.cashAdvanceBalance || 0; }
 
+    let companyLoanDed = parseFloat(payrollData.companyLoan) || 0;
+    if (activeEmployee && companyLoanDed > (activeEmployee.loanBalance || 0)) { companyLoanDed = activeEmployee.loanBalance || 0; }
+
     const taxableIncome = grossPay - sssDed - pagIbigDed - philhealthDed;
     let autoTax = 0;
 
@@ -932,10 +943,10 @@ const handleImportAttendance = async (event: any) => {
       autoTax = taxResult.tax;
     }
 
-    const totalDeductions = cashAdvanceDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed;
+    const totalDeductions = cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed;
     const netPay = grossPay - totalDeductions;
 
-    return { totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed };
+    return { totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed };
   };
 
   const computed = calculatePayroll();
@@ -945,16 +956,25 @@ const handleImportAttendance = async (event: any) => {
     setIsSaving(true);
     const payload = {
       employeeId: activeEmployee.id, daysWorked: parseFloat(payrollData.daysWorked) || 0, totalHours: computed.totalHoursWorked,
-      cashAdvance: computed.cashAdvanceDed, sssDeduction: parseFloat(payrollData.sss) || 0, pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0, philhealthDeduct: parseFloat(payrollData.philhealth) || 0, tax: computed.autoTax, grossPay: computed.grossPay, netPay: computed.netPay, pagIbigLoan: computed.pagIbigLoanDed, pagIbigHousingLoan: computed.pagIbigHousingLoanDed, sssProvident: computed.sssProvidentDed, sssSalaryLoan: computed.sssSalaryLoanDed, sssCalamityLoan: computed.sssCalamityLoanDed, pagIbigCalamity: computed.pagIbigCalamityDed, pagIbigSalaryLoan: computed.pagIbigSalaryLoanDed
+      cashAdvance: computed.cashAdvanceDed, companyLoan: computed.companyLoanDed, sssDeduction: parseFloat(payrollData.sss) || 0, pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0, philhealthDeduct: parseFloat(payrollData.philhealth) || 0, tax: computed.autoTax, grossPay: computed.grossPay, netPay: computed.netPay, pagIbigLoan: computed.pagIbigLoanDed, pagIbigHousingLoan: computed.pagIbigHousingLoanDed, sssProvident: computed.sssProvidentDed, sssSalaryLoan: computed.sssSalaryLoanDed, sssCalamityLoan: computed.sssCalamityLoanDed, pagIbigCalamity: computed.pagIbigCalamityDed, pagIbigSalaryLoan: computed.pagIbigSalaryLoanDed
     };
 
     try {
       const response = await fetch(`${API_BASE_URL}/employees/payroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!response.ok) throw new Error();
       
+      const balancePatches = [];
       if (computed.cashAdvanceDed > 0) {
         const newBalance = Math.max(0, activeEmployee.cashAdvanceBalance - computed.cashAdvanceDed);
-        await fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cashAdvanceBalance: newBalance }) });
+        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cashAdvanceBalance: newBalance }) }));
+      }
+      if (computed.companyLoanDed > 0) {
+        const newLoanBalance = Math.max(0, activeEmployee.loanBalance - computed.companyLoanDed);
+        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loanBalance: newLoanBalance }) }));
+      }
+
+      if (balancePatches.length > 0) {
+        await Promise.all(balancePatches);
       }
 
       await fetchPayrolls(); await fetchEmployees(); 
@@ -989,7 +1009,7 @@ const handleImportAttendance = async (event: any) => {
       const totalHours = empPayrolls.reduce((sum, pr) => sum + pr.totalHours, 0);
       const totalDays = empPayrolls.reduce((sum, pr) => sum + pr.daysWorked, 0);
       const totalGross = empPayrolls.reduce((sum, pr) => sum + pr.grossPay, 0);
-      const totalDeductions = empPayrolls.reduce((sum, pr) => sum + (pr.cashAdvance + pr.sssDeduction + pr.pagIbigDeduct + pr.philhealthDeduct + pr.tax), 0);
+      const totalDeductions = empPayrolls.reduce((sum, pr) => sum + (pr.cashAdvance + (pr.companyLoan || 0) + pr.sssDeduction + pr.pagIbigDeduct + pr.philhealthDeduct + pr.tax), 0);
       const totalNet = empPayrolls.reduce((sum, pr) => sum + pr.netPay, 0);
       const requiredHrs = totalDays * 8;
       const otHours = Math.max(0, totalHours - requiredHrs);
@@ -1237,7 +1257,7 @@ const handleImportAttendance = async (event: any) => {
                   if (regularHoursWorked < requiredHrs) { undertimeDeduction = (requiredHrs - regularHoursWorked) * ratePerHour; }
                   const regularPay = baseSalary - undertimeDeduction;
                   const totalEarnings = regularPay + otPay; 
-                  const totalDeductionsCalc = rec.cashAdvance + rec.sssDeduction + rec.pagIbigDeduct + rec.philhealthDeduct + rec.tax;
+                  const totalDeductionsCalc = rec.cashAdvance + (rec.companyLoan || 0) + rec.sssDeduction + rec.pagIbigDeduct + rec.philhealthDeduct + rec.tax;
 
                   return (
                     <table className="w-full text-left border-collapse border border-slate-300 text-[11px] sm:text-xs text-slate-700 bg-white shadow-sm print:shadow-none">
@@ -1260,7 +1280,19 @@ const handleImportAttendance = async (event: any) => {
                         <tr><td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Earnings:</td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalEarnings)}</td></tr>
                       {(() => {
                           const activeDeductions = [
-                            { label: 'Advances', value: rec.cashAdvance || 0 }, { label: 'SSS', value: rec.sssDeduction || 0 }, { label: 'PhilHealth', value: rec.philhealthDeduct || 0 }, { label: 'Pag-IBIG', value: rec.pagIbigDeduct || 0 }, { label: 'Pag-IBIG MP Loan', value: rec.pagIbigLoan || 0 }, { label: 'Pag-IBIG Housing Loan', value: rec.pagIbigHousingLoan || 0 }, { label: 'SSS Provident', value: rec.sssProvident || 0 }, { label: 'SSS Salary Loan', value: rec.sssSalaryLoan || 0 }, { label: 'SSS Calamity Loan', value: rec.sssCalamityLoan || 0 }, { label: 'Pag-IBIG Calamity', value: rec.pagIbigCalamity || 0 }, { label: 'Pag-IBIG Salary Loan', value: rec.pagIbigSalaryLoan || 0 }, { label: 'Withholding Tax', value: rec.tax || 0 }
+                            { label: 'Advances', value: rec.cashAdvance || 0 }, 
+                            { label: 'Company Loan', value: rec.companyLoan || 0 }, 
+                            { label: 'SSS', value: rec.sssDeduction || 0 }, 
+                            { label: 'PhilHealth', value: rec.philhealthDeduct || 0 }, 
+                            { label: 'Pag-IBIG', value: rec.pagIbigDeduct || 0 }, 
+                            { label: 'Pag-IBIG MP Loan', value: rec.pagIbigLoan || 0 }, 
+                            { label: 'Pag-IBIG Housing Loan', value: rec.pagIbigHousingLoan || 0 }, 
+                            { label: 'SSS Provident', value: rec.sssProvident || 0 }, 
+                            { label: 'SSS Salary Loan', value: rec.sssSalaryLoan || 0 }, 
+                            { label: 'SSS Calamity Loan', value: rec.sssCalamityLoan || 0 }, 
+                            { label: 'Pag-IBIG Calamity', value: rec.pagIbigCalamity || 0 }, 
+                            { label: 'Pag-IBIG Salary Loan', value: rec.pagIbigSalaryLoan || 0 }, 
+                            { label: 'Withholding Tax', value: rec.tax || 0 }
                           ].filter(d => d.value > 0);
                           const rowSpanCount = activeDeductions.length > 0 ? activeDeductions.length + 1 : 2;
 
@@ -1279,8 +1311,8 @@ const handleImportAttendance = async (event: any) => {
                         })()}
                         <tr><td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Deductions:</td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-mono font-bold text-rose-700 bg-rose-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalDeductionsCalc)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-600 bg-slate-50">Outstanding:</td><td colSpan={3} className="border border-slate-300 bg-slate-50"></td><td colSpan={4} rowSpan={3} className="border border-slate-300 bg-white"></td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 pl-6 font-medium">Cash Advances</td><td colSpan={3} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 pl-6 font-medium">Provident Loan</td><td colSpan={3} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 pl-6 font-medium">Cash Advances</td><td colSpan={3} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{(emp.cashAdvanceBalance || 0) > 0 ? formatMoney(emp.cashAdvanceBalance) : '-'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 pl-6 font-medium">Company Loan</td><td colSpan={3} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{(emp.loanBalance || 0) > 0 ? formatMoney(emp.loanBalance) : '-'}</td></tr>
                         <tr><td colSpan={3} className="border border-slate-300 px-3 py-3 text-slate-600">Prepared by: <span className="ml-2 uppercase font-bold text-slate-800 text-[10px]">SYSTEM ADMIN</span></td><td colSpan={2} className="border border-slate-300 font-bold text-right px-3 text-emerald-800 bg-emerald-50 text-[10px] uppercase">Net Earnings:</td><td colSpan={4} className="border-4 border-emerald-500 px-3 text-right font-mono font-black text-[15px] bg-emerald-50 text-emerald-900 shadow-inner">{formatMoney(rec.netPay)}</td></tr>
                         <tr><td colSpan={3} className="border border-slate-300 px-3 py-2 text-slate-600">Checked by: <span className="ml-2 uppercase font-bold text-slate-800 text-[10px]">{emp.firstName} {emp.lastName}</span></td><td colSpan={2} className="border-b border-slate-300 text-right px-3 py-1 text-sm font-bold text-slate-800 bg-slate-50">{formatMoney(rec.netPay)}</td><td colSpan={4} className="border border-slate-300 border-t-0 bg-white px-4 pb-2 text-center align-bottom h-16"><div className="w-48 mx-auto border-b border-slate-800 mb-1 mt-6"></div><div className="text-[10px] font-bold text-slate-600 uppercase">Received By (Signature)</div></td></tr>
                       </tbody>
@@ -1339,7 +1371,7 @@ const handleImportAttendance = async (event: any) => {
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-emerald-800 bg-emerald-50">Gross Pay</th>
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-rose-800 bg-rose-50">Total Ded.</th>
                               <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-indigo-900 bg-indigo-50">Net Pay</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-amber-900 bg-amber-50">Advance Bal.</th>
+                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-amber-900 bg-amber-50">Loan Balances</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1354,7 +1386,7 @@ const handleImportAttendance = async (event: any) => {
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-700 bg-emerald-50/50">{formatMoney(row.totalGross)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700 bg-rose-50/50">{formatMoney(row.totalDeductions)}</td>
                                 <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-indigo-900 bg-indigo-50/50">{formatMoney(row.totalNet)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-amber-700 bg-amber-50/50">{(row.emp.cashAdvanceBalance || 0) > 0 ? formatMoney(row.emp.cashAdvanceBalance) : '--'}</td>
+                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-amber-700 bg-amber-50/50">{(row.emp.cashAdvanceBalance || 0) + (row.emp.loanBalance || 0) > 0 ? formatMoney((row.emp.cashAdvanceBalance || 0) + (row.emp.loanBalance || 0)) : '--'}</td>
                               </tr>
                             ))}
                             <tr className="bg-slate-200 border-t-2 border-slate-500 font-bold">
@@ -1401,6 +1433,12 @@ const handleImportAttendance = async (event: any) => {
                     <InputField type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
                     {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
                       <span className="text-[10px] font-bold text-amber-600 mt-1 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col w-full">
+                    <InputField type="number" step="0.01" label="Company Loan" value={payrollData.companyLoan} onChange={(e: any) => setPayrollData({...payrollData, companyLoan: e.target.value})} />
+                    {(activeEmployee?.loanBalance || 0) > 0 && (
+                      <span className="text-[10px] font-bold text-amber-600 mt-1 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.loanBalance || 0) - (parseFloat(payrollData.companyLoan) || 0)))}</span>
                     )}
                   </div>
                   <InputField type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
@@ -1694,9 +1732,6 @@ const handleImportAttendance = async (event: any) => {
                     
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
                       <button onClick={handleRefreshData} disabled={isSaving} className="flex-1 sm:flex-none px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1 disabled:opacity-50"><svg className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>{isSaving ? 'Syncing...' : 'Refresh'}</button>
-                      
-                 
-
                       <button onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', new Date().toISOString().split('T')[0], '08:00 AM', '05:00 PM'], ['2', new Date().toISOString().split('T')[0], 'LEAVE', 'PAID']])} className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors">Template</button>
                       <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">Import CSV<input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} /></label>
                       <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">Export CSV</button>
