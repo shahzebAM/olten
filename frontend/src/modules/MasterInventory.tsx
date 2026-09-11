@@ -28,6 +28,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // --- HUB FILTER STATE ---
+  const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
+
   const [ledgerFilterType, setLedgerFilterType] = useState('ALL');
   const [ledgerStartDate, setLedgerStartDate] = useState('');
   const [ledgerEndDate, setLedgerEndDate] = useState('');
@@ -616,7 +619,28 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {activeView === 'products' && (
             <div className="space-y-6 max-w-7xl mx-auto">
               <div className="flex flex-col sm:flex-row justify-between gap-4">
-                <input type="text" placeholder="SEARCH SKU OR NAME..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full sm:w-96 px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" />
+                <div className="flex flex-1 flex-col sm:flex-row gap-3">
+                  <input 
+                    type="text" 
+                    placeholder="SEARCH SKU OR NAME..." 
+                    value={searchQuery} 
+                    onChange={(e) => setSearchQuery(e.target.value)} 
+                    className="w-full sm:w-80 px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" 
+                  />
+                  
+                  {/* WAREHOUSE SELECTOR DROPDOWN */}
+                  <select
+                    value={selectedHubFilter}
+                    onChange={(e) => setSelectedHubFilter(e.target.value)}
+                    className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-auto"
+                  >
+                    <option value="ALL">All Hubs (Combined)</option>
+                    {warehouses.map(w => (
+                      <option key={w.id} value={String(w.id)}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="flex flex-wrap gap-3">
                   {isAuthorizedAdmin && (
                     <button onClick={handleExportExcel} className="px-5 py-3 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
@@ -650,7 +674,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">SKU / Item</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Pricing</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Master Stock</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Hub Stock</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">
+                        {selectedHubFilter === 'ALL'
+                          ? 'Hub Stock (All)'
+                          : `Hub: ${warehouses.find(w => String(w.id) === selectedHubFilter)?.name || 'Selected'}`}
+                      </th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500 text-right">Settings</th>
                     </tr>
                   </thead>
@@ -682,12 +710,21 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         </td>
                         <td className="py-4 px-5">
                           {(() => {
-                            const totalHubStock = hubStock.filter(h => 
-                              (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
-                              warehouses.some(w => String(w.id) === String(h.warehouseId))
-                            ).reduce((acc, val) => acc + val.quantity, 0);
-                            
-                            return <div className="text-lg font-black text-slate-700">{totalHubStock} <span className="text-xs text-slate-400">{p.unit}</span></div>;
+                            const filteredHubList = hubStock.filter(h => {
+                              const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
+                              if (!isMatch) return false;
+                              if (selectedHubFilter === 'ALL') {
+                                return warehouses.some(w => String(w.id) === String(h.warehouseId));
+                              }
+                              return String(h.warehouseId) === String(selectedHubFilter);
+                            });
+                            const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
+
+                            return (
+                              <div className="text-lg font-black text-slate-700">
+                                {displayQty} <span className="text-xs text-slate-400">{p.unit}</span>
+                              </div>
+                            );
                           })()}
                         </td>
                         <td className="py-4 px-5 text-right">
@@ -1043,7 +1080,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 
                 {/* VAULT & LIVE PREVIEW INSIDE EDIT MODAL */}
                 <div className="flex gap-4 mt-4">
-                  {/* Current Active Image */}
                   {typeof productForm.imageUrl === 'string' && productForm.imageUrl.length > 0 && (
                     <div className="relative w-32 h-32 rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 group shrink-0 shadow-sm">
                       <img src={productForm.imageUrl.startsWith('data:') || productForm.imageUrl.startsWith('http') ? productForm.imageUrl : ''} alt="Current Preview" className="w-full h-full object-cover" />
@@ -1068,7 +1104,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     </div>
                   )}
 
-                  {/* Vault Fallback Memory */}
                   {typeof productForm.previousImageUrl === 'string' && productForm.previousImageUrl.length > 0 && productForm.previousImageUrl !== productForm.imageUrl && (
                     <div className="relative w-32 h-32 rounded-2xl border-2 border-dashed border-slate-300 overflow-hidden bg-slate-50 shrink-0 group">
                       <img src={productForm.previousImageUrl} alt="Vault" className="w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300" />
@@ -1104,7 +1139,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
             <form onSubmit={executeTransaction} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto bg-slate-50">
               
-              {/* --- UNIFIED MOVEMENT FORM UI (RECV/RET/ISSUE) --- */}
+              {/* SOURCE & DESTINATION BOXES */}
               {txModal.type !== 'ADJUST' && (
                 <div className={`grid grid-cols-2 gap-5 p-5 rounded-2xl border ${txModal.type === 'RECEIVE' ? 'bg-emerald-50 border-emerald-200' : txModal.type === 'RETURN' ? 'bg-sky-50 border-sky-200' : 'bg-rose-50 border-rose-200'}`}>
                   
