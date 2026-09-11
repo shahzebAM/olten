@@ -9,6 +9,7 @@ interface WarehouseStock { id: string; warehouseId: string; productId: number; s
 
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
+let currentValidImages: Record<string, string> = {};
 let deletedImageVault: Record<string, string> = {}; 
 
 export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
@@ -69,8 +70,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const updateImageVault = (data: Product[]) => {
     data.forEach(p => {
-      if (p.sku && p.imageUrl) {
-        globalImageVault[p.sku] = p.imageUrl;
+      if (!p.sku) return;
+      const current = currentValidImages[p.sku];
+      if ((!p.imageUrl || !p.imageUrl.startsWith('data:image')) && current) globalImageVault[p.sku] = current;
+      else if (p.imageUrl && p.imageUrl.startsWith('data:image')) {
+        if (current && current !== p.imageUrl) globalImageVault[p.sku] = current;
+        currentValidImages[p.sku] = p.imageUrl;
       }
     });
   };
@@ -123,7 +128,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     openTx(prods, type);
   };
 
-  // High-Resolution Client-Side Canvas Compression (Protects against 413 Payload Too Large)
   const handleModalImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -169,7 +173,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     e.preventDefault();
     setIsProcessing(true);
     
-    // Explicitly package only database columns accepted by Prisma
     const cleanPayload: any = {
       name: productForm.name,
       sku: productForm.sku,
@@ -608,10 +611,29 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   };
 
   const handleExportExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(products);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Master Catalog");
-    XLSX.writeFile(wb, `${selectedCompany}_Master_${new Date().toISOString().split('T')[0]}.xlsx`);
+    try {
+      const exportData = products.map(p => ({
+        "SKU": p.sku,
+        "Product Name": p.name,
+        "Category": p.category,
+        "Cost Price (₱)": p.purchasePrice,
+        "Selling Price (₱)": p.sellingPrice,
+        "Master Stock": p.currentStock,
+        "Unit": p.unit,
+        "Reorder Level": p.reorderLevel,
+        "Barcode": p.barcode || 'N/A',
+        "Status": p.isActive ? "Active" : "Inactive"
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Master Catalog");
+      XLSX.writeFile(wb, `${selectedCompany}_Master_${new Date().toISOString().split('T')[0]}.xlsx`);
+      showToast("Excel exported successfully.", "success");
+    } catch (error) {
+      console.error("Export Error:", error);
+      showToast("Failed to export Excel file.", "error");
+    }
   };
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -1239,7 +1261,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           const toVault = productForm.imageUrl || '';
                           if (productForm.sku && toVault.length > 5) {
                              deletedImageVault[productForm.sku] = toVault;
-                             globalImageVault[productForm.sku] = toVault;
                           }
                           setProductForm((prev: any) => ({
                             ...prev,
@@ -1262,7 +1283,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:bg-slate-900/20 transition-all">
                         <button 
                           type="button" 
-                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl, previousImageUrl: '' }))} 
+                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl || '' }))} 
                           className="bg-slate-900 text-white px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-md hover:bg-slate-800 transition-transform hover:scale-105"
                         >
                           <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> Restore
