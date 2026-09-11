@@ -17,7 +17,7 @@ export class MasterInventoryController {
             company: data.company,
             name: data.name,
             sku: data.sku,
-            category: data.category,
+            category: data.category || 'General',
             purchasePrice: parseFloat(data.purchasePrice) || 0,
             sellingPrice: parseFloat(data.sellingPrice) || 0,
             minQuantity: parseInt(data.minQuantity) || 10,
@@ -66,10 +66,31 @@ export class MasterInventoryController {
 
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() data: any) {
-    const updateData = { ...data };
-    if (updateData.createdAt) updateData.createdAt = new Date(updateData.createdAt);
-    if (updateData.deletedAt) updateData.deletedAt = new Date(updateData.deletedAt);
-    return this.prisma.product.update({ where: { id: parseInt(id) }, data: updateData });
+    // Strip all non-schema or immutable parameters to prevent Prisma validation crashes
+    const { 
+      id: _id, 
+      username, 
+      initialQuantity, 
+      warehouseId, 
+      batchNumber, 
+      expirationDate, 
+      previousImageUrl, 
+      currentStock,
+      ...cleanData 
+    } = data;
+
+    if (cleanData.createdAt) cleanData.createdAt = new Date(cleanData.createdAt);
+    if (cleanData.deletedAt) cleanData.deletedAt = new Date(cleanData.deletedAt);
+    if (cleanData.purchasePrice !== undefined) cleanData.purchasePrice = parseFloat(cleanData.purchasePrice) || 0;
+    if (cleanData.sellingPrice !== undefined) cleanData.sellingPrice = parseFloat(cleanData.sellingPrice) || 0;
+    if (cleanData.minQuantity !== undefined) cleanData.minQuantity = parseInt(cleanData.minQuantity) || 10;
+    if (cleanData.reorderLevel !== undefined) cleanData.reorderLevel = parseInt(cleanData.reorderLevel) || 20;
+    if (currentStock !== undefined) cleanData.currentStock = parseInt(currentStock) || 0;
+
+    return this.prisma.product.update({ 
+      where: { id: parseInt(id) }, 
+      data: cleanData 
+    });
   }
 
   @Delete('products/:id')
@@ -199,7 +220,6 @@ export class MasterInventoryController {
     return this.prisma.warehouseStock.findMany({ where: { company } });
   }
 
-  // --- NEW: Wipe all hub stocks for a company ---
   @Delete('warehouse-stock/clear/:company')
   async clearAllHubStocks(@Param('company') company: string) {
     return this.prisma.warehouseStock.deleteMany({ where: { company } });
