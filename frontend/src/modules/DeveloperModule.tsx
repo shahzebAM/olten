@@ -33,12 +33,15 @@ export default function UserControlModule({
   const initialFormState = {
     username: '',
     password: '',
-    role: 'Admin', // STRICT MAPPING: 'Admin' matches standard admin in DB
+    role: 'Admin', 
     status: 'Active',
     modules: {
       payroll: false,
       ai_docs: false,
       master_inventory: true, 
+      inventory: true,     // explicitly tracked for Gateway compatibility
+      products: true,      // explicitly tracked for Gateway compatibility
+      warehouses: true,    // explicitly tracked for Gateway compatibility
       purchasing: false,
       sales: false,
       companies: {} as Record<string, boolean>
@@ -61,8 +64,8 @@ export default function UserControlModule({
   const openEditModal = (user: any) => {
     setEditingUserId(user.id);
     
-    // Fallback any glitched legacy roles to standard 'Admin'
     let currentRole = user.role === 'Super Admin' ? 'Super Admin' : 'Admin';
+    const hasInventory = Boolean(user.modules?.master_inventory ?? user.modules?.inventory ?? true);
 
     setFormData({
       username: user.username,
@@ -72,7 +75,10 @@ export default function UserControlModule({
       modules: {
         payroll: Boolean(user.modules?.payroll),
         ai_docs: Boolean(user.modules?.ai_docs),
-        master_inventory: Boolean(user.modules?.master_inventory ?? user.modules?.inventory ?? true),
+        master_inventory: hasInventory,
+        inventory: hasInventory,
+        products: hasInventory,
+        warehouses: hasInventory,
         purchasing: Boolean(user.modules?.purchasing),
         sales: Boolean(user.modules?.sales),
         companies: user.modules?.companies || {}
@@ -84,7 +90,16 @@ export default function UserControlModule({
   const handleModuleToggle = (moduleKey: string) => {
     setFormData(prev => {
       const nextModules = { ...prev.modules };
-      (nextModules as any)[moduleKey] = !(nextModules as any)[moduleKey];
+      const toggledValue = !(nextModules as any)[moduleKey];
+      (nextModules as any)[moduleKey] = toggledValue;
+
+      // Force exact synchronization in real-time for legacy keys
+      if (moduleKey === 'master_inventory') {
+        nextModules.inventory = toggledValue;
+        nextModules.products = toggledValue;
+        nextModules.warehouses = toggledValue;
+      }
+
       return { ...prev, modules: nextModules };
     });
   };
@@ -113,19 +128,11 @@ export default function UserControlModule({
         : `${API_BASE_URL}/admins`;
       const method = editingUserId ? 'PATCH' : 'POST';
 
-      // Inject legacy keys so the Gateway Auth doesn't crash during login
-      const safeModules = {
-        ...formData.modules,
-        inventory: formData.modules.master_inventory,
-        products: formData.modules.master_inventory,
-        warehouses: formData.modules.master_inventory
-      };
-
       const payload: any = {
         username: formData.username.trim(),
         role: formData.role,
         status: formData.status,
-        modules: safeModules
+        modules: formData.modules
       };
 
       if (formData.password && formData.password.trim() !== '') {
