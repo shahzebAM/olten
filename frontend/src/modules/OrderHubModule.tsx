@@ -42,6 +42,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [toDate, setToDate] = useState('');
   const [shortageSearch, setShortageSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('ALL');
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
@@ -128,14 +129,28 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  const filteredHistory = transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').filter(order => {
-    if (!historySearch) return true;
-    const q = historySearch.toLowerCase();
-    return (
-      (order.refNumber || '').toLowerCase().includes(q) ||
-      (order.partner?.name || '').toLowerCase().includes(q)
-    );
-  });
+  // --- HISTORY FILTERING (INCLUDING NEW STATUS FILTERS) ---
+  const filteredHistory = transactions
+    .filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED')
+    .filter(order => {
+      // 1. Text Search Filter
+      if (historySearch) {
+        const q = historySearch.toLowerCase();
+        if (!(order.refNumber || '').toLowerCase().includes(q) && !(order.partner?.name || '').toLowerCase().includes(q)) return false;
+      }
+      
+      // 2. Status Filter
+      if (historyStatusFilter !== 'ALL') {
+        if (historyStatusFilter === 'SHORTAGE') {
+          // Only show orders that have at least one cancelled item
+          if (!order.items?.some(i => i.isCancelled)) return false;
+        } else {
+          // Show FULFILLED, RECEIVED, or RETURNED
+          if (order.status !== historyStatusFilter) return false;
+        }
+      }
+      return true;
+    });
 
   const handleRemoveShortage = async (shortageId: string) => {
     if(!window.confirm("Remove this shortage from the database?")) return;
@@ -251,8 +266,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // Update Main Order with ONLY Valid Items
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: validItems }) });
+      // Update Main Order with ALL Items so the ledger knows which ones were cancelled
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
 
       // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
@@ -269,7 +284,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }));
 
       if (cancelledItems.length > 0) {
-        // Send individually to DB
         await Promise.all(cancelledItems.map(item => 
           fetch(`${API_BASE_URL}/shortages`, { 
             method: 'POST', 
@@ -298,7 +312,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Valid items processed. Shortages logged.`, "success");
+      showToast(`Verification Complete! Valid items processed. Shortages logged to database.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -517,6 +531,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row gap-4 items-start sm:items-end justify-between">
                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                       <div className="flex flex-col w-full sm:w-auto">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Search Record</label>
+                        <input type="text" placeholder="Client, Ref, or Product..." value={shortageSearch} onChange={e => setShortageSearch(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                      </div>
+                      <div className="flex flex-col w-full sm:w-auto">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
                         <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
                       </div>
@@ -525,7 +543,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
                       </div>
                     </div>
-                    <button type="button" onClick={() => { setFromDate(''); setToDate(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
+                    <button type="button" onClick={() => { setFromDate(''); setToDate(''); setShortageSearch(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
                   </div>
 
                   <div className="overflow-x-auto w-full">
@@ -563,14 +581,25 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
+              {/* FINALIZED HISTORY TAB */}
               {activeTab === 'history' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                     <div>
                       <h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3>
                       <p className="text-xs text-slate-500">Historical records of fulfilled orders and receipts.</p>
                     </div>
-                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+                      <select 
+                        value={historyStatusFilter} 
+                        onChange={e => setHistoryStatusFilter(e.target.value)} 
+                        className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white w-full sm:w-40"
+                      >
+                        <option value="ALL">All Statuses</option>
+                        {mode === 'sales' ? <option value="FULFILLED">Fulfilled</option> : <option value="RECEIVED">Received</option>}
+                        <option value="RETURNED">Returned</option>
+                        <option value="SHORTAGE">With Shortages</option>
+                      </select>
                       <input 
                         type="text" 
                         placeholder="Search Client or Ref..." 
@@ -588,26 +617,35 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredHistory.length === 0 ? (
-                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found.</td></tr>
+                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found matching filters.</td></tr>
                         ) : (
-                          filteredHistory.map(order => (
-                            <tr key={order.id} className="hover:bg-slate-50 group">
-                              <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                              <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
-                              <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
-                              <td className="py-4 px-6">
-                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
-                              </td>
-                              <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
-                                <button type="button" onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
-                                <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
-                                {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
-                                  <button type="button" onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
-                                )}
-                                <button type="button" onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
-                              </td>
-                            </tr>
-                          ))
+                          filteredHistory.map(order => {
+                            const hasShortages = (order.items || []).some(i => i.isCancelled);
+                            
+                            return (
+                              <tr key={order.id} className="hover:bg-slate-50 group">
+                                <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                                <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                                <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
+                                <td className="py-4 px-6">
+                                  <div className="flex flex-col gap-1 items-start">
+                                    <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
+                                    {hasShortages && (
+                                      <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-amber-200 bg-amber-50 text-amber-700">SHORTAGE</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
+                                  <button type="button" onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
+                                  <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
+                                  {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
+                                    <button type="button" onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
+                                  )}
+                                  <button type="button" onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -625,7 +663,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               <div className="p-4 sm:p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                 <div>
                   <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
-                  <p className="text-xs uppercase text-slate-500 font-bold tracking-widest mt-1">Ref: {viewModal.refNumber} • Status: {viewModal.status}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Ref: {viewModal.refNumber}</p>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-800">{viewModal.status}</span>
+                  </div>
                 </div>
                 <button type="button" onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
