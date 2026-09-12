@@ -25,7 +25,12 @@ export default function SupplierModule({ selectedCompany, API_BASE_URL, onBack }
       ]);
       if (supRes.ok) setSuppliers(await supRes.json());
       if (poRes.ok) setPos(await poRes.json());
-    } catch (e) { console.warn("Backend not ready."); }
+    } catch (err: any) { 
+      if (err.message?.includes('Failed to fetch')) {
+        showToast("Network Error: Cannot load supplier data.", "error");
+      }
+      console.warn("Backend not ready or unreachable."); 
+    }
   };
 
   useEffect(() => { fetchData(); }, [selectedCompany]);
@@ -33,24 +38,72 @@ export default function SupplierModule({ selectedCompany, API_BASE_URL, onBack }
   const filteredSuppliers = suppliers.filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase()));
 
   const handleCreateSupplier = async (e: React.FormEvent) => {
-    e.preventDefault(); setIsProcessing(true);
+    e.preventDefault(); 
+    setIsProcessing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/purchasing/suppliers`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ...supForm, company: selectedCompany }) });
-      if(!res.ok) throw new Error();
-      fetchData(); showToast("Supplier registered.", "success");
+      // FIX: Explicitly providing balance: 0 to satisfy backend DTO requirements
+      const payload = { ...supForm, company: selectedCompany, balance: 0 };
+      
+      const res = await fetch(`${API_BASE_URL}/purchasing/suppliers`, { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify(payload) 
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const backendMessage = Array.isArray(errorData.message) 
+          ? errorData.message.join(', ') 
+          : errorData.message || "Failed to add supplier.";
+        throw new Error(backendMessage);
+      }
+
+      fetchData(); 
+      showToast("Supplier registered.", "success");
       setSupForm({ name: '', contact: '', phone: '', email: '' });
       setActiveTab('directory');
-    } catch (e) { showToast("Failed to add supplier.", "error"); } finally { setIsProcessing(false); }
+    } catch (err: any) { 
+      if (err.message?.includes('Failed to fetch')) {
+        showToast("Network Error: Could not reach the backend server.", "error");
+      } else {
+        showToast(err.message || "Failed to add supplier.", "error");
+      }
+    } finally { 
+      setIsProcessing(false); 
+    }
   };
 
   const handleUpdateSupplier = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!editSupplierModal.supplier) return; setIsProcessing(true);
+    e.preventDefault(); 
+    if (!editSupplierModal.supplier) return; 
+    setIsProcessing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/purchasing/suppliers/${editSupplierModal.supplier.id}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(editSupplierModal.supplier) });
-      if(!res.ok) throw new Error();
-      fetchData(); showToast("Supplier updated.", "success");
+      const res = await fetch(`${API_BASE_URL}/purchasing/suppliers/${editSupplierModal.supplier.id}`, { 
+        method: 'PATCH', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify(editSupplierModal.supplier) 
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const backendMessage = Array.isArray(errorData.message) 
+          ? errorData.message.join(', ') 
+          : errorData.message || "Update failed.";
+        throw new Error(backendMessage);
+      }
+
+      fetchData(); 
+      showToast("Supplier updated.", "success");
       setEditSupplierModal({ isOpen: false, supplier: null });
-    } catch (e) { showToast("Update failed.", "error"); } finally { setIsProcessing(false); }
+    } catch (err: any) { 
+      if (err.message?.includes('Failed to fetch')) {
+        showToast("Network Error: Could not reach the backend server.", "error");
+      } else {
+        showToast(err.message || "Update failed.", "error");
+      }
+    } finally { 
+      setIsProcessing(false); 
+    }
   };
 
   const getSupplierPriceHistory = (supId: string) => {
