@@ -209,7 +209,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const finalItems = verifyModal.items;
       const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
       
-      // Moving straight to Fulfilled / Received
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
@@ -275,6 +274,28 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       fetchData(); showToast(`Transaction Reversed! Stock restored.`, "success");
       setReturnModal({ isOpen: false, order: null });
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
+  };
+
+  // --- DELETE HISTORY LOGIC ---
+  const handleDeleteTransaction = async (order: Transaction) => {
+    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently from the ledger. To reverse stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
+    if (confirmDelete !== "DELETE") {
+      return showToast("Deletion cancelled. Order retained.", "error");
+    }
+
+    setIsProcessing(true);
+    try {
+      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE' });
+      if(!res.ok) throw new Error();
+      
+      fetchData();
+      showToast(`Transaction ${order.refNumber} permanently deleted.`, "success");
+    } catch (e) { 
+      showToast("Failed to delete transaction.", "error"); 
+    } finally { 
+      setIsProcessing(false); 
+    }
   };
 
   const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
@@ -460,7 +481,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <div className="p-5 border-b border-slate-200 bg-slate-50"><h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3></div>
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Documents</th></tr>
+                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').map(order => (
@@ -469,14 +490,15 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
                           <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
                           <td className="py-4 px-6">
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-indigo-200 bg-indigo-50 text-indigo-700'}`}>{order.status}</span>
+                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
                           </td>
-                          <td className="py-4 px-6 text-right space-x-4">
+                          <td className="py-4 px-6 text-right space-x-3">
                             <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
                             <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
                             {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
-                              <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Return</button>
+                              <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                             )}
+                            <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider">Delete</button>
                           </td>
                         </tr>
                       ))}
@@ -625,7 +647,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               
               <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
                 <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare the physical stock against this list. If an item is missing or unavailable, click "Cancel Item" to omit it from the final transaction record.
+                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to omit it from the transaction.
                 </div>
 
                 <div className="space-y-4">
@@ -646,14 +668,14 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             onClick={() => handleToggleCancelItem(index)}
                             className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
                           >
-                            {item.isCancelled ? 'Restore Item' : 'Cancel Item'}
+                            {item.isCancelled ? 'Restore Item' : 'Cancel Item (Low Stock)'}
                           </button>
                         </div>
                       </div>
 
                       {item.isCancelled && (
                         <div className="mt-4 pt-4 border-t border-slate-200 animate-in slide-in-from-top-2">
-                          <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Records)</label>
+                          <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Shortages)</label>
                           <input 
                             type="text" 
                             value={item.cancelReason} 
