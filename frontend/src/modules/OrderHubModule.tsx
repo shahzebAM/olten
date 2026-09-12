@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 
-// --- INTERFACES ---
-interface Partner { id: string; name: string; contact: string; phone: string; email: string; address?: string; creditLimit?: number; balance: number; }
-interface OrderItem { id?: string; productId: number; sku: string; productName: string; quantity: number; unitPrice: number; total: number; isCancelled?: boolean; cancelReason?: string; }
-interface Transaction { id: string; refNumber: string; partnerId: string; partner: Partner; date: string; status: string; totalAmount: number; items: OrderItem[]; user: string; }
-interface Product { id: number; name: string; sku: string; purchasePrice: number; currentStock: number; reorderLevel: number; }
+// --- INTERFACES (Relaxed for strict TypeScript compatibility) ---
+interface Partner { id?: string; name?: string; contact?: string; phone?: string; email?: string; address?: string; creditLimit?: number; balance?: number; }
+interface OrderItem { id?: string; productId: number; sku?: string; productName?: string; quantity: number; unitPrice: number; total: number; isCancelled?: boolean; cancelReason?: string; }
+interface Transaction { id: string; refNumber: string; partnerId: string; partner?: Partner; date: string; status: string; totalAmount: number; items: OrderItem[]; user?: string; }
+interface Product { id: number; name?: string; sku?: string; purchasePrice?: number; currentStock?: number; reorderLevel?: number; }
 
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
   
@@ -19,7 +19,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [salesOrders, setSalesOrders] = useState<Transaction[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<Transaction[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [shortages, setShortages] = useState<any[]>([]); // NOW DRIVEN BY DATABASE
+  const [shortages, setShortages] = useState<any[]>([]);
 
   // Draft States
   const [draftForm, setDraftForm] = useState({ partnerId: '', refNumber: '' });
@@ -30,6 +30,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [productSearch, setProductSearch] = useState('');
   const [tempSelectedItems, setTempSelectedItems] = useState<Record<number, { checked: boolean, qty: number, price: number }>>({});
   
+  // Action Modal States
   const [editModal, setEditModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
@@ -39,6 +40,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [printDoc, setPrintDoc] = useState<{ order: Transaction, type: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT' } | null>(null);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [shortageSearch, setShortageSearch] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
@@ -64,7 +67,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/purchasing/pos?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/shortages?company=${selectedCompany}`).catch(() => ({ ok: false, json: () => [] })) // Failsafe if endpoint not created yet
+        fetch(`${API_BASE_URL}/shortages?company=${selectedCompany}`).catch(() => ({ ok: false, json: () => [] }))
       ]);
       if (custRes.ok) setCustomers(await custRes.json());
       if (supRes.ok) setSuppliers(await supRes.json());
@@ -114,7 +117,24 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       tDate.setHours(0,0,0,0);
       if (itemDate > tDate) return false;
     }
+    if (shortageSearch) {
+      const q = shortageSearch.toLowerCase();
+      const matchesPartner = (item.partnerName || '').toLowerCase().includes(q);
+      const matchesProduct = (item.productName || '').toLowerCase().includes(q);
+      const matchesRef = (item.orderRef || '').toLowerCase().includes(q);
+      const matchesSku = (item.sku || '').toLowerCase().includes(q);
+      if (!matchesPartner && !matchesProduct && !matchesRef && !matchesSku) return false;
+    }
     return true;
+  });
+
+  const filteredHistory = transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').filter(order => {
+    if (!historySearch) return true;
+    const q = historySearch.toLowerCase();
+    return (
+      (order.refNumber || '').toLowerCase().includes(q) ||
+      (order.partner?.name || '').toLowerCase().includes(q)
+    );
   });
 
   const handleRemoveShortage = async (shortageId: string) => {
@@ -143,7 +163,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleConfirmAddItems = () => {
-    const newItems = Object.entries(tempSelectedItems).filter(([_, data]) => data.checked).map(([id, data]) => {
+    const newItems = Object.entries(tempSelectedItems).filter(([id, data]) => data.checked).map(([id, data]) => {
         const p = products.find(prod => prod.id === Number(id))!;
         const safePrice = Number(data.price) || 0;
         const safeQty = Number(data.qty) || 1;
@@ -278,7 +298,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Valid items processed. Shortages logged to database.`, "success");
+      showToast(`Verification Complete! Valid items processed. Shortages logged.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -333,6 +353,28 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Failed to delete transaction.", "error"); } finally { setIsProcessing(false); }
   };
 
+  const handleClearHistory = async () => {
+    const finishedOrders = transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED');
+    if (finishedOrders.length === 0) return showToast("No history records found to clear.", "error");
+
+    const confirmClear = window.prompt(`CRITICAL WARNING: This will permanently delete ALL ${finishedOrders.length} finalized ledger transactions for this workspace.\n\nType "CLEAR ALL" to confirm:`);
+    if (confirmClear !== "CLEAR ALL") return showToast("Clear history cancelled.", "error");
+
+    setIsProcessing(true);
+    try {
+      const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
+      await Promise.all(finishedOrders.map(order => 
+        fetch(`${API_BASE_URL}${endpoint}/${order.id}`, { method: 'DELETE' })
+      ));
+      fetchData();
+      showToast("All finalized history records cleared successfully.", "success");
+    } catch (e) {
+      showToast("Failed to clear some ledger records.", "error");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
     setPrintDoc({ order, type: printType });
     setTimeout(() => { window.print(); }, 400); 
@@ -351,10 +393,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
           <div className="flex-1 py-6 px-3 space-y-1">
             <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Order Management</p>
-            <button onClick={() => setActiveTab('draft')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>1. Draft {mode === 'sales' ? 'Order Slip' : 'PO'}</button>
-            <button onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>2. Verify Stock</button>
-            <button onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>3. Shortages Log</button>
-            <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>4. Finalized Ledger</button>
+            <button type="button" onClick={() => setActiveTab('draft')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>1. Draft {mode === 'sales' ? 'Order Slip' : 'PO'}</button>
+            <button type="button" onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>2. Verify Stock</button>
+            <button type="button" onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>3. Shortages Log</button>
+            <button type="button" onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>4. Finalized Ledger</button>
           </div>
         </aside>
 
@@ -366,19 +408,19 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">{mode === 'sales' ? 'Outbound Sales & OS' : 'Inbound Purchasing & PO'}</p>
             </div>
             <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
-              <button onClick={() => { setMode(mode === 'sales' ? 'purchasing' : 'sales'); setActiveTab('draft'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
+              <button type="button" onClick={() => { setMode(mode === 'sales' ? 'purchasing' : 'sales'); setActiveTab('draft'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
                 Switch to {mode === 'sales' ? 'Purchasing' : 'Sales'}
               </button>
-              <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Gateway</button>
+              <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Gateway</button>
             </div>
           </header>
 
           {/* MOBILE TABS */}
           <div className="md:hidden flex overflow-x-auto bg-slate-900 text-white shrink-0 scrollbar-hide border-b border-slate-800">
-            <button onClick={() => setActiveTab('draft')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>1. Draft</button>
-            <button onClick={() => setActiveTab('verify')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>2. Verify</button>
-            <button onClick={() => setActiveTab('pending')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600' : 'bg-amber-600') : 'text-slate-400'}`}>3. Shortages</button>
-            <button onClick={() => setActiveTab('history')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>4. Ledger</button>
+            <button type="button" onClick={() => setActiveTab('draft')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>1. Draft</button>
+            <button type="button" onClick={() => setActiveTab('verify')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>2. Verify</button>
+            <button type="button" onClick={() => setActiveTab('pending')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600' : 'bg-amber-600') : 'text-slate-400'}`}>3. Shortages</button>
+            <button type="button" onClick={() => setActiveTab('history')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>4. Ledger</button>
           </div>
 
           <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
@@ -414,7 +456,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                   <td className="py-3 px-5 text-right font-black text-slate-700">{item.quantity}</td>
                                   <td className="py-3 px-5 text-right font-medium text-slate-600">₱{(item.unitPrice || 0).toLocaleString()}</td>
                                   <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</td>
-                                  <td className="py-3 px-5 text-center"><button onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500">✕</button></td>
+                                  <td className="py-3 px-5 text-center"><button type="button" onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500">✕</button></td>
                                 </tr>
                               ))
                             }
@@ -423,7 +465,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                       </div>
                       <div className="flex flex-col sm:flex-row justify-between items-center bg-slate-900 text-white p-4 sm:p-5 rounded-xl gap-4">
                         <div className="text-center sm:text-left"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{(draftItems.reduce((a,b)=>a+(b.total||0),0) || 0).toLocaleString('en-PH')}</p></div>
-                        <button onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`w-full sm:w-auto px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
+                        <button type="button" onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`w-full sm:w-auto px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
                           Generate {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}
                         </button>
                       </div>
@@ -451,9 +493,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                               <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
                               <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
                               <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
-                                <button onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
-                                <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
-                                <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
+                                <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
+                                <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
+                                <button type="button" onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
                               </td>
                             </tr>
                           ))
@@ -483,7 +525,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
                       </div>
                     </div>
-                    <button onClick={() => { setFromDate(''); setToDate(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
+                    <button type="button" onClick={() => { setFromDate(''); setToDate(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
                   </div>
 
                   <div className="overflow-x-auto w-full">
@@ -511,7 +553,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
                             <td className="py-4 px-6 text-right">
                               <div className="font-bold text-rose-700 text-[10px] uppercase tracking-wide mb-2">{item.cancelReason}</div>
-                              <button onClick={() => handleRemoveShortage(item.id)} className="text-slate-400 hover:text-rose-600 font-black text-[10px] uppercase tracking-wider border border-slate-200 px-3 py-1 rounded bg-white transition-colors">Clear</button>
+                              <button type="button" onClick={() => handleRemoveShortage(item.id)} className="text-slate-400 hover:text-rose-600 font-black text-[10px] uppercase tracking-wider border border-slate-200 px-3 py-1 rounded bg-white transition-colors">Clear</button>
                             </td>
                           </tr>
                         ))}
@@ -557,12 +599,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                 <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
                               </td>
                               <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
-                                <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
-                                <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
+                                <button type="button" onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
+                                <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
                                 {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
-                                  <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
+                                  <button type="button" onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                                 )}
-                                <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+                                <button type="button" onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
                               </td>
                             </tr>
                           ))
@@ -585,7 +627,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
                   <p className="text-xs uppercase text-slate-500 font-bold tracking-widest mt-1">Ref: {viewModal.refNumber} • Status: {viewModal.status}</p>
                 </div>
-                <button onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
+                <button type="button" onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
               <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-3">
                 {(viewModal.items || []).map((item, i) => (
@@ -622,11 +664,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <h3 className="font-black text-xl tracking-wide">Edit Pending Order</h3>
                   <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name || 'Unknown'}</p>
                 </div>
-                <button onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
+                <button type="button" onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
               
               <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
-                <button onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white' : 'border-amber-300 text-amber-700 hover:bg-amber-50 bg-white'}`}>+ Add New Items</button>
+                <button type="button" onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white' : 'border-amber-300 text-amber-700 hover:bg-amber-50 bg-white'}`}>+ Add New Items</button>
                 
                 {editModal.items.length === 0 ? <div className="text-center py-8 text-slate-400 font-medium">All items removed.</div> : 
                   editModal.items.map((item, index) => (
@@ -653,7 +695,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 w-full sm:w-24">Total</p>
                           <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</span>
                         </div>
-                        <button onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors bg-slate-50 sm:bg-transparent">✕</button>
+                        <button type="button" onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors bg-slate-50 sm:bg-transparent">✕</button>
                       </div>
                     </div>
                   ))
@@ -665,7 +707,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
                   <p className="text-2xl font-black text-slate-900">₱{(editModal.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</p>
                 </div>
-                <button onClick={handleSaveEdit} disabled={isProcessing} className="w-full sm:w-auto px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
+                <button type="button" onClick={handleSaveEdit} disabled={isProcessing} className="w-full sm:w-auto px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
               </div>
             </div>
           </div>
@@ -677,7 +719,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
               <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                 <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products</h3>
-                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700 font-black text-lg">✕</button>
+                <button type="button" onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700 font-black text-lg">✕</button>
               </div>
               <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
               <div className="overflow-y-auto p-2 sm:p-4 bg-slate-100 flex-1 space-y-2">
@@ -705,8 +747,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 })}
               </div>
               <div className="p-4 sm:p-5 border-t border-slate-200 bg-white flex gap-3">
-                <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
-                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Items</button>
+                <button type="button" onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
+                <button type="button" onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Items</button>
               </div>
             </div>
           </div>
@@ -746,6 +788,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                       </div>
                       
                       <button 
+                        type="button"
                         onClick={() => handleToggleCancelItem(index)}
                         className={`px-4 py-3 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
                       >
@@ -788,8 +831,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                     </p>
                   </div>
                   <div className="flex gap-3 w-full sm:w-auto">
-                    <button onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="flex-1 sm:flex-none px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
-                    <button onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 sm:flex-none px-6 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                    <button type="button" onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="flex-1 sm:flex-none px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
+                    <button type="button" onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 sm:flex-none px-6 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
                       {isProcessing ? 'Processing...' : 'Confirm'}
                     </button>
                   </div>

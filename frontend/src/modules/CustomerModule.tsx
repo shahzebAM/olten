@@ -35,7 +35,7 @@ export default function CustomerModule({ selectedCompany, API_BASE_URL, onBack }
 
   useEffect(() => { fetchData(); }, [selectedCompany]);
 
-  const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
+  const filteredCustomers = customers.filter(c => (c.name || '').toLowerCase().includes(customerSearch.toLowerCase()));
 
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault(); 
@@ -99,7 +99,18 @@ export default function CustomerModule({ selectedCompany, API_BASE_URL, onBack }
 
   const getCustomerSalesHistory = (custId: string) => {
     const history: any[] = [];
-    sos.filter(s => s.customerId === custId).forEach(s => { s.items.forEach(item => history.push({ date: s.date, so: s.soNumber, product: item.productName, price: item.unitPrice, qty: item.quantity })); });
+    sos.filter(s => s.customerId === custId).forEach(s => { 
+      // SAFE FALLBACK: Check if items exist before running forEach
+      (s.items || []).forEach(item => { 
+        history.push({ 
+          date: s.date || new Date().toISOString(), 
+          so: s.soNumber || 'N/A', 
+          product: item.productName || 'Unknown Product', 
+          price: item.unitPrice || 0, 
+          qty: item.quantity || 0 
+        }); 
+      }); 
+    });
     return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   };
 
@@ -146,8 +157,8 @@ export default function CustomerModule({ selectedCompany, API_BASE_URL, onBack }
                             <div className="text-xs text-slate-500 font-medium mt-1">{c.contact || 'No Contact'} • {c.phone}</div>
                           </td>
                           <td className="py-4 px-6 text-right">
-                            <div className="font-black text-rose-600 text-sm">₱{c.balance.toLocaleString('en-PH')} <span className="text-[10px] text-slate-400 font-bold uppercase">Owed</span></div>
-                            <div className="text-xs font-bold text-emerald-600 mt-1">Avail: ₱{Math.max(0, c.creditLimit - c.balance).toLocaleString('en-PH')}</div>
+                            <div className="font-black text-rose-600 text-sm">₱{(c.balance || 0).toLocaleString('en-PH')} <span className="text-[10px] text-slate-400 font-bold uppercase">Owed</span></div>
+                            <div className="text-xs font-bold text-emerald-600 mt-1">Avail: ₱{Math.max(0, (c.creditLimit || 0) - (c.balance || 0)).toLocaleString('en-PH')}</div>
                           </td>
                           <td className="py-4 px-6 text-right">
                             <button onClick={() => setHistoryModal({ isOpen: true, customerId: c.id })} className="text-sky-600 hover:text-sky-800 text-xs font-bold uppercase mr-4">Ledger</button>
@@ -225,7 +236,7 @@ export default function CustomerModule({ selectedCompany, API_BASE_URL, onBack }
                     <tr key={i} className="bg-white">
                       <td className="py-3 px-4 font-mono text-xs text-slate-600">{new Date(h.date).toLocaleDateString()}<br/><span className="text-[10px] text-slate-400">{h.so}</span></td>
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">{h.product} <span className="text-[10px] text-slate-400 block font-bold uppercase mt-0.5">Qty: {h.qty}</span></td>
-                      <td className="py-3 px-4 text-right font-black text-emerald-700">₱{h.price.toLocaleString('en-PH')}</td>
+                      <td className="py-3 px-4 text-right font-black text-emerald-700">₱{(h.price || 0).toLocaleString('en-PH')}</td>
                     </tr>
                   ))}
                 </tbody>
