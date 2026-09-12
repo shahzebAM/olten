@@ -19,12 +19,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [salesOrders, setSalesOrders] = useState<Transaction[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<Transaction[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  
-  // Independent Shortages Ledger (Bypasses backend restrictions)
-  const [shortages, setShortages] = useState<any[]>(() => {
-    const saved = localStorage.getItem(`shortages_ledger_${selectedCompany}`);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [shortages, setShortages] = useState<any[]>([]); // NOW DRIVEN BY DATABASE
 
   // Draft States
   const [draftForm, setDraftForm] = useState({ partnerId: '', refNumber: '' });
@@ -51,7 +46,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     if (selectedCompany?.toLowerCase().includes('wilcare')) {
       return { name: 'Wilcare Trading Corp.', address: '1457-A Rizal Ave. Sta. Cruz Manila', tel: '(02)87330879, 87333950', mob: '09157739968, 09164394073', email: 'wilcaremanila@gmail.com', web: 'www.wilcare.com.ph' };
     }
-    return { name: `${selectedCompany} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', mob: 'N/A', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com`, web: `www.${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
+    return { name: `${selectedCompany || 'Unknown'} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', mob: 'N/A', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com`, web: `www.${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
   };
   const companyMeta = getCompanyDetails();
 
@@ -63,24 +58,26 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchData = async () => {
     try {
-      const [custRes, supRes, soRes, poRes, prodRes] = await Promise.all([
+      const [custRes, supRes, soRes, poRes, prodRes, shortRes] = await Promise.all([
         fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/purchasing/suppliers?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/purchasing/pos?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/shortages?company=${selectedCompany}`).catch(() => ({ ok: false, json: () => [] })) // Failsafe if endpoint not created yet
       ]);
       if (custRes.ok) setCustomers(await custRes.json());
       if (supRes.ok) setSuppliers(await supRes.json());
       if (soRes.ok) {
         const soData = await soRes.json();
-        setSalesOrders(soData.map((s: any) => ({ ...s, refNumber: s.soNumber, partnerId: s.customerId, partner: s.customer })));
+        setSalesOrders(soData.map((s: any) => ({ ...s, refNumber: s.soNumber || 'N/A', partnerId: s.customerId, partner: s.customer || { name: 'Unknown' } })));
       }
       if (poRes.ok) {
         const poData = await poRes.json();
-        setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber, partnerId: p.supplierId, partner: p.supplier })));
+        setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber || 'N/A', partnerId: p.supplierId, partner: p.supplier || { name: 'Unknown' } })));
       }
       if (prodRes.ok) setProducts(await prodRes.json());
+      if (shortRes.ok) setShortages(await shortRes.json());
     } catch (e) { console.warn("Backend not ready."); }
   };
 
@@ -98,7 +95,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
   );
 
-  // --- SHORTAGES FILTERING (Using explicit date reset for precision) ---
+  // --- SHORTAGES FILTERING ---
   const pendingItemsList = shortages
     .filter(s => s.mode === mode)
     .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
@@ -120,14 +117,15 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  const handleRemoveShortage = (shortageId: string) => {
-    if(!window.confirm("Remove this shortage from the pending list?")) return;
-    setShortages(prev => {
-      const next = prev.filter(s => s.shortageId !== shortageId);
-      localStorage.setItem(`shortages_ledger_${selectedCompany}`, JSON.stringify(next));
-      return next;
-    });
-    showToast("Shortage record cleared.", "success");
+  const handleRemoveShortage = async (shortageId: string) => {
+    if(!window.confirm("Remove this shortage from the database?")) return;
+    try {
+      await fetch(`${API_BASE_URL}/shortages/${shortageId}`, { method: 'DELETE' });
+      fetchData();
+      showToast("Shortage record cleared.", "success");
+    } catch (e) {
+      showToast("Failed to delete shortage.", "error");
+    }
   };
 
   // --- ADD ITEMS LOGIC ---
@@ -147,7 +145,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const handleConfirmAddItems = () => {
     const newItems = Object.entries(tempSelectedItems).filter(([_, data]) => data.checked).map(([id, data]) => {
         const p = products.find(prod => prod.id === Number(id))!;
-        return { productId: p.id, sku: p.sku || 'N/A', productName: p.name || 'Unnamed Product', quantity: data.qty, unitPrice: data.price, total: data.qty * data.price, isCancelled: false, cancelReason: '' };
+        const safePrice = Number(data.price) || 0;
+        const safeQty = Number(data.qty) || 1;
+        return { productId: p.id, sku: p.sku || 'N/A', productName: p.name || 'Unnamed', quantity: safeQty, unitPrice: safePrice, total: safeQty * safePrice, isCancelled: false, cancelReason: '' };
       });
     if (newItems.length === 0) return showToast("No items selected.", "error");
     
@@ -166,7 +166,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     e.preventDefault(); if (draftItems.length === 0) return showToast("Add at least one item.", "error");
     setIsProcessing(true);
     try {
-      const totalAmount = draftItems.reduce((acc, item) => acc + item.total, 0);
+      const totalAmount = draftItems.reduce((acc, item) => acc + (item.total || 0), 0);
       const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
       const payload = mode === 'sales' 
         ? { company: selectedCompany, customerId: draftForm.partnerId, soNumber: draftForm.refNumber, totalAmount, items: draftItems, user: loginUsername, status: 'PENDING' }
@@ -186,7 +186,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     e.preventDefault(); if (!editModal.order) return;
     setIsProcessing(true);
     try {
-      const finalTotal = editModal.items.reduce((acc, item) => acc + item.total, 0);
+      const finalTotal = editModal.items.reduce((acc, item) => acc + (item.total || 0), 0);
       const endpoint = mode === 'sales' ? `/sales/orders/${editModal.order.id}` : `/purchasing/pos/${editModal.order.id}`;
       
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: editModal.items }) });
@@ -198,7 +198,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   // --- VERIFICATION & STOCK COUNTING LOGIC ---
   const openVerificationModal = (order: Transaction) => {
-    const itemsClone = order.items.map(i => ({ ...i }));
+    const itemsClone = (order.items || []).map(i => ({ ...i }));
     setVerifyModal({ isOpen: true, order, items: itemsClone });
   };
 
@@ -213,7 +213,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         updatedItems[index].total = 0; 
       } else {
         updatedItems[index].cancelReason = '';
-        updatedItems[index].total = updatedItems[index].quantity * updatedItems[index].unitPrice; 
+        updatedItems[index].total = (updatedItems[index].quantity || 0) * (updatedItems[index].unitPrice || 0); 
       }
       return { ...prev, items: updatedItems };
     });
@@ -226,30 +226,37 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const order = verifyModal.order;
       const finalItems = verifyModal.items;
       const validItems = finalItems.filter(i => !i.isCancelled);
-      const finalTotal = validItems.reduce((acc, item) => acc + item.total, 0);
+      const finalTotal = validItems.reduce((acc, item) => acc + (item.total || 0), 0);
       
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // Update Main Order with ONLY Valid Items so Backend Schema isn't violated
+      // Update Main Order with ONLY Valid Items
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: validItems }) });
 
-      // Log Cancelled Items into Local Shortage Ledger
+      // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
-        ...i,
-        shortageId: Math.random().toString(36).substring(7),
+        company: selectedCompany,
         orderDate: new Date().toISOString(),
         orderRef: order.refNumber,
         partnerName: order.partner?.name || 'Unknown',
+        productId: i.productId,
+        productName: i.productName,
+        sku: i.sku || 'N/A',
+        quantity: i.quantity,
+        cancelReason: i.cancelReason || 'Unspecified',
         mode: mode
       }));
 
       if (cancelledItems.length > 0) {
-        setShortages(prev => {
-          const next = [...prev, ...cancelledItems];
-          localStorage.setItem(`shortages_ledger_${selectedCompany}`, JSON.stringify(next));
-          return next;
-        });
+        // Send individually to DB
+        await Promise.all(cancelledItems.map(item => 
+          fetch(`${API_BASE_URL}/shortages`, { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify(item) 
+          })
+        ));
       }
 
       // Update Ledger Balances
@@ -263,15 +270,15 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
-          const newStock = mode === 'sales' 
-            ? Math.max(0, (prod.currentStock || 0) - item.quantity) 
-            : (prod.currentStock || 0) + item.quantity;             
+          const safeCurrent = Number(prod.currentStock) || 0;
+          const safeQty = Number(item.quantity) || 0;
+          const newStock = mode === 'sales' ? Math.max(0, safeCurrent - safeQty) : safeCurrent + safeQty;            
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Valid items processed. Shortages logged.`, "success");
+      showToast(`Verification Complete! Valid items processed. Shortages logged to database.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -288,7 +295,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
-      const validTotal = order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
+      const validTotal = (order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0);
       
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
@@ -296,14 +303,13 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
       }
 
-      const validItems = order.items.filter(i => !i.isCancelled);
+      const validItems = (order.items || []).filter(i => !i.isCancelled);
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
-          const newStock = mode === 'sales'
-            ? (prod.currentStock || 0) + item.quantity              
-            : Math.max(0, (prod.currentStock || 0) - item.quantity); 
-
+          const safeCurrent = Number(prod.currentStock) || 0;
+          const safeQty = Number(item.quantity) || 0;
+          const newStock = mode === 'sales' ? safeCurrent + safeQty : Math.max(0, safeCurrent - safeQty); 
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
       }
@@ -313,26 +319,18 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- DELETE HISTORY LOGIC ---
   const handleDeleteTransaction = async (order: Transaction) => {
-    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently from the ledger. To reverse stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
-    if (confirmDelete !== "DELETE") {
-      return showToast("Deletion cancelled. Order retained.", "error");
-    }
+    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently. To reverse stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
+    if (confirmDelete !== "DELETE") return showToast("Deletion cancelled. Order retained.", "error");
 
     setIsProcessing(true);
     try {
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       const res = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE' });
       if(!res.ok) throw new Error();
-      
       fetchData();
       showToast(`Transaction ${order.refNumber} permanently deleted.`, "success");
-    } catch (e) { 
-      showToast("Failed to delete transaction.", "error"); 
-    } finally { 
-      setIsProcessing(false); 
-    }
+    } catch (e) { showToast("Failed to delete transaction.", "error"); } finally { setIsProcessing(false); }
   };
 
   const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
@@ -342,38 +340,32 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   return (
     <>
-      <div className={`flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
+      <div className={`flex flex-col md:flex-row h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
         
         {toast && <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>{toast.message}</div>}
 
-        <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0 hidden md:flex">
+        {/* DESKTOP SIDEBAR */}
+        <aside className="w-64 bg-slate-900 text-slate-300 flex-col border-r border-slate-800 shrink-0 hidden md:flex">
           <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
             <h1 className="text-xl font-black text-white uppercase tracking-wider">{mode === 'sales' ? 'Sales Desk' : 'Purchasing'}</h1>
           </div>
           <div className="flex-1 py-6 px-3 space-y-1">
             <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Order Management</p>
-            <button onClick={() => setActiveTab('draft')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              1. Draft {mode === 'sales' ? 'Order Slip' : 'PO'}
-            </button>
-            <button onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              2. Verify & Process Stock
-            </button>
-            <button onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              3. Pending Shortages
-            </button>
-            <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              4. Finalized Ledger
-            </button>
+            <button onClick={() => setActiveTab('draft')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>1. Draft {mode === 'sales' ? 'Order Slip' : 'PO'}</button>
+            <button onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>2. Verify Stock</button>
+            <button onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>3. Shortages Log</button>
+            <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>4. Finalized Ledger</button>
           </div>
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0 h-screen">
-          <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
+          
+          <header className="h-auto sm:h-20 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 sm:px-8 shadow-sm z-10 gap-3">
             <div>
-              <h2 className={`text-2xl font-black tracking-tight ${mode === 'sales' ? 'text-emerald-950' : 'text-amber-950'}`}>Order Fulfillment Engine</h2>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">{mode === 'sales' ? 'Outbound Sales & OS Generation' : 'Inbound Purchasing & PO Logging'}</p>
+              <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${mode === 'sales' ? 'text-emerald-950' : 'text-amber-950'}`}>Fulfillment Engine</h2>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">{mode === 'sales' ? 'Outbound Sales & OS' : 'Inbound Purchasing & PO'}</p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
               <button onClick={() => { setMode(mode === 'sales' ? 'purchasing' : 'sales'); setActiveTab('draft'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
                 Switch to {mode === 'sales' ? 'Purchasing' : 'Sales'}
               </button>
@@ -381,14 +373,22 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto p-8 relative">
+          {/* MOBILE TABS */}
+          <div className="md:hidden flex overflow-x-auto bg-slate-900 text-white shrink-0 scrollbar-hide border-b border-slate-800">
+            <button onClick={() => setActiveTab('draft')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>1. Draft</button>
+            <button onClick={() => setActiveTab('verify')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>2. Verify</button>
+            <button onClick={() => setActiveTab('pending')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600' : 'bg-amber-600') : 'text-slate-400'}`}>3. Shortages</button>
+            <button onClick={() => setActiveTab('history')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>4. Ledger</button>
+          </div>
+
+          <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
             <div className="max-w-7xl mx-auto">
               
               {activeTab === 'draft' && (
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-                  <h3 className="font-black text-xl text-slate-900 mb-6 tracking-tight">Draft New {mode === 'sales' ? 'Order Slip (OS)' : 'Purchase Order (PO)'}</h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                    <div className="lg:col-span-1 border-r border-slate-100 pr-0 lg:pr-8 space-y-5">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-8">
+                  <h3 className="font-black text-xl text-slate-900 mb-6 tracking-tight">Draft New {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8">
+                    <div className="lg:col-span-1 border-b lg:border-b-0 lg:border-r border-slate-100 pb-6 lg:pb-0 lg:pr-8 space-y-4 sm:space-y-5">
                       <select required value={draftForm.partnerId} onChange={e => setDraftForm({...draftForm, partnerId: e.target.value})} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 bg-slate-50 ${mode === 'sales' ? 'focus:ring-emerald-600' : 'focus:ring-amber-600'}`}>
                         <option value="">Select {mode === 'sales' ? 'Customer' : 'Supplier'}...</option>
                         {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -401,8 +401,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                     </div>
                     
                     <div className="lg:col-span-3 flex flex-col">
-                      <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden mb-6 min-h-[300px] bg-slate-50">
-                        <table className="w-full text-left text-sm">
+                      <div className="flex-1 border border-slate-200 rounded-xl overflow-x-auto mb-6 min-h-[300px] bg-slate-50">
+                        <table className="w-full text-left text-sm min-w-[500px]">
                           <thead className="bg-slate-100 border-b border-slate-200">
                             <tr><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase">Item Details</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Qty</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Price</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Total</th><th className="w-12"></th></tr>
                           </thead>
@@ -412,8 +412,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                 <tr key={i} className="group">
                                   <td className="py-3 px-5 font-bold text-slate-900">{item.productName} <span className="text-[10px] font-mono text-slate-400 block mt-0.5">{item.sku}</span></td>
                                   <td className="py-3 px-5 text-right font-black text-slate-700">{item.quantity}</td>
-                                  <td className="py-3 px-5 text-right font-medium text-slate-600">₱{item.unitPrice.toLocaleString()}</td>
-                                  <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{item.total.toLocaleString()}</td>
+                                  <td className="py-3 px-5 text-right font-medium text-slate-600">₱{(item.unitPrice || 0).toLocaleString()}</td>
+                                  <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</td>
                                   <td className="py-3 px-5 text-center"><button onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500">✕</button></td>
                                 </tr>
                               ))
@@ -421,9 +421,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           </tbody>
                         </table>
                       </div>
-                      <div className="flex justify-between items-center bg-slate-900 text-white p-5 rounded-xl">
-                        <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{draftItems.reduce((a,b)=>a+b.total,0).toLocaleString('en-PH')}</p></div>
-                        <button onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
+                      <div className="flex flex-col sm:flex-row justify-between items-center bg-slate-900 text-white p-4 sm:p-5 rounded-xl gap-4">
+                        <div className="text-center sm:text-left"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{(draftItems.reduce((a,b)=>a+(b.total||0),0) || 0).toLocaleString('en-PH')}</p></div>
+                        <button onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`w-full sm:w-auto px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
                           Generate {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}
                         </button>
                       </div>
@@ -434,59 +434,59 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
               {activeTab === 'verify' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className={`p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
+                  <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
                     <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Physical Verification</h3>
-                    <p className="text-xs text-slate-600 font-medium">Print documents, modify items if needed, and confirm stock processing.</p>
+                    <p className="text-xs text-slate-600 font-medium mt-1">Print documents, modify items if needed, and confirm stock processing.</p>
                   </div>
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-white border-b border-slate-200">
-                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Document Ref</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Expected Units</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Verification Action</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {transactions.filter(t => t.status === 'PENDING').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending documents to verify.</td></tr> :
-                        transactions.filter(t => t.status === 'PENDING').map(order => (
-                          <tr key={order.id} className="hover:bg-slate-50">
-                            <td className="py-4 px-6 font-black text-slate-900">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
-                            <td className="py-4 px-6 font-black text-slate-600">{order.items.reduce((a,b)=>a+b.quantity,0)} Items</td>
-                            <td className="py-4 px-6 text-right space-x-3">
-                              <button onClick={() => setEditModal({ isOpen: true, order, items: order.items.map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit Order</button>
-                              <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
-                              <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
-                            </td>
-                          </tr>
-                        ))
-                      }
-                    </tbody>
-                  </table>
+                  <div className="overflow-x-auto w-full">
+                    <table className="w-full text-left text-sm min-w-[700px]">
+                      <thead className="bg-white border-b border-slate-200">
+                        <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Document Ref</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Expected Units</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Verification Action</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {transactions.filter(t => t.status === 'PENDING').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending documents to verify.</td></tr> :
+                          transactions.filter(t => t.status === 'PENDING').map(order => (
+                            <tr key={order.id} className="hover:bg-slate-50">
+                              <td className="py-4 px-6 font-black text-slate-900">{order.refNumber || 'N/A'} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                              <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                              <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
+                              <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
+                                <button onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
+                                <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
+                                <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
+                              </td>
+                            </tr>
+                          ))
+                        }
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
-              {/* NEW PENDING SHORTAGES TAB */}
+              {/* PENDING SHORTAGES TAB */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className={`p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
+                  <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
                     <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Items / Shortages</h3>
-                    <p className="text-xs text-slate-600 font-medium">Items that were manually cancelled during verification due to low stock or missing deliveries.</p>
+                    <p className="text-xs text-slate-600 font-medium mt-1">Items that were manually cancelled during verification due to low stock or missing deliveries.</p>
                   </div>
                   
-                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-4 items-center justify-between">
-                    <div className="flex gap-4">
-                      <div className="flex flex-col">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row gap-4 items-start sm:items-end justify-between">
+                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                      <div className="flex flex-col w-full sm:w-auto">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
                         <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
                       </div>
-                      <div className="flex flex-col">
+                      <div className="flex flex-col w-full sm:w-auto">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">To Date</label>
                         <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
                       </div>
-                      <div className="flex flex-col justify-end">
-                        <button onClick={() => { setFromDate(''); setToDate(''); }} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px]">Clear Filter</button>
-                      </div>
                     </div>
+                    <button onClick={() => { setFromDate(''); setToDate(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto w-full">
                     <table className="w-full text-left text-sm min-w-[800px]">
                       <thead className="bg-white border-b border-slate-200">
                         <tr>
@@ -510,8 +510,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             </td>
                             <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
                             <td className="py-4 px-6 text-right">
-                              <div className="font-bold text-rose-700 text-xs uppercase tracking-wide mb-2">{item.cancelReason}</div>
-                              <button onClick={() => handleRemoveShortage(item.shortageId)} className="text-slate-400 hover:text-slate-900 font-black text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Remove</button>
+                              <div className="font-bold text-rose-700 text-[10px] uppercase tracking-wide mb-2">{item.cancelReason}</div>
+                              <button onClick={() => handleRemoveShortage(item.id)} className="text-slate-400 hover:text-rose-600 font-black text-[10px] uppercase tracking-wider border border-slate-200 px-3 py-1 rounded bg-white transition-colors">Clear</button>
                             </td>
                           </tr>
                         ))}
@@ -523,32 +523,53 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
               {activeTab === 'history' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="p-5 border-b border-slate-200 bg-slate-50"><h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3></div>
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').map(order => (
-                        <tr key={order.id} className="hover:bg-slate-50 group">
-                          <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                          <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
-                          <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
-                          <td className="py-4 px-6">
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
-                          </td>
-                          <td className="py-4 px-6 text-right space-x-3">
-                            <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View</button>
-                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print</button>
-                            {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
-                              <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
-                            )}
-                            <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3>
+                      <p className="text-xs text-slate-500">Historical records of fulfilled orders and receipts.</p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                      <input 
+                        type="text" 
+                        placeholder="Search Client or Ref..." 
+                        value={historySearch} 
+                        onChange={e => setHistorySearch(e.target.value)} 
+                        className="px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-slate-500 bg-white w-full sm:w-64" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto w-full">
+                    <table className="w-full text-left text-sm min-w-[800px]">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredHistory.length === 0 ? (
+                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found.</td></tr>
+                        ) : (
+                          filteredHistory.map(order => (
+                            <tr key={order.id} className="hover:bg-slate-50 group">
+                              <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                              <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                              <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
+                              <td className="py-4 px-6">
+                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
+                              </td>
+                              <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
+                                <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
+                                <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
+                                {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
+                                  <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
+                                )}
+                                <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -559,29 +580,34 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         {viewModal && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-              <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+              <div className="p-4 sm:p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                 <div>
                   <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
                   <p className="text-xs uppercase text-slate-500 font-bold tracking-widest mt-1">Ref: {viewModal.refNumber} • Status: {viewModal.status}</p>
                 </div>
                 <button onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
-              <div className="flex-1 overflow-y-auto bg-white p-6 space-y-3">
-                {viewModal.items.map((item, i) => (
-                  <div key={i} className={`p-4 rounded-xl border flex justify-between items-center border-slate-200`}>
-                    <div>
-                      <h4 className="font-black text-sm text-slate-900">{item.productName}</h4>
-                      <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Qty: {item.quantity} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
+              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-3">
+                {(viewModal.items || []).map((item, i) => (
+                  <div key={i} className={`p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-4 border ${item.isCancelled ? 'bg-white border-rose-300 opacity-70' : 'bg-white border-slate-200 shadow-sm'}`}>
+                    <div className="flex-1">
+                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
+                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
+                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
+                      </div>
+                      {item.isCancelled && <p className="text-[11px] font-bold text-rose-600 uppercase mt-3 tracking-wider">SHORTAGE REASON: {item.cancelReason}</p>}
                     </div>
-                    <div className="font-black text-lg text-slate-900">
-                      ₱{(item.total || 0).toLocaleString()}
+                    <div className={`font-black text-xl text-right shrink-0 ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
+                      ₱{(item.total || 0).toLocaleString('en-PH')}
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="p-6 border-t border-slate-200 bg-slate-50 shrink-0 text-right">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Final Billed Total</p>
-                <p className="text-3xl font-black text-slate-900 mt-1">₱{viewModal.totalAmount.toLocaleString('en-PH')}</p>
+              <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Final Billed Total</span>
+                <span className="text-3xl font-black text-slate-900">₱{(viewModal.totalAmount || 0).toLocaleString('en-PH')}</span>
               </div>
             </div>
           </div>
@@ -591,49 +617,55 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         {editModal.isOpen && editModal.order && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
-              <div className="p-6 border-b text-slate-900 bg-white flex justify-between items-center">
+              <div className="p-4 sm:p-6 border-b text-slate-900 bg-white flex justify-between items-center">
                 <div>
                   <h3 className="font-black text-xl tracking-wide">Edit Pending Order</h3>
-                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name}</p>
+                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name || 'Unknown'}</p>
                 </div>
                 <button onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
               
-              <div className="flex-1 overflow-y-auto bg-slate-50 p-6 space-y-4">
-                <button onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>+ Add New Items</button>
+              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
+                <button onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white' : 'border-amber-300 text-amber-700 hover:bg-amber-50 bg-white'}`}>+ Add New Items</button>
                 
                 {editModal.items.length === 0 ? <div className="text-center py-8 text-slate-400 font-medium">All items removed.</div> : 
                   editModal.items.map((item, index) => (
                     <div key={index} className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
                       <div className="flex-1">
-                        <h4 className="font-black text-base text-slate-900">{item.productName}</h4>
-                        <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
+                        <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
+                        <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
+                          <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-4 shrink-0">
+                      <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4 shrink-0 mt-3 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                         <div className="flex flex-col">
                           <label className="text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
-                          <input type="number" min="1" value={item.quantity} onChange={(e) => {
-                            const newQty = Number(e.target.value);
+                          <input type="number" min="1" value={item.quantity ?? 1} onChange={(e) => {
+                            const newQty = Number(e.target.value) || 0;
                             const updated = [...editModal.items];
                             updated[index].quantity = newQty;
-                            updated[index].total = newQty * updated[index].unitPrice;
+                            updated[index].total = newQty * (updated[index].unitPrice || 0);
                             setEditModal({...editModal, items: updated});
                           }} className="w-20 px-3 py-2 text-sm font-black border border-slate-300 rounded-lg outline-none focus:border-slate-500 text-center" />
                         </div>
-                        <span className={`font-black text-lg w-24 text-right ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</span>
-                        <button onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">✕</button>
+                        <div className="text-right flex-1 sm:flex-none">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 w-full sm:w-24">Total</p>
+                          <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</span>
+                        </div>
+                        <button onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors bg-slate-50 sm:bg-transparent">✕</button>
                       </div>
                     </div>
                   ))
                 }
               </div>
 
-              <div className="p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
-                <div>
+              <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="text-center sm:text-left">
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
-                  <p className="text-2xl font-black text-slate-900">₱{editModal.items.reduce((acc, item) => acc + item.total, 0).toLocaleString('en-PH')}</p>
+                  <p className="text-2xl font-black text-slate-900">₱{(editModal.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</p>
                 </div>
-                <button onClick={handleSaveEdit} disabled={isProcessing} className="px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
+                <button onClick={handleSaveEdit} disabled={isProcessing} className="w-full sm:w-auto px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
               </div>
             </div>
           </div>
@@ -643,27 +675,27 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         {showItemModal && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-              <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products from Master Catalog</h3>
-                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products</h3>
+                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700 font-black text-lg">✕</button>
               </div>
               <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
-              <div className="overflow-y-auto p-2 bg-slate-50 flex-1">
+              <div className="overflow-y-auto p-2 sm:p-4 bg-slate-100 flex-1 space-y-2">
                 {filteredProducts.map(p => {
                   const isChecked = tempSelectedItems[p.id]?.checked || false;
                   return (
-                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors mb-2 ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200'}`}>
+                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200 shadow-sm'}`}>
                       <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
                         <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className={`w-5 h-5 rounded cursor-pointer ${mode==='sales'?'text-emerald-600 focus:ring-emerald-500':'text-amber-600 focus:ring-amber-500'}`} />
                         <div>
                           <p className="font-bold text-sm text-slate-900">{p.name}</p>
-                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2">
-                            {p.sku || 'N/A'} | <span className={`font-bold ${p.currentStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
+                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2 mt-1">
+                            {p.sku || 'N/A'} | <span className={`font-bold ${(p.currentStock||0) > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
                           </p>
                         </div>
                       </label>
                       {isChecked && (
-                        <div className="flex gap-3 w-full sm:w-1/2">
+                        <div className="flex gap-3 w-full sm:w-1/2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200 sm:border-transparent">
                           <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty ?? 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
                           <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{mode === 'sales' ? 'Selling Price (₱)' : 'Purchase Price (₱)'}</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price ?? ''} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
                         </div>
@@ -672,9 +704,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   );
                 })}
               </div>
-              <div className="p-5 border-t border-slate-200 bg-white flex gap-3">
+              <div className="p-4 sm:p-5 border-t border-slate-200 bg-white flex gap-3">
                 <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
-                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Selected Items</button>
+                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Items</button>
               </div>
             </div>
           </div>
@@ -686,79 +718,81 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
               <div className={`p-6 border-b text-white ${mode === 'sales' ? 'bg-emerald-700' : 'bg-amber-700'}`}>
                 <h3 className="font-black text-xl tracking-wide">{mode === 'sales' ? 'Stock Verification & Dispatch' : 'Physical Receipt & Stock Logging'}</h3>
-                <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.order.refNumber} • {verifyModal.order.partner?.name}</p>
+                <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.order.refNumber} • {verifyModal.order.partner?.name || 'Unknown'}</p>
               </div>
               
-              <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
-                <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to omit it from the transaction and send it to the Shortages Log.
+              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
+                <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6 shadow-sm">
+                  Instructions: Compare physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to automatically log it into the Shortages list.
                 </div>
 
-                <div className="space-y-4">
-                  {verifyModal.items.map((item, index) => (
-                    <div key={index} className={`p-4 rounded-xl border-2 transition-all ${item.isCancelled ? 'bg-white border-rose-300 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
-                      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-                        <div className="flex-1">
-                          <h4 className={`font-black text-base ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
-                          <p className="text-xs font-mono text-slate-500 mt-1">{item.sku} • Qty: {item.quantity} • Unit: ₱{(item.unitPrice || 0).toLocaleString()}</p>
-                        </div>
-                        
-                        <div className="flex items-center gap-4 shrink-0">
-                          <span className={`font-black text-lg ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-700' : 'text-amber-700')}`}>
-                            ₱{(item.total || 0).toLocaleString()}
-                          </span>
-                          
-                          <button 
-                            onClick={() => handleToggleCancelItem(index)}
-                            className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
-                          >
-                            {item.isCancelled ? 'Restore Item' : 'Cancel Item (Low Stock)'}
-                          </button>
-                        </div>
+                {verifyModal.items.map((item, index) => (
+                  <div key={index} className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${item.isCancelled ? 'bg-white border-rose-300 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
+                    <div className="flex-1">
+                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
+                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
+                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
                       </div>
-
-                      {item.isCancelled && (
-                        <div className="mt-4 pt-4 border-t border-slate-200 animate-in slide-in-from-top-2">
-                          <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Shortages)</label>
-                          <input 
-                            type="text" 
-                            value={item.cancelReason} 
-                            onChange={(e) => {
-                              const newItems = [...verifyModal.items];
-                              newItems[index].cancelReason = e.target.value;
-                              setVerifyModal({...verifyModal, items: newItems});
-                            }}
-                            className="w-full px-3 py-2 text-sm border-2 border-rose-200 rounded-lg outline-none focus:border-rose-500 text-rose-900 font-medium" 
-                          />
-                        </div>
-                      )}
                     </div>
-                  ))}
-                </div>
+                    
+                    <div className="flex items-center justify-between w-full sm:w-auto gap-4 shrink-0 mt-3 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total</p>
+                        <span className={`font-black text-xl ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-700' : 'text-amber-700')}`}>
+                          ₱{(item.total || 0).toLocaleString('en-PH')}
+                        </span>
+                      </div>
+                      
+                      <button 
+                        onClick={() => handleToggleCancelItem(index)}
+                        className={`px-4 py-3 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
+                      >
+                        {item.isCancelled ? 'Restore Item' : 'Cancel (Low Stock)'}
+                      </button>
+                    </div>
+
+                    {item.isCancelled && (
+                      <div className="w-full mt-4 pt-4 border-t border-slate-200 animate-in slide-in-from-top-2">
+                        <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Shortages Tab)</label>
+                        <input 
+                          type="text" 
+                          value={item.cancelReason} 
+                          onChange={(e) => {
+                            const newItems = [...verifyModal.items];
+                            newItems[index].cancelReason = e.target.value;
+                            setVerifyModal({...verifyModal, items: newItems});
+                          }}
+                          className="w-full px-3 py-2 text-sm border-2 border-rose-200 rounded-lg outline-none focus:border-rose-500 text-rose-900 font-medium" 
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
 
-              <div className="p-6 border-t border-slate-200 bg-white shrink-0">
-                <div className="flex flex-col sm:flex-row justify-between items-center gap-6 mb-6">
-                  <div className="w-full sm:w-1/2">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Stock Action</p>
-                    <p className="text-sm font-black text-slate-800 mt-1">
-                      {mode === 'sales' ? 'Deduct valid units directly from Master Stock.' : 'Add valid units directly to Master Stock.'}
-                    </p>
-                  </div>
-                  
-                  <div className="text-right">
+              <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="text-center sm:text-left">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Stock Action</p>
+                  <p className="text-sm font-black text-slate-800 mt-1">
+                    {mode === 'sales' ? 'Deduct valid units directly from Master Stock.' : 'Add valid units directly to Master Stock.'}
+                  </p>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+                  <div className="text-center sm:text-right w-full sm:w-auto">
                     <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Final Adjusted Total</p>
                     <p className="text-3xl font-black text-slate-900">
-                      ₱{verifyModal.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}
+                      ₱{(verifyModal.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}
                     </p>
                   </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <button onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
-                  <button onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
-                    {isProcessing ? 'Processing Database...' : (mode === 'sales' ? 'Confirm Deductions & Dispatch' : 'Confirm Receipts & Stock')}
-                  </button>
+                  <div className="flex gap-3 w-full sm:w-auto">
+                    <button onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="flex-1 sm:flex-none px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
+                    <button onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 sm:flex-none px-6 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                      {isProcessing ? 'Processing...' : 'Confirm'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -775,7 +809,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <form onSubmit={handleConfirmReturn} className="p-6 flex flex-col gap-5 bg-slate-50">
                 <div className="bg-white border border-slate-200 p-4 rounded-xl text-xs font-bold text-rose-700 shadow-sm leading-relaxed">
-                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString()}</strong>.
+                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{(returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}</strong>.
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setReturnModal({ isOpen: false, order: null })} className="flex-1 px-4 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
@@ -837,12 +871,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </tr>
             </thead>
             <tbody className="divide-y divide-black">
-              {printDoc.order.items.map((item, i) => (
+              {(printDoc.order.items || []).map((item, i) => (
                 <tr key={i} className="break-inside-avoid">
                   <td className="py-3 px-4 border-r border-black">
                     <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
                     <div className="text-[10px] font-mono">{item.sku}</div>
-                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
+                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** SHORTAGE: {item.cancelReason} ***</div>}
                   </td>
                   <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
                   <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
@@ -854,9 +888,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
           <div className="flex justify-end mb-16 break-inside-avoid">
             <div className="w-1/3 p-4 border-2 border-black">
-              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
+              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{(printDoc.order.items || []).reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
               <div className="border-t-2 border-black my-2"></div>
-              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
+              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{(printDoc.order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0).toLocaleString('en-PH')}</span></div>
             </div>
           </div>
 
