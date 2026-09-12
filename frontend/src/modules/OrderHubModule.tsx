@@ -5,7 +5,6 @@ interface Partner { id: string; name: string; contact: string; phone: string; em
 interface OrderItem { id?: string; productId: number; sku: string; productName: string; quantity: number; unitPrice: number; total: number; isCancelled?: boolean; cancelReason?: string; }
 interface Transaction { id: string; refNumber: string; partnerId: string; partner: Partner; date: string; status: string; totalAmount: number; items: OrderItem[]; user: string; }
 interface Product { id: number; name: string; sku: string; purchasePrice: number; currentStock: number; reorderLevel: number; }
-interface Warehouse { id: string; name: string; }
 
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
   
@@ -20,7 +19,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [salesOrders, setSalesOrders] = useState<Transaction[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<Transaction[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
 
   // Draft States
   const [draftForm, setDraftForm] = useState({ partnerId: '', refNumber: '' });
@@ -33,14 +31,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   
   // Verification Modal State
   const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
-  const [verifyWarehouseId, setVerifyWarehouseId] = useState('');
   
   // Print State
   const [printDoc, setPrintDoc] = useState<{ order: Transaction, type: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT' } | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- MISSING COMPANY META FUNCTION RESTORED ---
   const getCompanyDetails = () => {
     if (selectedCompany?.toLowerCase().includes('wilcare')) {
       return { name: 'Wilcare Trading Corp.', address: '1457-A Rizal Ave. Sta. Cruz Manila', tel: '(02)87330879, 87333950', mob: '09157739968, 09164394073', email: 'wilcaremanila@gmail.com', web: 'www.wilcare.com.ph' };
@@ -51,13 +47,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchData = async () => {
     try {
-      const [custRes, supRes, soRes, poRes, prodRes, whRes] = await Promise.all([
+      const [custRes, supRes, soRes, poRes, prodRes] = await Promise.all([
         fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/purchasing/suppliers?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/purchasing/pos?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`)
       ]);
       if (custRes.ok) setCustomers(await custRes.json());
       if (supRes.ok) setSuppliers(await supRes.json());
@@ -70,7 +65,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber, partnerId: p.supplierId, partner: p.supplier })));
       }
       if (prodRes.ok) setProducts(await prodRes.json());
-      if (whRes.ok) setWarehouses(await whRes.json());
     } catch (e) { console.warn("Backend not ready."); }
   };
 
@@ -133,7 +127,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const openVerificationModal = (order: Transaction) => {
     const itemsClone = order.items.map(i => ({ ...i }));
     setVerifyModal({ isOpen: true, order, items: itemsClone });
-    setVerifyWarehouseId('');
   };
 
   const handleToggleCancelItem = (index: number) => {
@@ -156,7 +149,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const handleConfirmVerification = async (e: React.FormEvent) => {
     e.preventDefault(); 
-    if (!verifyModal.order || !verifyWarehouseId) return showToast("Select a warehouse to process stock.", "error");
+    if (!verifyModal.order) return;
     
     setIsProcessing(true);
     try {
@@ -166,31 +159,33 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED';
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
+      // Update Status and Data
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) }).catch(()=>console.warn("Backend may not support overwriting JSON items directly."));
 
+      // Update Ledger Balance
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
       } else {
         await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
       }
 
+      // DIRECT MASTER STOCK UPDATE (Warehouse Bypassed)
       const validItems = finalItems.filter(i => !i.isCancelled);
       for (const item of validItems) {
-        const qtyModifier = mode === 'sales' ? -item.quantity : item.quantity; 
-        await fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ company: selectedCompany, warehouseId: verifyWarehouseId, productId: item.productId, sku: item.sku, quantity: qtyModifier }) });
-        
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
-          const newStock = mode === 'sales' ? Math.max(0, (prod.currentStock || 0) - item.quantity) : (prod.currentStock || 0) + item.quantity;
+          const newStock = mode === 'sales' 
+            ? Math.max(0, (prod.currentStock || 0) - item.quantity) // Sales Deducts Stock
+            : (prod.currentStock || 0) + item.quantity;             // PO Adds Stock
+            
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Stock ${mode === 'sales' ? 'deducted' : 'added'} for valid items.`, "success");
+      showToast(`Verification Complete! Master Stock ${mode === 'sales' ? 'deducted' : 'added'} for valid items.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
-      setVerifyWarehouseId('');
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
   };
@@ -444,11 +439,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-t border-slate-200 bg-white shrink-0">
               <div className="flex flex-col sm:flex-row justify-between items-center gap-6 mb-6">
                 <div className="w-full sm:w-1/2">
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-2">{mode === 'sales' ? 'Dispatch From Warehouse' : 'Receive Into Warehouse'} <span className="text-rose-500">*</span></label>
-                  <select required value={verifyWarehouseId} onChange={e => setVerifyWarehouseId(e.target.value)} className={`w-full px-4 py-3 border-2 border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'} bg-slate-50`}>
-                    <option value="">Select Warehouse...</option>
-                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Stock Action</p>
+                  <p className="text-sm font-black text-slate-800 mt-1">
+                    {mode === 'sales' ? 'Deduct valid units directly from Master Stock.' : 'Add valid units directly to Master Stock.'}
+                  </p>
                 </div>
                 
                 <div className="text-right">
@@ -461,7 +455,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
               <div className="flex gap-4">
                 <button onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
-                <button onClick={handleConfirmVerification} disabled={isProcessing || !verifyWarehouseId} className={`flex-1 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                <button onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
                   {isProcessing ? 'Processing Database...' : (mode === 'sales' ? 'Confirm Deductions & Dispatch' : 'Confirm Receipts & Stock')}
                 </button>
               </div>
@@ -528,8 +522,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                     {item.isCancelled && <div className="text-xs font-bold uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
                   </td>
                   <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
-                  <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{item.unitPrice.toLocaleString('en-PH')}</td>
-                  <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : item.total).toLocaleString('en-PH')}</td>
+                  <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
+                  <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
                 </tr>
               ))}
             </tbody>
