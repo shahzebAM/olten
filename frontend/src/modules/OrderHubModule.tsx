@@ -33,6 +33,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [editModal, setEditModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
+  const [viewModal, setViewModal] = useState<Transaction | null>(null);
 
   // Print State
   const [printDoc, setPrintDoc] = useState<{ order: Transaction, type: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT' } | null>(null);
@@ -47,6 +48,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   };
   const companyMeta = getCompanyDetails();
 
+  // Ensure print view auto-closes when done
   useEffect(() => {
     const handleAfterPrint = () => setPrintDoc(null);
     window.addEventListener('afterprint', handleAfterPrint);
@@ -84,7 +86,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const partners = mode === 'sales' ? customers : suppliers;
   const transactions = mode === 'sales' ? salesOrders : purchaseOrders;
-  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.sku || '').toLowerCase().includes(productSearch.toLowerCase()));
+  
+  // CRITICAL FIX: Safe filtering prevents crashes if a product lacks a name or sku
+  const filteredProducts = products.filter(p => 
+    (p.name || '').toLowerCase().includes(productSearch.toLowerCase()) || 
+    (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
+  );
 
   // --- ADD ITEMS LOGIC ---
   const handleToggleProduct = (p: Product) => {
@@ -103,11 +110,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const handleConfirmAddItems = () => {
     const newItems = Object.entries(tempSelectedItems).filter(([_, data]) => data.checked).map(([id, data]) => {
         const p = products.find(prod => prod.id === Number(id))!;
-        return { productId: p.id, sku: p.sku, productName: p.name, quantity: data.qty, unitPrice: data.price, total: data.qty * data.price, isCancelled: false, cancelReason: '' };
+        return { productId: p.id, sku: p.sku || 'N/A', productName: p.name || 'Unnamed Product', quantity: data.qty, unitPrice: data.price, total: data.qty * data.price, isCancelled: false, cancelReason: '' };
       });
     if (newItems.length === 0) return showToast("No items selected.", "error");
     
-    // If we are currently editing an existing order, add items there instead
     if (editModal.isOpen) {
       setEditModal({ ...editModal, items: [...editModal.items, ...newItems] });
     } else {
@@ -184,12 +190,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const finalItems = verifyModal.items;
       const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
       
-      // Moving to APPROVED means Stock Deducted, Awaiting Payment
       const targetStatus = 'APPROVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) }).catch(()=>console.warn("Backend JSON array update constraint."));
+      // Update both Status and Full Body to enforce changes
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
+      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal }) }).catch(()=>{});
 
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
@@ -226,7 +232,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
-      // Settle the Ledger Balance down to 0
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -order.totalAmount }) });
       } else {
@@ -249,9 +254,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
-      // Only reverse balance if it wasn't settled yet (APPROVED means unpaid balance)
-      // If it was FULFILLED/RECEIVED, the balance is already 0, but the physical return still needs processing. 
-      // For pure accounting accuracy, we'll reverse based on valid total.
       const validTotal = order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
       
       if (order.status === 'APPROVED') {
@@ -281,12 +283,95 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
     setPrintDoc({ order, type: printType });
-    setTimeout(() => { window.print(); }, 400); 
+    setTimeout(() => { window.print(); }, 500); 
   };
+
+  // We completely hide the main app wrapper during printing to guarantee clean letterheads
+  if (printDoc) {
+    return (
+      <div className="bg-white text-black font-sans p-8 min-h-screen">
+        <div className="flex justify-between items-start border-b-2 border-black pb-6 mb-6">
+          <div>
+            <h1 className="text-4xl font-black tracking-tight uppercase">{companyMeta.name}</h1>
+            <p className="text-sm font-medium mt-1">Order Processing Center</p>
+          </div>
+          <div className="text-right text-xs space-y-0.5 mt-1 font-mono">
+            <p>Generated: {new Date().toLocaleString()}</p>
+            <p>Doc Ref: {printDoc.order.id.slice(-8)}</p>
+          </div>
+        </div>
+
+        <div className="text-center mb-8">
+          <h2 className="text-4xl font-black tracking-widest uppercase">
+            {printDoc.type === 'OS' ? 'ORDER SLIP (PICK LIST)' : 
+             printDoc.type === 'PO' ? 'PURCHASE ORDER' : 
+             printDoc.type === 'INVOICE' ? 'SALES INVOICE' : 'RECEIVING REPORT'}
+          </h2>
+          <div className="inline-block mt-2 px-4 py-1 border-2 border-black font-black text-sm uppercase tracking-widest">
+            {printDoc.order.status}
+          </div>
+        </div>
+
+        <div className="flex justify-between mb-8 border-2 border-black p-4">
+          <div className="w-1/2 pr-4 border-r-2 border-black">
+            <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">{mode === 'sales' ? 'Billed To' : 'Vendor'}</h3>
+            <p className="font-black text-xl uppercase">{printDoc.order.partner?.name}</p>
+            <p className="mt-1 font-medium">{printDoc.order.partner?.contact || 'No Contact Specified'}</p>
+            <p className="font-medium">{printDoc.order.partner?.phone || 'N/A'}</p>
+          </div>
+          <div className="w-1/2 pl-4 text-right">
+            <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Transaction Details</h3>
+            <p className="font-medium mt-1">Reference: <span className="font-bold text-lg">{printDoc.order.refNumber}</span></p>
+            <p className="font-medium">Date: <span className="font-bold">{new Date(printDoc.order.date).toLocaleDateString()}</span></p>
+            <p className="font-medium">Agent: <span className="font-bold uppercase">{printDoc.order.user}</span></p>
+          </div>
+        </div>
+
+        <table className="w-full text-left border-collapse mb-8 border-2 border-black">
+          <thead className="border-b-2 border-black bg-slate-100">
+            <tr>
+              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-1/2">Item Description</th>
+              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black">Qty</th>
+              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black">Price</th>
+              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-black">
+            {printDoc.order.items.map((item, i) => (
+              <tr key={i} className="break-inside-avoid">
+                <td className="py-3 px-4 border-r border-black">
+                  <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
+                  <div className="text-[10px] font-mono">{item.sku}</div>
+                  {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
+                </td>
+                <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
+                <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
+                <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="flex justify-end mb-16 break-inside-avoid">
+          <div className="w-1/3 p-4 border-2 border-black">
+            <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
+            <div className="border-t-2 border-black my-2"></div>
+            <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-end pt-12 mt-12 break-inside-avoid">
+          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.order.user}</div></div>
+          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Warehouse Verification</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">{mode === 'sales' ? 'Client Acceptance' : 'Vendor Acceptance'}</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
-      <div className={`flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
+      <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
         
         {toast && <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>{toast.message}</div>}
 
@@ -423,7 +508,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
                             <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
                             <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
-                            <td className="py-4 px-6 text-right space-x-4">
+                            <td className="py-4 px-6 text-right space-x-3">
+                              <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-800 font-bold text-[11px] uppercase tracking-wider underline mr-2">View Details</button>
                               <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Cancel/Return</button>
                               <button onClick={() => handleSettlePayment(order)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Settle Payment</button>
                             </td>
@@ -452,7 +538,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-indigo-200 bg-indigo-50 text-indigo-700'}`}>{order.status}</span>
                           </td>
                           <td className="py-4 px-6 text-right space-x-4">
-                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Document</button>
+                            <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
+                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
                             {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
                               <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                             )}
@@ -466,6 +553,39 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             </div>
           </main>
         </div>
+
+        {/* VIEW DETAILS MODAL */}
+        {viewModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
+                  <p className="text-xs uppercase text-slate-500 font-bold tracking-widest mt-1">Ref: {viewModal.refNumber} • Status: {viewModal.status}</p>
+                </div>
+                <button onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
+              </div>
+              <div className="flex-1 overflow-y-auto bg-white p-6 space-y-3">
+                {viewModal.items.map((item, i) => (
+                  <div key={i} className={`p-4 rounded-xl border flex justify-between items-center ${item.isCancelled ? 'bg-slate-50 border-rose-200 opacity-70' : 'border-slate-200'}`}>
+                    <div>
+                      <h4 className={`font-black text-sm ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Qty: {item.quantity} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
+                      {item.isCancelled && <p className="text-xs font-bold text-rose-600 uppercase mt-2">CANCELLED: {item.cancelReason}</p>}
+                    </div>
+                    <div className={`font-black text-lg ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
+                      ₱{(item.total || 0).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="p-6 border-t border-slate-200 bg-slate-50 shrink-0 text-right">
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Final Billed Total</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">₱{viewModal.totalAmount.toLocaleString('en-PH')}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* EDIT PENDING ORDER MODAL */}
         {editModal.isOpen && editModal.order && (
@@ -519,6 +639,47 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
         )}
 
+        {/* ITEM BROWSER MODAL */}
+        {showItemModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+              <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products from Master Catalog</h3>
+                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+              </div>
+              <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
+              <div className="overflow-y-auto p-2 bg-slate-50 flex-1">
+                {filteredProducts.map(p => {
+                  const isChecked = tempSelectedItems[p.id]?.checked || false;
+                  return (
+                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors mb-2 ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200'}`}>
+                      <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
+                        <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className={`w-5 h-5 rounded cursor-pointer ${mode==='sales'?'text-emerald-600 focus:ring-emerald-500':'text-amber-600 focus:ring-amber-500'}`} />
+                        <div>
+                          <p className="font-bold text-sm text-slate-900">{p.name}</p>
+                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2">
+                            {p.sku} | <span className={`font-bold ${p.currentStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
+                          </p>
+                        </div>
+                      </label>
+                      {isChecked && (
+                        <div className="flex gap-3 w-full sm:w-1/2">
+                          <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty ?? 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
+                          <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{mode === 'sales' ? 'Selling Price (₱)' : 'Purchase Price (₱)'}</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price ?? ''} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="p-5 border-t border-slate-200 bg-white flex gap-3">
+                <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
+                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Selected Items</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* VERIFICATION & DISPATCH MODAL */}
         {verifyModal.isOpen && verifyModal.order && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
@@ -530,7 +691,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               
               <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
                 <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item" to omit it from the transaction record.
+                  Instructions: Compare the physical stock against this list. If an item is missing or unavailable, click "Cancel Item" to omit it from the final transaction record.
                 </div>
 
                 <div className="space-y-4">
@@ -625,87 +786,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
         )}
       </div>
-
-      {/* UNIVERSAL PRINT LAYER */}
-      {printDoc && (
-        <div className="hidden print:block absolute inset-0 w-full bg-white z-[99999] text-black font-sans p-8 min-h-screen">
-          <div className="flex justify-between items-start border-b-2 border-black pb-6 mb-6">
-            <div>
-              <h1 className="text-4xl font-black tracking-tight uppercase">{companyMeta.name}</h1>
-              <p className="text-sm font-medium mt-1">Order Processing Center</p>
-            </div>
-            <div className="text-right text-xs space-y-0.5 mt-1 font-mono">
-              <p>Generated: {new Date().toLocaleString()}</p>
-              <p>Doc Ref: {printDoc.order.id.slice(-8)}</p>
-            </div>
-          </div>
-
-          <div className="text-center mb-8">
-            <h2 className="text-4xl font-black tracking-widest uppercase">
-              {printDoc.type === 'OS' ? 'ORDER SLIP (PICK LIST)' : 
-               printDoc.type === 'PO' ? 'PURCHASE ORDER' : 
-               printDoc.type === 'INVOICE' ? 'SALES INVOICE' : 'RECEIVING REPORT'}
-            </h2>
-            <div className="inline-block mt-2 px-4 py-1 border-2 border-black font-black text-sm uppercase tracking-widest">
-              {printDoc.order.status}
-            </div>
-          </div>
-
-          <div className="flex justify-between mb-8 border-2 border-black p-4">
-            <div className="w-1/2 pr-4 border-r-2 border-black">
-              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">{mode === 'sales' ? 'Billed To' : 'Vendor'}</h3>
-              <p className="font-black text-xl uppercase">{printDoc.order.partner?.name}</p>
-              <p className="mt-1 font-medium">{printDoc.order.partner?.contact || 'No Contact Specified'}</p>
-              <p className="font-medium">{printDoc.order.partner?.phone || 'N/A'}</p>
-            </div>
-            <div className="w-1/2 pl-4 text-right">
-              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Transaction Details</h3>
-              <p className="font-medium mt-1">Reference: <span className="font-bold text-lg">{printDoc.order.refNumber}</span></p>
-              <p className="font-medium">Date: <span className="font-bold">{new Date(printDoc.order.date).toLocaleDateString()}</span></p>
-              <p className="font-medium">Agent: <span className="font-bold uppercase">{printDoc.order.user}</span></p>
-            </div>
-          </div>
-
-          <table className="w-full text-left border-collapse mb-8 border-2 border-black">
-            <thead className="border-b-2 border-black bg-slate-100">
-              <tr>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-1/2">Item Description</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black">Qty</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black">Price</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black">
-              {printDoc.order.items.map((item, i) => (
-                <tr key={i} className="break-inside-avoid">
-                  <td className="py-3 px-4 border-r border-black">
-                    <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
-                    <div className="text-[10px] font-mono">{item.sku}</div>
-                    {item.isCancelled && <div className="text-xs font-bold uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
-                  </td>
-                  <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
-                  <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
-                  <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="flex justify-end mb-16 break-inside-avoid">
-            <div className="w-1/3 p-4 border-2 border-black">
-              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
-              <div className="border-t-2 border-black my-2"></div>
-              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
-            </div>
-          </div>
-
-          <div className="flex justify-between items-end pt-12 mt-12 break-inside-avoid">
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.order.user}</div></div>
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Warehouse Verification</div><div className="text-[10px] mt-1">Signature / Date</div></div>
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">{mode === 'sales' ? 'Client Acceptance' : 'Vendor Acceptance'}</div><div className="text-[10px] mt-1">Signature / Date</div></div>
-          </div>
-        </div>
-      )}
     </>
   );
 }
