@@ -19,6 +19,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [salesOrders, setSalesOrders] = useState<Transaction[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<Transaction[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  
+  // Independent Shortages Ledger (Bypasses backend restrictions)
+  const [shortages, setShortages] = useState<any[]>(() => {
+    const saved = localStorage.getItem(`shortages_ledger_${selectedCompany}`);
+    return saved ? JSON.parse(saved) : [];
+  });
 
   // Draft States
   const [draftForm, setDraftForm] = useState({ partnerId: '', refNumber: '' });
@@ -29,7 +35,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [productSearch, setProductSearch] = useState('');
   const [tempSelectedItems, setTempSelectedItems] = useState<Record<number, { checked: boolean, qty: number, price: number }>>({});
   
-  // Action Modal States
   const [editModal, setEditModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
@@ -93,24 +98,37 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
   );
 
-  // --- SHORTAGES / PENDING ITEMS FILTERING ---
-  const pendingItemsList = transactions.flatMap(order => 
-    order.items
-      .filter(item => item.isCancelled)
-      .map(item => ({
-        ...item,
-        orderDate: order.date,
-        orderRef: order.refNumber,
-        partnerName: order.partner?.name || 'Unknown'
-      }))
-  ).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+  // --- SHORTAGES FILTERING (Using explicit date reset for precision) ---
+  const pendingItemsList = shortages
+    .filter(s => s.mode === mode)
+    .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
 
   const filteredPendingItems = pendingItemsList.filter(item => {
     const itemDate = new Date(item.orderDate);
-    if (fromDate && itemDate < new Date(fromDate)) return false;
-    if (toDate && itemDate > new Date(new Date(toDate).setHours(23,59,59,999))) return false;
+    itemDate.setHours(0,0,0,0);
+    
+    if (fromDate) {
+      const fDate = new Date(fromDate);
+      fDate.setHours(0,0,0,0);
+      if (itemDate < fDate) return false;
+    }
+    if (toDate) {
+      const tDate = new Date(toDate);
+      tDate.setHours(0,0,0,0);
+      if (itemDate > tDate) return false;
+    }
     return true;
   });
+
+  const handleRemoveShortage = (shortageId: string) => {
+    if(!window.confirm("Remove this shortage from the pending list?")) return;
+    setShortages(prev => {
+      const next = prev.filter(s => s.shortageId !== shortageId);
+      localStorage.setItem(`shortages_ledger_${selectedCompany}`, JSON.stringify(next));
+      return next;
+    });
+    showToast("Shortage record cleared.", "success");
+  };
 
   // --- ADD ITEMS LOGIC ---
   const handleToggleProduct = (p: Product) => {
@@ -191,7 +209,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       updatedItems[index].isCancelled = !isCurrentlyCancelled;
       
       if (!isCurrentlyCancelled) {
-        updatedItems[index].cancelReason = mode === 'sales' ? "Low Stock / Discrepancy" : "Not Delivered / Missing";
+        updatedItems[index].cancelReason = mode === 'sales' ? "Low Stock / Missing" : "Not Delivered";
         updatedItems[index].total = 0; 
       } else {
         updatedItems[index].cancelReason = '';
@@ -207,34 +225,53 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     try {
       const order = verifyModal.order;
       const finalItems = verifyModal.items;
-      const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
+      const validItems = finalItems.filter(i => !i.isCancelled);
+      const finalTotal = validItems.reduce((acc, item) => acc + item.total, 0);
       
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
-      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal }) }).catch(()=>{});
+      // Update Main Order with ONLY Valid Items so Backend Schema isn't violated
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: validItems }) });
 
+      // Log Cancelled Items into Local Shortage Ledger
+      const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
+        ...i,
+        shortageId: Math.random().toString(36).substring(7),
+        orderDate: new Date().toISOString(),
+        orderRef: order.refNumber,
+        partnerName: order.partner?.name || 'Unknown',
+        mode: mode
+      }));
+
+      if (cancelledItems.length > 0) {
+        setShortages(prev => {
+          const next = [...prev, ...cancelledItems];
+          localStorage.setItem(`shortages_ledger_${selectedCompany}`, JSON.stringify(next));
+          return next;
+        });
+      }
+
+      // Update Ledger Balances
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
       } else {
         await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
       }
 
-      const validItems = finalItems.filter(i => !i.isCancelled);
+      // Process Direct Master Stock
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
           const newStock = mode === 'sales' 
             ? Math.max(0, (prod.currentStock || 0) - item.quantity) 
             : (prod.currentStock || 0) + item.quantity;             
-            
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Missing items moved to Pending.`, "success");
+      showToast(`Verification Complete! Valid items processed. Shortages logged.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -430,17 +467,22 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
                     <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Items / Shortages</h3>
-                    <p className="text-xs text-slate-600 font-medium">Items that were cancelled during verification due to low stock or missing delivery.</p>
+                    <p className="text-xs text-slate-600 font-medium">Items that were manually cancelled during verification due to low stock or missing deliveries.</p>
                   </div>
                   
-                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex gap-4 items-center">
-                    <div className="flex flex-col">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
-                      <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
-                    </div>
-                    <div className="flex flex-col">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">To Date</label>
-                      <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-4 items-center justify-between">
+                    <div className="flex gap-4">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
+                        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">To Date</label>
+                        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                      </div>
+                      <div className="flex flex-col justify-end">
+                        <button onClick={() => { setFromDate(''); setToDate(''); }} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px]">Clear Filter</button>
+                      </div>
                     </div>
                   </div>
 
@@ -452,14 +494,14 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Product Details</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Qty Short</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Cancellation Reason</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Reason & Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredPendingItems.length === 0 ? (
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No cancelled items found for this period.</td></tr>
                         ) : filteredPendingItems.map((item, i) => (
-                          <tr key={i} className="hover:bg-rose-50/30 transition-colors">
+                          <tr key={i} className="hover:bg-rose-50/30 transition-colors group">
                             <td className="py-4 px-6 font-black text-slate-900">{item.orderRef} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(item.orderDate).toLocaleDateString()}</div></td>
                             <td className="py-4 px-6 font-bold text-slate-700">{item.partnerName}</td>
                             <td className="py-4 px-6">
@@ -467,7 +509,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                               <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                             </td>
                             <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
-                            <td className="py-4 px-6 font-bold text-rose-700 text-xs uppercase tracking-wide">{item.cancelReason}</td>
+                            <td className="py-4 px-6 text-right">
+                              <div className="font-bold text-rose-700 text-xs uppercase tracking-wide mb-2">{item.cancelReason}</div>
+                              <button onClick={() => handleRemoveShortage(item.shortageId)} className="text-slate-400 hover:text-slate-900 font-black text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Remove</button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -485,7 +530,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').map(order => (
-                        <tr key={order.id} className="hover:bg-slate-50">
+                        <tr key={order.id} className="hover:bg-slate-50 group">
                           <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
                           <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
                           <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
@@ -493,12 +538,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
                           </td>
                           <td className="py-4 px-6 text-right space-x-3">
-                            <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
-                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
+                            <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View</button>
+                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print</button>
                             {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
                               <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                             )}
-                            <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider">Delete</button>
+                            <button onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
                           </td>
                         </tr>
                       ))}
@@ -523,13 +568,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <div className="flex-1 overflow-y-auto bg-white p-6 space-y-3">
                 {viewModal.items.map((item, i) => (
-                  <div key={i} className={`p-4 rounded-xl border flex justify-between items-center ${item.isCancelled ? 'bg-slate-50 border-rose-200 opacity-70' : 'border-slate-200'}`}>
+                  <div key={i} className={`p-4 rounded-xl border flex justify-between items-center border-slate-200`}>
                     <div>
-                      <h4 className={`font-black text-sm ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <h4 className="font-black text-sm text-slate-900">{item.productName}</h4>
                       <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Qty: {item.quantity} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
-                      {item.isCancelled && <p className="text-xs font-bold text-rose-600 uppercase mt-2 tracking-wide">CANCELLED: {item.cancelReason}</p>}
                     </div>
-                    <div className={`font-black text-lg ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
+                    <div className="font-black text-lg text-slate-900">
                       ₱{(item.total || 0).toLocaleString()}
                     </div>
                   </div>
@@ -647,7 +691,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               
               <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
                 <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to omit it from the transaction.
+                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to omit it from the transaction and send it to the Shortages Log.
                 </div>
 
                 <div className="space-y-4">
