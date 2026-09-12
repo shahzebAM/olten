@@ -272,3 +272,18 @@ model SalesOrder {
   items       Json
   user        String
 }
+
+model Shortage {
+  id           String   @id @default(uuid())
+  company      String
+  orderDate    DateTime
+  orderRef     String
+  partnerName  String
+  productId    Int
+  productName  String
+  sku          String
+  quantity     Int
+  cancelReason String
+  mode         String   // 'sales' or 'purchasing'
+  createdAt    DateTime @default(now())
+}

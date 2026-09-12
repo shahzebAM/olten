@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -120,6 +120,46 @@ export class EmployeesController {
   async deleteAdmin(@Param('id') id: string) {
     return await prisma.admin.delete({
       where: { id: Number(id) }
+    });
+  }
+
+  // ==========================================
+  // SHORTAGES LOGGING
+  // ==========================================
+  @Get('shortages')
+  async getShortages(@Query('company') company: string) {
+    if (!company) return [];
+    return await prisma.shortage.findMany({
+      where: { company },
+      orderBy: { orderDate: 'desc' }
+    });
+  }
+
+  @Post('shortages')
+  async createShortage(@Body() data: any) {
+    return await prisma.shortage.create({
+      data: {
+        company: data.company,
+        orderDate: new Date(data.orderDate),
+        orderRef: data.orderRef,
+        partnerName: data.partnerName,
+        productId: Number(data.productId), // Safely convert to Int for DB
+        productName: data.productName,
+        sku: data.sku,
+        quantity: Number(data.quantity),   // Safely convert to Int for DB
+        cancelReason: data.cancelReason,
+        mode: data.mode
+      }
+    });
+  }
+
+  @Delete('shortages/:id')
+  async deleteShortage(@Param('id') id: string) {
+    // Dynamically checks if the ID in your database is an Int or a String UUID
+    const shortageId = isNaN(Number(id)) ? id : Number(id);
+
+    return await prisma.shortage.delete({
+      where: { id: shortageId as any }
     });
   }
 }
