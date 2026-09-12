@@ -7,11 +7,10 @@ import AiDocsModule from './modules/AiDocsModule';
 import DeveloperModule from './modules/DeveloperModule';
 import MasterInventory from './modules/MasterInventory';
 
-// NEW SPLIT MODULES
+// NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
-import SalesOrderModule from './modules/SalesOrderModule';
 import SupplierModule from './modules/SupplierModule';
-import PurchaseOrderModule from './modules/PurchaseOrderModule';
+import OrderHubModule from './modules/OrderHubModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -215,10 +214,11 @@ export default function App() {
 
   // ALL MODULE ROUTES
   if (activeModule === 'customers') return <CustomerModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'sales_orders') return <SalesOrderModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
-  
   if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'purchase_orders') return <PurchaseOrderModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  
+  // UNIFIED ORDER HUB (Handles both Sales Orders and Purchase Orders based on mode)
+  if (activeModule === 'sales_orders') return <OrderHubModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} initialMode="sales" />;
+  if (activeModule === 'purchase_orders') return <OrderHubModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} initialMode="purchasing" />;
 
   // UNIFIED MASTER INVENTORY ROUTE
   if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') {

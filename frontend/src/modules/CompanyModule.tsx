@@ -178,20 +178,20 @@ export default function CompanyModule({
           </button>
         )}
 
-        {/* SALES ORDERS */}
+        {/* SALES DESK & FULFILLMENT */}
         {hasSales && (
           <button onClick={() => onSelectModule('sales_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
               <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Sales & Invoicing</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft sales orders, dispatch stock, and print invoices.</p>
+              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Sales Desk</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft Order Slips (OS), verify physical stock, and dispatch orders.</p>
             </div>
           </button>
         )}
         
-        {/* SUPPLIERS */}
+        {/* VENDOR CENTER */}
         {hasPurchasing && (
           <button onClick={() => onSelectModule('suppliers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
@@ -204,15 +204,15 @@ export default function CompanyModule({
           </button>
         )}
 
-        {/* PURCHASE ORDERS */}
+        {/* PURCHASING & RECEIVING */}
         {hasPurchasing && (
           <button onClick={() => onSelectModule('purchase_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
               <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Purchase Orders</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Generate vendor POs, receive inventory, and log payables.</p>
+              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Purchasing</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft POs, verify inbound items, and receive physical stock.</p>
             </div>
           </button>
         )}
