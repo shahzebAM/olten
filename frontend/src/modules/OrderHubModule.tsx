@@ -129,23 +129,22 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  // --- HISTORY FILTERING (INCLUDING NEW STATUS FILTERS) ---
+  // --- HISTORY FILTERING (SAFE SHORTAGES CHECK BYPASSING BACKEND LIMITATION) ---
   const filteredHistory = transactions
     .filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED')
     .filter(order => {
-      // 1. Text Search Filter
       if (historySearch) {
         const q = historySearch.toLowerCase();
         if (!(order.refNumber || '').toLowerCase().includes(q) && !(order.partner?.name || '').toLowerCase().includes(q)) return false;
       }
       
-      // 2. Status Filter
+      // Look directly at the Shortages database array to see if this refNumber had cancelled items
+      const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
+
       if (historyStatusFilter !== 'ALL') {
         if (historyStatusFilter === 'SHORTAGE') {
-          // Only show orders that have at least one cancelled item
-          if (!order.items?.some(i => i.isCancelled)) return false;
+          if (!hasShortages) return false;
         } else {
-          // Show FULFILLED, RECEIVED, or RETURNED
           if (order.status !== historyStatusFilter) return false;
         }
       }
@@ -266,8 +265,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // Update Main Order with ALL Items so the ledger knows which ones were cancelled
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: validItems }) });
 
       // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
@@ -520,7 +518,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB */}
+              {/* PENDING SHORTAGES TAB WITH STATUS COLUMN */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
@@ -547,19 +545,20 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   </div>
 
                   <div className="overflow-x-auto w-full">
-                    <table className="w-full text-left text-sm min-w-[800px]">
+                    <table className="w-full text-left text-sm min-w-[850px]">
                       <thead className="bg-white border-b border-slate-200">
                         <tr>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Date / Ref</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Product Details</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Qty Short</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Status</th>
                           <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Reason & Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredPendingItems.length === 0 ? (
-                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No cancelled items found for this period.</td></tr>
+                          <tr><td colSpan={6} className="py-12 text-center text-slate-400 font-medium">No cancelled items found for this period.</td></tr>
                         ) : filteredPendingItems.map((item, i) => (
                           <tr key={i} className="hover:bg-rose-50/30 transition-colors group">
                             <td className="py-4 px-6 font-black text-slate-900">{item.orderRef} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(item.orderDate).toLocaleDateString()}</div></td>
@@ -569,6 +568,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                               <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                             </td>
                             <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
+                            <td className="py-4 px-6 text-center">
+                              <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-rose-300 bg-rose-100 text-rose-800">
+                                SHORTAGE
+                              </span>
+                            </td>
                             <td className="py-4 px-6 text-right">
                               <div className="font-bold text-rose-700 text-[10px] uppercase tracking-wide mb-2">{item.cancelReason}</div>
                               <button type="button" onClick={() => handleRemoveShortage(item.id)} className="text-slate-400 hover:text-rose-600 font-black text-[10px] uppercase tracking-wider border border-slate-200 px-3 py-1 rounded bg-white transition-colors">Clear</button>
@@ -581,7 +585,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* FINALIZED HISTORY TAB */}
+              {/* FINALIZED HISTORY TAB WITH SAFE SHORTAGES CHECK */}
               {activeTab === 'history' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
@@ -620,7 +624,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found matching filters.</td></tr>
                         ) : (
                           filteredHistory.map(order => {
-                            const hasShortages = (order.items || []).some(i => i.isCancelled);
+                            // Check DB for shortages to safely apply badge
+                            const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
                             
                             return (
                               <tr key={order.id} className="hover:bg-slate-50 group">
@@ -631,7 +636,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                   <div className="flex flex-col gap-1 items-start">
                                     <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
                                     {hasShortages && (
-                                      <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-amber-200 bg-amber-50 text-amber-700">SHORTAGE</span>
+                                      <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-rose-300 bg-rose-100 text-rose-800">SHORTAGE</span>
                                     )}
                                   </div>
                                 </td>
@@ -745,7 +750,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
               <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
                 <div className="text-center sm:text-left">
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest text-slate-400">New Adjusted Total</p>
                   <p className="text-2xl font-black text-slate-900">₱{(editModal.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</p>
                 </div>
                 <button type="button" onClick={handleSaveEdit} disabled={isProcessing} className="w-full sm:w-auto px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
