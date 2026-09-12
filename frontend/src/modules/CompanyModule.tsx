@@ -165,24 +165,54 @@ export default function CompanyModule({
 
       <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         
+        {/* CUSTOMER CENTER */}
         {hasSales && (
-          <button onClick={() => onSelectModule('sales')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+          <button onClick={() => onSelectModule('customers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
               <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Sales & CRM</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage customers, sales orders, and credit.</p>
+              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Customer Center</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage client accounts, credit limits, and purchase history.</p>
+            </div>
+          </button>
+        )}
+
+        {/* SALES ORDERS */}
+        {hasSales && (
+          <button onClick={() => onSelectModule('sales_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Sales & Invoicing</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft sales orders, dispatch stock, and print invoices.</p>
             </div>
           </button>
         )}
         
+        {/* SUPPLIERS */}
         {hasPurchasing && (
-          <button onClick={() => onSelectModule('purchasing')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+          <button onClick={() => onSelectModule('suppliers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
             <div>
-              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Procurement Engine</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage suppliers and purchase orders.</p>
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Vendor Center</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage suppliers, contacts, and price ledgers.</p>
+            </div>
+          </button>
+        )}
+
+        {/* PURCHASE ORDERS */}
+        {hasPurchasing && (
+          <button onClick={() => onSelectModule('purchase_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Purchase Orders</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Generate vendor POs, receive inventory, and log payables.</p>
             </div>
           </button>
         )}

@@ -5,9 +5,13 @@ import UserControlModule from './modules/UserControlModule';
 import PayrollModule from './modules/PayrollModule';
 import AiDocsModule from './modules/AiDocsModule';
 import DeveloperModule from './modules/DeveloperModule';
-import PurchasingModule from './modules/PurchasingModule';
-import SalesModule from './modules/SalesModule'; 
 import MasterInventory from './modules/MasterInventory';
+
+// NEW SPLIT MODULES
+import CustomerModule from './modules/CustomerModule';
+import SalesOrderModule from './modules/SalesOrderModule';
+import SupplierModule from './modules/SupplierModule';
+import PurchaseOrderModule from './modules/PurchaseOrderModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -16,13 +20,13 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'purchasing' | 'sales'>('none');
+  // Updated to include the new split module route names
+  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   
   const [companiesList, setCompaniesList] = useState<string[]>(['Surgicom', 'Olten', 'Ordent']);
 
-  // Explicitly defined as <any> to prevent strict TypeScript cache errors
   const [globalModules, setGlobalModules] = useState<any>(() => {
     const saved = localStorage.getItem('dev_global_modules');
     return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true };
@@ -34,7 +38,6 @@ export default function App() {
   // REAL-TIME 3-SECOND DEVELOPER SYNC
   // ==========================================
   useEffect(() => {
-    // 1. Instant cross-tab sync (updates immediately if multiple windows are open)
     const handleStorage = (e: any) => {
       if (e.key === 'dev_global_modules' && e.newValue) {
         setGlobalModules(JSON.parse(e.newValue));
@@ -42,12 +45,10 @@ export default function App() {
     };
     window.addEventListener('storage', handleStorage);
 
-    // 2. 3-Second Polling (guarantees the active window catches changes seamlessly)
     const syncInterval = setInterval(() => {
       const saved = localStorage.getItem('dev_global_modules');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Added explicit (prev: any) to satisfy Strict TypeScript rules
         setGlobalModules((prev: any) => {
           if (JSON.stringify(prev) !== JSON.stringify(parsed)) return parsed;
           return prev;
@@ -156,17 +157,22 @@ export default function App() {
   useEffect(() => {
     if (!currentUser && !isCurrentUserSuperAdmin) return;
 
-    // 1. Kick out if company access is revoked
     if (!isCurrentUserSuperAdmin && selectedCompany && !currentUser.modules?.companies?.[selectedCompany]) {
       setSelectedCompany(null);
       setActiveModule('none');
       return;
     }
 
-    // 2. Instantly kick out if module is disabled globally OR user loses specific permission
     if (activeModule !== 'none' && activeModule !== 'users') {
-      const isGloballyDisabled = globalModules[activeModule] === false;
-      const isUserDisabled = !isCurrentUserSuperAdmin && currentUser?.modules?.[activeModule] === false;
+      // Map the active UI view to its underlying database permission key
+      const requiredPermission = 
+        (activeModule === 'customers' || activeModule === 'sales_orders') ? 'sales' :
+        (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
+        (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' : 
+        activeModule;
+
+      const isGloballyDisabled = globalModules[requiredPermission] === false;
+      const isUserDisabled = !isCurrentUserSuperAdmin && currentUser?.modules?.[requiredPermission] === false;
       
       if (isGloballyDisabled || isUserDisabled) {
         setActiveModule('none');
@@ -208,9 +214,12 @@ export default function App() {
   }
 
   // ALL MODULE ROUTES
-  if (activeModule === 'sales') return <SalesModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'purchasing') return <PurchasingModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'customers') return <CustomerModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'sales_orders') return <SalesOrderModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   
+  if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'purchase_orders') return <PurchaseOrderModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+
   // UNIFIED MASTER INVENTORY ROUTE
   if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') {
     return <MasterInventory selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
