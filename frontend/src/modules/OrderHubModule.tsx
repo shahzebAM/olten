@@ -9,7 +9,7 @@ interface Product { id: number; name: string; sku: string; purchasePrice: number
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
   
   const [mode, setMode] = useState<'sales' | 'purchasing'>(initialMode);
-  const [activeTab, setActiveTab] = useState<'draft' | 'verify' | 'history'>('draft');
+  const [activeTab, setActiveTab] = useState<'draft' | 'verify' | 'payments' | 'history'>('draft');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -29,10 +29,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [productSearch, setProductSearch] = useState('');
   const [tempSelectedItems, setTempSelectedItems] = useState<Record<number, { checked: boolean, qty: number, price: number }>>({});
   
-  // Verification Modal State
+  // Action Modal States
+  const [editModal, setEditModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
   const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
-  
-  // Return Modal State
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
 
   // Print State
@@ -48,7 +47,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   };
   const companyMeta = getCompanyDetails();
 
-  // Auto-close print view when browser print dialog closes
   useEffect(() => {
     const handleAfterPrint = () => setPrintDoc(null);
     window.addEventListener('afterprint', handleAfterPrint);
@@ -108,14 +106,21 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         return { productId: p.id, sku: p.sku, productName: p.name, quantity: data.qty, unitPrice: data.price, total: data.qty * data.price, isCancelled: false, cancelReason: '' };
       });
     if (newItems.length === 0) return showToast("No items selected.", "error");
-    setDraftItems([...draftItems, ...newItems]); setShowItemModal(false); setTempSelectedItems({}); setProductSearch('');
-    showToast(`Added ${newItems.length} items to draft.`, "success");
+    
+    // If we are currently editing an existing order, add items there instead
+    if (editModal.isOpen) {
+      setEditModal({ ...editModal, items: [...editModal.items, ...newItems] });
+    } else {
+      setDraftItems([...draftItems, ...newItems]); 
+    }
+    
+    setShowItemModal(false); setTempSelectedItems({}); setProductSearch('');
+    showToast(`Added ${newItems.length} items.`, "success");
   };
 
   // --- DRAFT CREATION ---
   const handleGenerateDraft = async (e: React.FormEvent) => {
     e.preventDefault(); if (draftItems.length === 0) return showToast("Add at least one item.", "error");
-    
     setIsProcessing(true);
     try {
       const totalAmount = draftItems.reduce((acc, item) => acc + item.total, 0);
@@ -133,6 +138,21 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Failed to create document.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- EDIT EXISTING PENDING DRAFT ---
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!editModal.order) return;
+    setIsProcessing(true);
+    try {
+      const finalTotal = editModal.items.reduce((acc, item) => acc + item.total, 0);
+      const endpoint = mode === 'sales' ? `/sales/orders/${editModal.order.id}` : `/purchasing/pos/${editModal.order.id}`;
+      
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: editModal.items }) });
+      
+      fetchData(); showToast("Order modifications saved.", "success");
+      setEditModal({ isOpen: false, order: null, items: [] });
+    } catch(e) { showToast("Failed to update order.", "error"); } finally { setIsProcessing(false); }
+  };
+
   // --- VERIFICATION & STOCK COUNTING LOGIC ---
   const openVerificationModal = (order: Transaction) => {
     const itemsClone = order.items.map(i => ({ ...i }));
@@ -143,7 +163,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     setVerifyModal(prev => {
       const updatedItems = [...prev.items];
       const isCurrentlyCancelled = updatedItems[index].isCancelled;
-      
       updatedItems[index].isCancelled = !isCurrentlyCancelled;
       
       if (!isCurrentlyCancelled) {
@@ -158,19 +177,19 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleConfirmVerification = async (e: React.FormEvent) => {
-    e.preventDefault(); 
-    if (!verifyModal.order) return;
-    
+    e.preventDefault(); if (!verifyModal.order) return;
     setIsProcessing(true);
     try {
       const order = verifyModal.order;
       const finalItems = verifyModal.items;
       const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
-      const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED';
+      
+      // Moving to APPROVED means Stock Deducted, Awaiting Payment
+      const targetStatus = 'APPROVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) }).catch(()=>console.warn("Backend may not support overwriting JSON items directly."));
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) }).catch(()=>console.warn("Backend JSON array update constraint."));
 
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
@@ -191,17 +210,37 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Master Stock ${mode === 'sales' ? 'deducted' : 'added'} for valid items.`, "success");
+      showToast(`Verification Complete! Stock applied. Order moved to Pending Payments.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
-      setActiveTab('history');
+      setActiveTab('payments');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
+  };
+
+  // --- SETTLE PAYMENT LOGIC ---
+  const handleSettlePayment = async (order: Transaction) => {
+    if (!window.confirm(`Confirm payment settlement of ₱${order.totalAmount.toLocaleString()}?`)) return;
+    setIsProcessing(true);
+    try {
+      const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED';
+      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
+
+      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
+
+      // Settle the Ledger Balance down to 0
+      if (mode === 'sales') {
+        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -order.totalAmount }) });
+      } else {
+        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -order.totalAmount }) });
+      }
+
+      fetchData(); showToast("Payment settled successfully. Order finalized.", "success");
+      setActiveTab('history');
+    } catch(e) { showToast("Failed to settle payment.", "error"); } finally { setIsProcessing(false); }
   };
 
   // --- RETURN LOGIC ---
   const handleConfirmReturn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!returnModal.order) return;
-
+    e.preventDefault(); if (!returnModal.order) return;
     setIsProcessing(true);
     try {
       const order = returnModal.order;
@@ -210,31 +249,32 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
-      // Calculate what was originally processed (excluding cancelled)
+      // Only reverse balance if it wasn't settled yet (APPROVED means unpaid balance)
+      // If it was FULFILLED/RECEIVED, the balance is already 0, but the physical return still needs processing. 
+      // For pure accounting accuracy, we'll reverse based on valid total.
       const validTotal = order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
-
-      // Reverse Balance
-      if (mode === 'sales') {
-        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-      } else {
-        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+      
+      if (order.status === 'APPROVED') {
+        if (mode === 'sales') {
+          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+        } else {
+          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+        }
       }
 
-      // Reverse Master Stock for valid items
       const validItems = order.items.filter(i => !i.isCancelled);
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
           const newStock = mode === 'sales'
-            ? (prod.currentStock || 0) + item.quantity              // Sales Return: Add back
-            : Math.max(0, (prod.currentStock || 0) - item.quantity); // PO Return: Deduct
+            ? (prod.currentStock || 0) + item.quantity              
+            : Math.max(0, (prod.currentStock || 0) - item.quantity); 
 
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
       }
 
-      fetchData();
-      showToast(`Transaction Reversed! Stock and balances restored.`, "success");
+      fetchData(); showToast(`Transaction Reversed! Stock restored.`, "success");
       setReturnModal({ isOpen: false, order: null });
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
   };
@@ -246,10 +286,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   return (
     <>
-      {/* 
-        MAIN APP WRAPPER 
-        Hides entirely when printDoc is active so it doesn't push the layout out of boundaries. 
-      */}
       <div className={`flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
         
         {toast && <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>{toast.message}</div>}
@@ -266,8 +302,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <button onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
               2. Verify & Process Stock
             </button>
+            <button onClick={() => setActiveTab('payments')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'payments' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
+              3. Pending Payments
+            </button>
             <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              3. Finalized Ledger
+              4. Finalized Ledger
             </button>
           </div>
         </aside>
@@ -341,7 +380,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
                     <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Physical Verification</h3>
-                    <p className="text-xs text-slate-600 font-medium">Print documents for the warehouse team, verify physical counts, and confirm stock deduction/addition.</p>
+                    <p className="text-xs text-slate-600 font-medium">Print documents, modify items if needed, and confirm stock processing.</p>
                   </div>
                   <table className="w-full text-left text-sm">
                     <thead className="bg-white border-b border-slate-200">
@@ -355,8 +394,38 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                             <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
                             <td className="py-4 px-6 font-black text-slate-600">{order.items.reduce((a,b)=>a+b.quantity,0)} Items</td>
                             <td className="py-4 px-6 text-right space-x-3">
-                              <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'} List</button>
-                              <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify & Process</button>
+                              <button onClick={() => setEditModal({ isOpen: true, order, items: order.items.map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit Order</button>
+                              <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
+                              <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
+                            </td>
+                          </tr>
+                        ))
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {activeTab === 'payments' && (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className={`p-6 border-b border-slate-200 bg-indigo-50`}>
+                    <h3 className="font-bold text-indigo-900 text-lg tracking-tight">Pending Payments & Receivables</h3>
+                    <p className="text-xs text-indigo-700 font-medium">Stock has been processed. Awaiting final payment settlement to close out accounts.</p>
+                  </div>
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-white border-b border-slate-200">
+                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Amount Owed</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {transactions.filter(t => t.status === 'APPROVED').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending payments.</td></tr> :
+                        transactions.filter(t => t.status === 'APPROVED').map(order => (
+                          <tr key={order.id} className="hover:bg-slate-50">
+                            <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
+                            <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
+                            <td className="py-4 px-6 text-right space-x-4">
+                              <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Cancel/Return</button>
+                              <button onClick={() => handleSettlePayment(order)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Settle Payment</button>
                             </td>
                           </tr>
                         ))
@@ -371,19 +440,19 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <div className="p-5 border-b border-slate-200 bg-slate-50"><h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3></div>
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
+                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Documents</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {transactions.filter(t => t.status !== 'PENDING').map(order => (
+                      {transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED').map(order => (
                         <tr key={order.id} className="hover:bg-slate-50">
                           <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
                           <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
                           <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
                           <td className="py-4 px-6">
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
+                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-indigo-200 bg-indigo-50 text-indigo-700'}`}>{order.status}</span>
                           </td>
                           <td className="py-4 px-6 text-right space-x-4">
-                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print</button>
+                            <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Document</button>
                             {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
                               <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                             )}
@@ -398,42 +467,53 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </main>
         </div>
 
-        {/* ITEM BROWSER MODAL */}
-        {showItemModal && (
+        {/* EDIT PENDING ORDER MODAL */}
+        {editModal.isOpen && editModal.order && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-              <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products from Master Catalog</h3>
-                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b text-slate-900 bg-white flex justify-between items-center">
+                <div>
+                  <h3 className="font-black text-xl tracking-wide">Edit Pending Order</h3>
+                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name}</p>
+                </div>
+                <button onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
-              <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
-              <div className="overflow-y-auto p-2 bg-slate-50 flex-1">
-                {filteredProducts.map(p => {
-                  const isChecked = tempSelectedItems[p.id]?.checked || false;
-                  return (
-                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors mb-2 ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200'}`}>
-                      <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
-                        <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className={`w-5 h-5 rounded cursor-pointer ${mode==='sales'?'text-emerald-600 focus:ring-emerald-500':'text-amber-600 focus:ring-amber-500'}`} />
-                        <div>
-                          <p className="font-bold text-sm text-slate-900">{p.name}</p>
-                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2">
-                            {p.sku} | <span className={`font-bold ${p.currentStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
-                          </p>
+              
+              <div className="flex-1 overflow-y-auto bg-slate-50 p-6 space-y-4">
+                <button onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>+ Add New Items</button>
+                
+                {editModal.items.length === 0 ? <div className="text-center py-8 text-slate-400 font-medium">All items removed.</div> : 
+                  editModal.items.map((item, index) => (
+                    <div key={index} className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                      <div className="flex-1">
+                        <h4 className="font-black text-base text-slate-900">{item.productName}</h4>
+                        <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="flex flex-col">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
+                          <input type="number" min="1" value={item.quantity} onChange={(e) => {
+                            const newQty = Number(e.target.value);
+                            const updated = [...editModal.items];
+                            updated[index].quantity = newQty;
+                            updated[index].total = newQty * updated[index].unitPrice;
+                            setEditModal({...editModal, items: updated});
+                          }} className="w-20 px-3 py-2 text-sm font-black border border-slate-300 rounded-lg outline-none focus:border-slate-500 text-center" />
                         </div>
-                      </label>
-                      {isChecked && (
-                        <div className="flex gap-3 w-full sm:w-1/2">
-                          <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty ?? 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
-                          <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{mode === 'sales' ? 'Selling Price (₱)' : 'Purchase Price (₱)'}</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price ?? ''} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
-                        </div>
-                      )}
+                        <span className={`font-black text-lg w-24 text-right ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</span>
+                        <button onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">✕</button>
+                      </div>
                     </div>
-                  );
-                })}
+                  ))
+                }
               </div>
-              <div className="p-5 border-t border-slate-200 bg-white flex gap-3">
-                <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
-                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Selected Items</button>
+
+              <div className="p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
+                  <p className="text-2xl font-black text-slate-900">₱{editModal.items.reduce((acc, item) => acc + item.total, 0).toLocaleString('en-PH')}</p>
+                </div>
+                <button onClick={handleSaveEdit} disabled={isProcessing} className="px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
               </div>
             </div>
           </div>
@@ -450,7 +530,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               
               <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
                 <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare the physical stock against this list. If an item is missing or unavailable, click "Cancel Item" to omit it from the final transaction record.
+                  Instructions: Compare the physical stock against this list. If an item is physically missing, click "Cancel Item" to omit it from the transaction record.
                 </div>
 
                 <div className="space-y-4">
