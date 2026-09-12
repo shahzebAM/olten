@@ -9,7 +9,7 @@ interface Product { id: number; name: string; sku: string; purchasePrice: number
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
   
   const [mode, setMode] = useState<'sales' | 'purchasing'>(initialMode);
-  const [activeTab, setActiveTab] = useState<'draft' | 'verify' | 'payments' | 'history'>('draft');
+  const [activeTab, setActiveTab] = useState<'draft' | 'verify' | 'pending' | 'history'>('draft');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -35,8 +35,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
   const [viewModal, setViewModal] = useState<Transaction | null>(null);
 
-  // Print State
+  // Print & Filter State
   const [printDoc, setPrintDoc] = useState<{ order: Transaction, type: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT' } | null>(null);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
@@ -48,7 +50,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   };
   const companyMeta = getCompanyDetails();
 
-  // Ensure print view auto-closes when done
   useEffect(() => {
     const handleAfterPrint = () => setPrintDoc(null);
     window.addEventListener('afterprint', handleAfterPrint);
@@ -87,11 +88,29 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const partners = mode === 'sales' ? customers : suppliers;
   const transactions = mode === 'sales' ? salesOrders : purchaseOrders;
   
-  // CRITICAL FIX: Safe filtering prevents crashes if a product lacks a name or sku
   const filteredProducts = products.filter(p => 
     (p.name || '').toLowerCase().includes(productSearch.toLowerCase()) || 
     (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
   );
+
+  // --- SHORTAGES / PENDING ITEMS FILTERING ---
+  const pendingItemsList = transactions.flatMap(order => 
+    order.items
+      .filter(item => item.isCancelled)
+      .map(item => ({
+        ...item,
+        orderDate: order.date,
+        orderRef: order.refNumber,
+        partnerName: order.partner?.name || 'Unknown'
+      }))
+  ).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+
+  const filteredPendingItems = pendingItemsList.filter(item => {
+    const itemDate = new Date(item.orderDate);
+    if (fromDate && itemDate < new Date(fromDate)) return false;
+    if (toDate && itemDate > new Date(new Date(toDate).setHours(23,59,59,999))) return false;
+    return true;
+  });
 
   // --- ADD ITEMS LOGIC ---
   const handleToggleProduct = (p: Product) => {
@@ -190,10 +209,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const finalItems = verifyModal.items;
       const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
       
-      const targetStatus = 'APPROVED'; 
+      // Moving straight to Fulfilled / Received
+      const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // Update both Status and Full Body to enforce changes
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal }) }).catch(()=>{});
 
@@ -216,31 +235,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Stock applied. Order moved to Pending Payments.`, "success");
+      showToast(`Verification Complete! Missing items moved to Pending.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
-      setActiveTab('payments');
-    } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
-  };
-
-  // --- SETTLE PAYMENT LOGIC ---
-  const handleSettlePayment = async (order: Transaction) => {
-    if (!window.confirm(`Confirm payment settlement of ₱${order.totalAmount.toLocaleString()}?`)) return;
-    setIsProcessing(true);
-    try {
-      const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED';
-      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
-
-      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
-
-      if (mode === 'sales') {
-        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -order.totalAmount }) });
-      } else {
-        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -order.totalAmount }) });
-      }
-
-      fetchData(); showToast("Payment settled successfully. Order finalized.", "success");
       setActiveTab('history');
-    } catch(e) { showToast("Failed to settle payment.", "error"); } finally { setIsProcessing(false); }
+    } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
   };
 
   // --- RETURN LOGIC ---
@@ -256,12 +254,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       const validTotal = order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
       
-      if (order.status === 'APPROVED') {
-        if (mode === 'sales') {
-          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-        } else {
-          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-        }
+      if (mode === 'sales') {
+        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+      } else {
+        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
       }
 
       const validItems = order.items.filter(i => !i.isCancelled);
@@ -283,95 +279,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
     setPrintDoc({ order, type: printType });
-    setTimeout(() => { window.print(); }, 500); 
+    setTimeout(() => { window.print(); }, 400); 
   };
-
-  // We completely hide the main app wrapper during printing to guarantee clean letterheads
-  if (printDoc) {
-    return (
-      <div className="bg-white text-black font-sans p-8 min-h-screen">
-        <div className="flex justify-between items-start border-b-2 border-black pb-6 mb-6">
-          <div>
-            <h1 className="text-4xl font-black tracking-tight uppercase">{companyMeta.name}</h1>
-            <p className="text-sm font-medium mt-1">Order Processing Center</p>
-          </div>
-          <div className="text-right text-xs space-y-0.5 mt-1 font-mono">
-            <p>Generated: {new Date().toLocaleString()}</p>
-            <p>Doc Ref: {printDoc.order.id.slice(-8)}</p>
-          </div>
-        </div>
-
-        <div className="text-center mb-8">
-          <h2 className="text-4xl font-black tracking-widest uppercase">
-            {printDoc.type === 'OS' ? 'ORDER SLIP (PICK LIST)' : 
-             printDoc.type === 'PO' ? 'PURCHASE ORDER' : 
-             printDoc.type === 'INVOICE' ? 'SALES INVOICE' : 'RECEIVING REPORT'}
-          </h2>
-          <div className="inline-block mt-2 px-4 py-1 border-2 border-black font-black text-sm uppercase tracking-widest">
-            {printDoc.order.status}
-          </div>
-        </div>
-
-        <div className="flex justify-between mb-8 border-2 border-black p-4">
-          <div className="w-1/2 pr-4 border-r-2 border-black">
-            <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">{mode === 'sales' ? 'Billed To' : 'Vendor'}</h3>
-            <p className="font-black text-xl uppercase">{printDoc.order.partner?.name}</p>
-            <p className="mt-1 font-medium">{printDoc.order.partner?.contact || 'No Contact Specified'}</p>
-            <p className="font-medium">{printDoc.order.partner?.phone || 'N/A'}</p>
-          </div>
-          <div className="w-1/2 pl-4 text-right">
-            <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Transaction Details</h3>
-            <p className="font-medium mt-1">Reference: <span className="font-bold text-lg">{printDoc.order.refNumber}</span></p>
-            <p className="font-medium">Date: <span className="font-bold">{new Date(printDoc.order.date).toLocaleDateString()}</span></p>
-            <p className="font-medium">Agent: <span className="font-bold uppercase">{printDoc.order.user}</span></p>
-          </div>
-        </div>
-
-        <table className="w-full text-left border-collapse mb-8 border-2 border-black">
-          <thead className="border-b-2 border-black bg-slate-100">
-            <tr>
-              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-1/2">Item Description</th>
-              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black">Qty</th>
-              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black">Price</th>
-              <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-black">
-            {printDoc.order.items.map((item, i) => (
-              <tr key={i} className="break-inside-avoid">
-                <td className="py-3 px-4 border-r border-black">
-                  <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
-                  <div className="text-[10px] font-mono">{item.sku}</div>
-                  {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
-                </td>
-                <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
-                <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
-                <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="flex justify-end mb-16 break-inside-avoid">
-          <div className="w-1/3 p-4 border-2 border-black">
-            <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
-            <div className="border-t-2 border-black my-2"></div>
-            <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
-          </div>
-        </div>
-
-        <div className="flex justify-between items-end pt-12 mt-12 break-inside-avoid">
-          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.order.user}</div></div>
-          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Warehouse Verification</div><div className="text-[10px] mt-1">Signature / Date</div></div>
-          <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">{mode === 'sales' ? 'Client Acceptance' : 'Vendor Acceptance'}</div><div className="text-[10px] mt-1">Signature / Date</div></div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <>
-      <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
+      <div className={`flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
         
         {toast && <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>{toast.message}</div>}
 
@@ -387,8 +300,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <button onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
               2. Verify & Process Stock
             </button>
-            <button onClick={() => setActiveTab('payments')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'payments' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
-              3. Pending Payments
+            <button onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
+              3. Pending Shortages
             </button>
             <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>
               4. Finalized Ledger
@@ -491,33 +404,54 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {activeTab === 'payments' && (
+              {/* NEW PENDING SHORTAGES TAB */}
+              {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className={`p-6 border-b border-slate-200 bg-indigo-50`}>
-                    <h3 className="font-bold text-indigo-900 text-lg tracking-tight">Pending Payments & Receivables</h3>
-                    <p className="text-xs text-indigo-700 font-medium">Stock has been processed. Awaiting final payment settlement to close out accounts.</p>
+                  <div className={`p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
+                    <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Items / Shortages</h3>
+                    <p className="text-xs text-slate-600 font-medium">Items that were cancelled during verification due to low stock or missing delivery.</p>
                   </div>
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-white border-b border-slate-200">
-                      <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Amount Owed</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {transactions.filter(t => t.status === 'APPROVED').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending payments.</td></tr> :
-                        transactions.filter(t => t.status === 'APPROVED').map(order => (
-                          <tr key={order.id} className="hover:bg-slate-50">
-                            <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
-                            <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
-                            <td className="py-4 px-6 text-right space-x-3">
-                              <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-800 font-bold text-[11px] uppercase tracking-wider underline mr-2">View Details</button>
-                              <button onClick={() => setReturnModal({ isOpen: true, order })} className="text-rose-600 hover:text-rose-800 font-black text-[11px] uppercase tracking-wider">Cancel/Return</button>
-                              <button onClick={() => handleSettlePayment(order)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Settle Payment</button>
+                  
+                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex gap-4 items-center">
+                    <div className="flex flex-col">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
+                      <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                    </div>
+                    <div className="flex flex-col">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">To Date</label>
+                      <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm min-w-[800px]">
+                      <thead className="bg-white border-b border-slate-200">
+                        <tr>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Date / Ref</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Product Details</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Qty Short</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Cancellation Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredPendingItems.length === 0 ? (
+                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No cancelled items found for this period.</td></tr>
+                        ) : filteredPendingItems.map((item, i) => (
+                          <tr key={i} className="hover:bg-rose-50/30 transition-colors">
+                            <td className="py-4 px-6 font-black text-slate-900">{item.orderRef} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(item.orderDate).toLocaleDateString()}</div></td>
+                            <td className="py-4 px-6 font-bold text-slate-700">{item.partnerName}</td>
+                            <td className="py-4 px-6">
+                              <div className="font-bold text-slate-900">{item.productName}</div>
+                              <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                             </td>
+                            <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
+                            <td className="py-4 px-6 font-bold text-rose-700 text-xs uppercase tracking-wide">{item.cancelReason}</td>
                           </tr>
-                        ))
-                      }
-                    </tbody>
-                  </table>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
@@ -571,7 +505,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                     <div>
                       <h4 className={`font-black text-sm ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
                       <p className="text-[10px] font-mono text-slate-500 mt-1">{item.sku} • Qty: {item.quantity} • Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</p>
-                      {item.isCancelled && <p className="text-xs font-bold text-rose-600 uppercase mt-2">CANCELLED: {item.cancelReason}</p>}
+                      {item.isCancelled && <p className="text-xs font-bold text-rose-600 uppercase mt-2 tracking-wide">CANCELLED: {item.cancelReason}</p>}
                     </div>
                     <div className={`font-black text-lg ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
                       ₱{(item.total || 0).toLocaleString()}
@@ -658,7 +592,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         <div>
                           <p className="font-bold text-sm text-slate-900">{p.name}</p>
                           <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2">
-                            {p.sku} | <span className={`font-bold ${p.currentStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
+                            {p.sku || 'N/A'} | <span className={`font-bold ${p.currentStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
                           </p>
                         </div>
                       </label>
@@ -680,7 +614,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
         )}
 
-        {/* VERIFICATION & DISPATCH MODAL */}
+        {/* VERIFICATION MODAL */}
         {verifyModal.isOpen && verifyModal.order && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
@@ -775,7 +709,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <form onSubmit={handleConfirmReturn} className="p-6 flex flex-col gap-5 bg-slate-50">
                 <div className="bg-white border border-slate-200 p-4 rounded-xl text-xs font-bold text-rose-700 shadow-sm leading-relaxed">
-                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore items back to' : 'deduct items from'} Master Stock</strong> and decrease the {mode === 'sales' ? 'Customer Balance' : 'Supplier Payable'} by <strong>₱{returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString()}</strong>.
+                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString()}</strong>.
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setReturnModal({ isOpen: false, order: null })} className="flex-1 px-4 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
@@ -786,6 +720,87 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
         )}
       </div>
+
+      {/* UNIVERSAL PRINT LAYER */}
+      {printDoc && (
+        <div className="hidden print:block absolute inset-0 w-full bg-white z-[99999] text-black font-sans p-8 min-h-screen">
+          <div className="flex justify-between items-start border-b-2 border-black pb-6 mb-6">
+            <div>
+              <h1 className="text-4xl font-black tracking-tight uppercase">{companyMeta.name}</h1>
+              <p className="text-sm font-medium mt-1">Order Processing Center</p>
+            </div>
+            <div className="text-right text-xs space-y-0.5 mt-1 font-mono">
+              <p>Generated: {new Date().toLocaleString()}</p>
+              <p>Doc Ref: {printDoc.order.id.slice(-8)}</p>
+            </div>
+          </div>
+
+          <div className="text-center mb-8">
+            <h2 className="text-4xl font-black tracking-widest uppercase">
+              {printDoc.type === 'OS' ? 'ORDER SLIP (PICK LIST)' : 
+               printDoc.type === 'PO' ? 'PURCHASE ORDER' : 
+               printDoc.type === 'INVOICE' ? 'SALES INVOICE' : 'RECEIVING REPORT'}
+            </h2>
+            <div className="inline-block mt-2 px-4 py-1 border-2 border-black font-black text-sm uppercase tracking-widest">
+              {printDoc.order.status}
+            </div>
+          </div>
+
+          <div className="flex justify-between mb-8 border-2 border-black p-4">
+            <div className="w-1/2 pr-4 border-r-2 border-black">
+              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">{mode === 'sales' ? 'Billed To' : 'Vendor'}</h3>
+              <p className="font-black text-xl uppercase">{printDoc.order.partner?.name}</p>
+              <p className="mt-1 font-medium">{printDoc.order.partner?.contact || 'No Contact Specified'}</p>
+              <p className="font-medium">{printDoc.order.partner?.phone || 'N/A'}</p>
+            </div>
+            <div className="w-1/2 pl-4 text-right">
+              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Transaction Details</h3>
+              <p className="font-medium mt-1">Reference: <span className="font-bold text-lg">{printDoc.order.refNumber}</span></p>
+              <p className="font-medium">Date: <span className="font-bold">{new Date(printDoc.order.date).toLocaleDateString()}</span></p>
+              <p className="font-medium">Agent: <span className="font-bold uppercase">{printDoc.order.user}</span></p>
+            </div>
+          </div>
+
+          <table className="w-full text-left border-collapse mb-8 border-2 border-black">
+            <thead className="border-b-2 border-black bg-slate-100">
+              <tr>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-1/2">Item Description</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black">Qty</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black">Price</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black">
+              {printDoc.order.items.map((item, i) => (
+                <tr key={i} className="break-inside-avoid">
+                  <td className="py-3 px-4 border-r border-black">
+                    <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
+                    <div className="text-[10px] font-mono">{item.sku}</div>
+                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
+                  </td>
+                  <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
+                  <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
+                  <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex justify-end mb-16 break-inside-avoid">
+            <div className="w-1/3 p-4 border-2 border-black">
+              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
+              <div className="border-t-2 border-black my-2"></div>
+              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-end pt-12 mt-12 break-inside-avoid">
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.order.user}</div></div>
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Warehouse Verification</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">{mode === 'sales' ? 'Client Acceptance' : 'Vendor Acceptance'}</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
