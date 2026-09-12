@@ -48,7 +48,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     if (selectedCompany?.toLowerCase().includes('wilcare')) {
       return { name: 'Wilcare Trading Corp.', address: '1457-A Rizal Ave. Sta. Cruz Manila', tel: '(02)87330879, 87333950', mob: '09157739968, 09164394073', email: 'wilcaremanila@gmail.com', web: 'www.wilcare.com.ph' };
     }
-    return { name: `${selectedCompany} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', mob: 'N/A', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com`, web: `www.${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
+    return { name: `${selectedCompany || 'Unknown'} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', mob: 'N/A', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com`, web: `www.${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
   };
   const companyMeta = getCompanyDetails();
 
@@ -71,11 +71,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       if (supRes.ok) setSuppliers(await supRes.json());
       if (soRes.ok) {
         const soData = await soRes.json();
-        setSalesOrders(soData.map((s: any) => ({ ...s, refNumber: s.soNumber, partnerId: s.customerId, partner: s.customer })));
+        setSalesOrders(soData.map((s: any) => ({ ...s, refNumber: s.soNumber || 'N/A', partnerId: s.customerId, partner: s.customer || { name: 'Unknown Client' } })));
       }
       if (poRes.ok) {
         const poData = await poRes.json();
-        setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber, partnerId: p.supplierId, partner: p.supplier })));
+        setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber || 'N/A', partnerId: p.supplierId, partner: p.supplier || { name: 'Unknown Vendor' } })));
       }
       if (prodRes.ok) setProducts(await prodRes.json());
     } catch (e) { console.warn("Backend not ready."); }
@@ -97,7 +97,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   // --- SHORTAGES / PENDING ITEMS LIST ---
   const pendingItemsList = transactions.flatMap(order => 
-    order.items
+    (order.items || [])
       .filter(item => item.isCancelled)
       .map(item => ({
         ...item,
@@ -114,7 +114,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     if (toDate && itemDate > new Date(new Date(toDate).setHours(23,59,59,999))) return false;
     if (shortageSearch) {
       const q = shortageSearch.toLowerCase();
-      const matchesPartner = item.partnerName.toLowerCase().includes(q);
+      const matchesPartner = (item.partnerName || '').toLowerCase().includes(q);
       const matchesProduct = (item.productName || '').toLowerCase().includes(q);
       const matchesRef = (item.orderRef || '').toLowerCase().includes(q);
       const matchesSku = (item.sku || '').toLowerCase().includes(q);
@@ -127,7 +127,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     if (!historySearch) return true;
     const q = historySearch.toLowerCase();
     return (
-      order.refNumber.toLowerCase().includes(q) ||
+      (order.refNumber || '').toLowerCase().includes(q) ||
       (order.partner?.name || '').toLowerCase().includes(q)
     );
   });
@@ -149,8 +149,20 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
   const handleConfirmAddItems = () => {
     const newItems = Object.entries(tempSelectedItems).filter(([_, data]) => data.checked).map(([id, data]) => {
         const p = products.find(prod => prod.id === Number(id))!;
-        return { productId: p.id, sku: p.sku || 'N/A', productName: p.name || 'Unnamed Product', quantity: data.qty, unitPrice: data.price, total: data.qty * data.price, isCancelled: false, cancelReason: '' };
+        const safePrice = Number(data.price) || 0;
+        const safeQty = Number(data.qty) || 1;
+        return { 
+          productId: p.id, 
+          sku: p.sku || 'N/A', 
+          productName: p.name || 'Unnamed Product', 
+          quantity: safeQty, 
+          unitPrice: safePrice, 
+          total: safeQty * safePrice, 
+          isCancelled: false, 
+          cancelReason: '' 
+        };
       });
+      
     if (newItems.length === 0) return showToast("No items selected.", "error");
     
     if (editModal.isOpen) {
@@ -168,7 +180,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     e.preventDefault(); if (draftItems.length === 0) return showToast("Add at least one item.", "error");
     setIsProcessing(true);
     try {
-      const totalAmount = draftItems.reduce((acc, item) => acc + item.total, 0);
+      const totalAmount = draftItems.reduce((acc, item) => acc + (item.total || 0), 0);
       const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
       const payload = mode === 'sales' 
         ? { company: selectedCompany, customerId: draftForm.partnerId, soNumber: draftForm.refNumber, totalAmount, items: draftItems, user: loginUsername, status: 'PENDING' }
@@ -188,7 +200,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     e.preventDefault(); if (!editModal.order) return;
     setIsProcessing(true);
     try {
-      const finalTotal = editModal.items.reduce((acc, item) => acc + item.total, 0);
+      const finalTotal = editModal.items.reduce((acc, item) => acc + (item.total || 0), 0);
       const endpoint = mode === 'sales' ? `/sales/orders/${editModal.order.id}` : `/purchasing/pos/${editModal.order.id}`;
       
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: editModal.items }) });
@@ -200,7 +212,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   // --- VERIFICATION & STOCK COUNTING LOGIC ---
   const openVerificationModal = (order: Transaction) => {
-    const itemsClone = order.items.map(i => ({ ...i }));
+    const itemsClone = (order.items || []).map(i => ({ ...i }));
     setVerifyModal({ isOpen: true, order, items: itemsClone });
   };
 
@@ -215,7 +227,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         updatedItems[index].total = 0; 
       } else {
         updatedItems[index].cancelReason = '';
-        updatedItems[index].total = updatedItems[index].quantity * updatedItems[index].unitPrice; 
+        updatedItems[index].total = (updatedItems[index].quantity || 0) * (updatedItems[index].unitPrice || 0); 
       }
       return { ...prev, items: updatedItems };
     });
@@ -227,7 +239,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     try {
       const order = verifyModal.order;
       const finalItems = verifyModal.items;
-      const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
+      const finalTotal = finalItems.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0);
       
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
@@ -245,9 +257,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
+          const safeCurrentStock = Number(prod.currentStock) || 0;
+          const safeItemQty = Number(item.quantity) || 0;
           const newStock = mode === 'sales' 
-            ? Math.max(0, (prod.currentStock || 0) - item.quantity) 
-            : (prod.currentStock || 0) + item.quantity;             
+            ? Math.max(0, safeCurrentStock - safeItemQty) 
+            : safeCurrentStock + safeItemQty;             
             
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
@@ -271,7 +285,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
-      const validTotal = order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0);
+      const validTotal = (order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0);
       
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
@@ -279,13 +293,15 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
       }
 
-      const validItems = order.items.filter(i => !i.isCancelled);
+      const validItems = (order.items || []).filter(i => !i.isCancelled);
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
+          const safeCurrentStock = Number(prod.currentStock) || 0;
+          const safeItemQty = Number(item.quantity) || 0;
           const newStock = mode === 'sales'
-            ? (prod.currentStock || 0) + item.quantity              
-            : Math.max(0, (prod.currentStock || 0) - item.quantity); 
+            ? safeCurrentStock + safeItemQty              
+            : Math.max(0, safeCurrentStock - safeItemQty); 
 
           await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
         }
@@ -296,9 +312,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- DELETE HISTORY LOGIC ---
+  // --- DELETE INDIVIDUAL TRANSACTION ---
   const handleDeleteTransaction = async (order: Transaction) => {
-    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently from the ledger. To reverse stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
+    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently. To restore stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
     if (confirmDelete !== "DELETE") {
       return showToast("Deletion cancelled. Order retained.", "error");
     }
@@ -318,6 +334,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // --- CLEAR ENTIRE HISTORY ---
   const handleClearHistory = async () => {
     const finishedOrders = transactions.filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED');
     if (finishedOrders.length === 0) return showToast("No history records found to clear.", "error");
@@ -419,8 +436,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                 <tr key={i} className="group">
                                   <td className="py-3 px-5 font-bold text-slate-900">{item.productName} <span className="text-[10px] font-mono text-slate-400 block mt-0.5">{item.sku}</span></td>
                                   <td className="py-3 px-5 text-right font-black text-slate-700">{item.quantity}</td>
-                                  <td className="py-3 px-5 text-right font-medium text-slate-600">₱{item.unitPrice.toLocaleString()}</td>
-                                  <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{item.total.toLocaleString()}</td>
+                                  <td className="py-3 px-5 text-right font-medium text-slate-600">₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
+                                  <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</td>
                                   <td className="py-3 px-5 text-center"><button onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500">✕</button></td>
                                 </tr>
                               ))
@@ -429,7 +446,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         </table>
                       </div>
                       <div className="flex justify-between items-center bg-slate-900 text-white p-5 rounded-xl">
-                        <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{draftItems.reduce((a,b)=>a+b.total,0).toLocaleString('en-PH')}</p></div>
+                        <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{(draftItems.reduce((a,b)=>a+(b.total||0),0) || 0).toLocaleString('en-PH')}</p></div>
                         <button onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
                           Generate {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}
                         </button>
@@ -453,11 +470,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                       {transactions.filter(t => t.status === 'PENDING').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending documents to verify.</td></tr> :
                         transactions.filter(t => t.status === 'PENDING').map(order => (
                           <tr key={order.id} className="hover:bg-slate-50">
-                            <td className="py-4 px-6 font-black text-slate-900">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
-                            <td className="py-4 px-6 font-black text-slate-600">{order.items.reduce((a,b)=>a+b.quantity,0)} Items</td>
-                            <td className="py-4 px-6 text-right space-x-3">
-                              <button onClick={() => setEditModal({ isOpen: true, order, items: order.items.map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit Order</button>
+                            <td className="py-4 px-6 font-black text-slate-900">{order.refNumber || 'N/A'} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                            <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
+                            <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
+                              <button onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit Order</button>
                               <button onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
                               <button onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
                             </td>
@@ -583,12 +600,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         filteredHistory.map(order => (
                           <tr key={order.id} className="hover:bg-slate-50">
                             <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name}</td>
-                            <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{order.totalAmount.toLocaleString()}</td>
+                            <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                            <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
                             <td className="py-4 px-6">
                               <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${order.status === 'RETURNED' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{order.status}</span>
                             </td>
-                            <td className="py-4 px-6 text-right space-x-3">
+                            <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
                               <button onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
                               <button onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
                               {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
@@ -619,26 +636,26 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 <button onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
               <div className="flex-1 overflow-y-auto bg-white p-6 space-y-3">
-                {viewModal.items.map((item, i) => (
+                {(viewModal.items || []).map((item, i) => (
                   <div key={i} className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${item.isCancelled ? 'bg-slate-50 border-rose-200 opacity-70' : 'border-slate-200 shadow-sm'}`}>
                     <div className="flex-1">
                       <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
                       <div className="flex flex-wrap items-center gap-3 mt-1.5">
                         <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
                         <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
-                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</span>
+                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
                       </div>
                       {item.isCancelled && <p className="text-xs font-bold text-rose-600 uppercase mt-3 tracking-wide">SHORTAGE REASON: {item.cancelReason}</p>}
                     </div>
                     <div className={`font-black text-xl ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'} mt-2 sm:mt-0`}>
-                      ₱{(item.total || 0).toLocaleString()}
+                      ₱{(item.total || 0).toLocaleString('en-PH')}
                     </div>
                   </div>
                 ))}
               </div>
               <div className="p-6 border-t border-slate-200 bg-slate-50 shrink-0 text-right">
                 <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Final Billed Total</p>
-                <p className="text-3xl font-black text-slate-900 mt-1">₱{viewModal.totalAmount.toLocaleString('en-PH')}</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">₱{(viewModal.totalAmount || 0).toLocaleString('en-PH')}</p>
               </div>
             </div>
           </div>
@@ -651,7 +668,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               <div className="p-6 border-b text-slate-900 bg-white flex justify-between items-center">
                 <div>
                   <h3 className="font-black text-xl tracking-wide">Edit Pending Order</h3>
-                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name}</p>
+                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name || 'Unknown'}</p>
                 </div>
                 <button onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
@@ -666,23 +683,23 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
                           <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
-                          <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</span>
+                          <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-4 shrink-0 mt-3 sm:mt-0">
                         <div className="flex flex-col">
                           <label className="text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
-                          <input type="number" min="1" value={item.quantity} onChange={(e) => {
-                            const newQty = Number(e.target.value);
+                          <input type="number" min="1" value={item.quantity ?? 1} onChange={(e) => {
+                            const newQty = Number(e.target.value) || 0;
                             const updated = [...editModal.items];
                             updated[index].quantity = newQty;
-                            updated[index].total = newQty * updated[index].unitPrice;
+                            updated[index].total = newQty * (updated[index].unitPrice || 0);
                             setEditModal({...editModal, items: updated});
                           }} className="w-20 px-3 py-2 text-sm font-black border border-slate-300 rounded-lg outline-none focus:border-slate-500 text-center" />
                         </div>
                         <div className="text-right">
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 w-24">Total</p>
-                          <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</span>
+                          <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</span>
                         </div>
                         <button onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 ml-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">✕</button>
                       </div>
@@ -694,9 +711,50 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               <div className="p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
-                  <p className="text-2xl font-black text-slate-900">₱{editModal.items.reduce((acc, item) => acc + item.total, 0).toLocaleString('en-PH')}</p>
+                  <p className="text-2xl font-black text-slate-900">₱{(editModal.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</p>
                 </div>
                 <button onClick={handleSaveEdit} disabled={isProcessing} className="px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ITEM BROWSER MODAL */}
+        {showItemModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+              <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products from Master Catalog</h3>
+                <button onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+              </div>
+              <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
+              <div className="overflow-y-auto p-2 bg-slate-50 flex-1">
+                {filteredProducts.map(p => {
+                  const isChecked = tempSelectedItems[p.id]?.checked || false;
+                  return (
+                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors mb-2 ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200'}`}>
+                      <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
+                        <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className={`w-5 h-5 rounded cursor-pointer ${mode==='sales'?'text-emerald-600 focus:ring-emerald-500':'text-amber-600 focus:ring-amber-500'}`} />
+                        <div>
+                          <p className="font-bold text-sm text-slate-900">{p.name}</p>
+                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2">
+                            {p.sku || 'N/A'} | <span className={`font-bold ${(p.currentStock||0) > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
+                          </p>
+                        </div>
+                      </label>
+                      {isChecked && (
+                        <div className="flex gap-3 w-full sm:w-1/2">
+                          <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty ?? 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
+                          <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{mode === 'sales' ? 'Selling Price (₱)' : 'Purchase Price (₱)'}</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price ?? ''} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="p-5 border-t border-slate-200 bg-white flex gap-3">
+                <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
+                <button onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Selected Items</button>
               </div>
             </div>
           </div>
@@ -708,12 +766,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
               <div className={`p-6 border-b text-white ${mode === 'sales' ? 'bg-emerald-700' : 'bg-amber-700'}`}>
                 <h3 className="font-black text-xl tracking-wide">{mode === 'sales' ? 'Stock Verification & Dispatch' : 'Physical Receipt & Stock Logging'}</h3>
-                <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.order.refNumber} • {verifyModal.order.partner?.name}</p>
+                <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.order.refNumber} • {verifyModal.order.partner?.name || 'Unknown'}</p>
               </div>
               
               <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
                 <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6">
-                  Instructions: Compare physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to automatically log it into the Shortages list.
+                  Instructions: Compare physical stock against this list. If an item is physically missing, click "Cancel Item" to automatically log it into the Shortages list.
                 </div>
 
                 <div className="space-y-4">
@@ -725,7 +783,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <div className="flex flex-wrap items-center gap-3 mt-1.5">
                             <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
                             <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
-                            <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString()}</span>
+                            <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
                           </div>
                         </div>
                         
@@ -733,7 +791,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <div className="text-right mr-2">
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total</p>
                             <span className={`font-black text-xl ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-700' : 'text-amber-700')}`}>
-                              ₱{(item.total || 0).toLocaleString()}
+                              ₱{(item.total || 0).toLocaleString('en-PH')}
                             </span>
                           </div>
                           
@@ -778,7 +836,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <div className="text-right">
                     <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Final Adjusted Total</p>
                     <p className="text-3xl font-black text-slate-900">
-                      ₱{verifyModal.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}
+                      ₱{(verifyModal.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}
                     </p>
                   </div>
                 </div>
@@ -804,7 +862,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <form onSubmit={handleConfirmReturn} className="p-6 flex flex-col gap-5 bg-slate-50">
                 <div className="bg-white border border-slate-200 p-4 rounded-xl text-xs font-bold text-rose-700 shadow-sm leading-relaxed">
-                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString()}</strong>.
+                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{(returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}</strong>.
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setReturnModal({ isOpen: false, order: null })} className="flex-1 px-4 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
@@ -866,12 +924,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </tr>
             </thead>
             <tbody className="divide-y divide-black">
-              {printDoc.order.items.map((item, i) => (
+              {(printDoc.order.items || []).map((item, i) => (
                 <tr key={i} className="break-inside-avoid">
                   <td className="py-3 px-4 border-r border-black">
                     <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
                     <div className="text-[10px] font-mono">{item.sku}</div>
-                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** CANCELLED: {item.cancelReason} ***</div>}
+                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** SHORTAGE: {item.cancelReason} ***</div>}
                   </td>
                   <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
                   <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
@@ -883,9 +941,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
           <div className="flex justify-end mb-16 break-inside-avoid">
             <div className="w-1/3 p-4 border-2 border-black">
-              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{printDoc.order.items.reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
+              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{(printDoc.order.items || []).reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
               <div className="border-t-2 border-black my-2"></div>
-              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{printDoc.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.total), 0).toLocaleString('en-PH')}</span></div>
+              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{(printDoc.order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0).toLocaleString('en-PH')}</span></div>
             </div>
           </div>
 
