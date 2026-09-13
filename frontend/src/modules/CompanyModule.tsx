@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
   selectedCompany, loginUsername, currentUser, 
-  hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales,
+  hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing,
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = []
 }: any) {
   
@@ -164,32 +164,9 @@ export default function CompanyModule({
       </div>
 
       <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        
-        {/* CUSTOMER CENTER */}
-        {hasSales && (
-          <button onClick={() => onSelectModule('customers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Customer Center</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage client accounts, credit limits, and purchase history.</p>
-            </div>
-          </button>
-        )}
+    
 
-        {/* REPLACED: CUSTOMER ORDERS MODULE */}
-        {hasSales && (
-          <button onClick={() => onSelectModule('sales_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Order Fulfillment</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Create Order Slips, verify physical stock, and process final orders.</p>
-            </div>
-          </button>
-        )}
+
         
         {/* VENDOR CENTER */}
         {hasPurchasing && (

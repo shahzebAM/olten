@@ -5,15 +5,19 @@ interface POItem { id?: string; productId: number; sku: string; productName: str
 interface PurchaseOrder { id: string; poNumber: string; supplierId: string; supplier: Supplier; date: string; status: 'PENDING' | 'APPROVED' | 'RECEIVED' | 'RETURNED' | 'CANCELLED'; totalAmount: number; items: POItem[]; user: string; }
 interface Product { id: number; name: string; sku: string; purchasePrice: number; currentStock: number; reorderLevel: number; }
 interface Warehouse { id: string; name: string; }
+interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; [key: string]: any; }
 
 export default function PurchaseOrderModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: any) {
   const [activeTab, setActiveTab] = useState<'create' | 'history' | 'receive'>('create');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Data States
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [hubStock, setHubStock] = useState<WarehouseStock[]>([]);
 
   // Draft States
   const [poForm, setPoForm] = useState({ supplierId: '', poNumber: `PO-${Date.now().toString().slice(-6)}` });
@@ -31,22 +35,47 @@ export default function PurchaseOrderModule({ selectedCompany, loginUsername, AP
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  const fetchData = async () => {
-    try {
-      const [supRes, poRes, prodRes, whRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/purchasing/suppliers?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/purchasing/pos?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`)
-      ]);
-      if (supRes.ok) setSuppliers(await supRes.json());
-      if (poRes.ok) setPos(await poRes.json());
-      if (prodRes.ok) setProducts(await prodRes.json());
-      if (whRes.ok) setWarehouses(await whRes.json());
-    } catch (e) { console.warn("Backend not ready."); }
+  // --- BULLETPROOF ISOLATED FETCHING ---
+  const fetchData = () => {
+    const safeFetch = (endpoint: string, setter: Function) => {
+      fetch(`${API_BASE_URL}${endpoint}?company=${selectedCompany}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setter(data);
+          else if (data && Array.isArray(data.data)) setter(data.data);
+          else if (data && Array.isArray(data.items)) setter(data.items);
+          else setter([]);
+        })
+        .catch(e => console.warn(`Silent skip: Failed to fetch ${endpoint}`, e));
+    };
+
+    safeFetch('/purchasing/suppliers', setSuppliers);
+    safeFetch('/purchasing/pos', setPos);
+    safeFetch('/products', setProducts);
+    safeFetch('/warehouses', setWarehouses);
+    safeFetch('/warehouse-stock', setHubStock);
   };
 
   useEffect(() => { fetchData(); }, [selectedCompany]);
+
+  // --- LIVE STOCK CALCULATORS ---
+  const getLiveWarehouseStock = (productId: number | string, sku: string): number => {
+    if (!hubStock || !Array.isArray(hubStock) || hubStock.length === 0) return 0;
+    let total = 0;
+    for (let i = 0; i < hubStock.length; i++) {
+      const h = hubStock[i];
+      if (String(h.productId) === String(productId) || String(h.sku) === String(sku)) {
+        total += Number(h.quantity) || Number(h.stock) || Number(h.qty) || 0;
+      }
+    }
+    return total;
+  };
+
+  const getLiveOfficeStock = (productId: number | string): number => {
+    if (!products || !Array.isArray(products)) return 0;
+    const prod = products.find(p => String(p.id) === String(productId));
+    return prod ? (Number(prod.currentStock) || 0) : 0;
+  };
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()));
   
@@ -304,14 +333,26 @@ export default function PurchaseOrderModule({ selectedCompany, loginUsername, AP
             <div className="overflow-y-auto p-2 bg-slate-50 flex-1">
               {filteredProducts.map(p => {
                 const isChecked = tempSelectedItems[p.id]?.checked || false;
+                const liveOfficeStock = getLiveOfficeStock(p.id);
+                const liveWhseStock = getLiveWarehouseStock(p.id, p.sku);
+
                 return (
                   <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors mb-2 ${isChecked ? 'bg-amber-50/50 border-amber-300' : 'bg-white border-slate-200'}`}>
                     <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
-                      <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className="w-5 h-5 text-amber-600 rounded cursor-pointer" />
-                      <div><p className="font-bold text-sm text-slate-900">{p.name}</p><p className="text-[10px] text-slate-500 font-mono tracking-wider">{p.sku}</p></div>
+                      <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className="w-5 h-5 text-amber-600 rounded cursor-pointer shrink-0" />
+                      <div>
+                        <p className="font-bold text-sm text-slate-900 leading-tight">{p.name}</p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className="text-[10px] text-slate-500 font-mono tracking-wider bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{p.sku}</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+                            Off: <span className={liveOfficeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}>{liveOfficeStock}</span> | 
+                            Whse: <span className={liveWhseStock > 0 ? 'text-emerald-600' : 'text-rose-600'}>{liveWhseStock}</span>
+                          </span>
+                        </div>
+                      </div>
                     </label>
                     {isChecked && (
-                      <div className="flex gap-3 w-full sm:w-1/2">
+                      <div className="flex gap-3 w-full sm:w-1/2 shrink-0">
                         <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty || 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className="w-full px-3 py-2 text-sm font-black border border-amber-200 rounded-lg outline-none" /></div>
                         <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Unit Cost (₱)</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className="w-full px-3 py-2 text-sm font-black border border-amber-200 rounded-lg outline-none" /></div>
                       </div>
@@ -320,9 +361,9 @@ export default function PurchaseOrderModule({ selectedCompany, loginUsername, AP
                 );
               })}
             </div>
-            <div className="p-5 border-t border-slate-200 bg-white flex gap-3">
-              <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
-              <button onClick={handleConfirmAddItems} className="flex-1 py-3 bg-amber-600 text-white font-black uppercase tracking-wider rounded-xl shadow-sm">Add Items</button>
+            <div className="p-5 border-t border-slate-200 bg-white flex gap-3 shrink-0">
+              <button onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">Cancel</button>
+              <button onClick={handleConfirmAddItems} className="flex-1 py-3 bg-amber-600 text-white font-black uppercase tracking-wider rounded-xl shadow-sm hover:bg-amber-700 transition-colors">Add Items</button>
             </div>
           </div>
         </div>
