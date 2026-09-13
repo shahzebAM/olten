@@ -10,7 +10,7 @@ interface FinalOrder { id: string; foNumber: string; osId: string; osNumber: str
 interface PurchaseOrder { id: string; poNumber: string; supplier: string; date: string; status: string; items: any[]; totalAmount: number; }
 interface PackingList { id: string; plNumber: string; foId: string; foNumber: string; customerName: string; date: string; status: string; items: any[]; }
 interface Warehouse { id: string; name: string; address: string; status: string; }
-interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; [key: string]: any; }
+interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
 
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
   const [activeTab, setActiveTab] = useState<'CREATE_OS' | 'OS_LIST' | 'SHORTAGES' | 'FINAL_ORDERS' | 'PO_LIST' | 'PL_LIST'>('CREATE_OS');
@@ -54,33 +54,36 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- BULLETPROOF ISOLATED FETCHING ---
-  // Every database table loads completely independently to prevent hidden failures
-  const fetchData = () => {
-    const safeFetch = (endpoint: string, setter: Function) => {
-      fetch(`${API_BASE_URL}${endpoint}?company=${selectedCompany}`)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setter(data);
-          else if (data && Array.isArray(data.data)) setter(data.data);
-          else if (data && Array.isArray(data.items)) setter(data.items);
-          else setter([]);
-        })
-        .catch(e => console.warn(`Silent skip: Failed to fetch ${endpoint}`, e));
-    };
+  // --- MASTER INVENTORY EXACT FETCH DATA LOGIC ---
+  const fetchAllData = async () => {
+    try {
+      const [custRes, prodRes, osRes, shortRes, foRes, poRes, plRes, whRes, stkRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/erp/order-slips?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/erp/shortages?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/erp/final-orders?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/erp/purchase-orders?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/erp/packing-lists?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/warehouse-stock?company=${selectedCompany}`)
+      ]);
 
-    safeFetch('/sales/customers', setCustomers);
-    safeFetch('/products', setProducts);
-    safeFetch('/warehouses', setWarehouses);
-    safeFetch('/warehouse-stock', setHubStock); // Guaranteed to load into state
-    safeFetch('/erp/order-slips', setOrderSlips);
-    safeFetch('/erp/shortages', setShortages);
-    safeFetch('/erp/final-orders', setFinalOrders);
-    safeFetch('/erp/purchase-orders', setPurchaseOrders);
-    safeFetch('/erp/packing-lists', setPackingLists);
+      if (custRes.ok) setCustomers(await custRes.json());
+      if (prodRes.ok) setProducts(await prodRes.json());
+      if (osRes.ok) setOrderSlips(await osRes.json());
+      if (shortRes.ok) setShortages(await shortRes.json());
+      if (foRes.ok) setFinalOrders(await foRes.json());
+      if (poRes.ok) setPurchaseOrders(await poRes.json());
+      if (plRes.ok) setPackingLists(await plRes.json());
+      if (whRes.ok) setWarehouses(await whRes.json());
+      if (stkRes.ok) setHubStock(await stkRes.json());
+    } catch (e) { 
+      console.error("API Error", e); 
+    }
   };
 
-  useEffect(() => { fetchData(); }, [selectedCompany]);
+  useEffect(() => { fetchAllData(); }, [selectedCompany]);
 
   useEffect(() => {
     const handleAfterPrint = () => setPrintDoc(null);
@@ -88,26 +91,18 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
 
-  // --- AGGRESSIVE LIVE STOCK CALCULATORS ---
+  // --- EXACT MASTER INVENTORY STOCK CALCULATOR ---
   const getLiveWarehouseStock = (productId: number | string, sku: string): number => {
-    if (!hubStock || !Array.isArray(hubStock) || hubStock.length === 0) return 0;
-    
-    let total = 0;
-    for (let i = 0; i < hubStock.length; i++) {
-      const h = hubStock[i];
-      // Defensive string matching to prevent type mismatches
-      const isIdMatch = String(h.productId) === String(productId);
-      const isSkuMatch = String(h.sku) === String(sku);
-      
-      if (isIdMatch || isSkuMatch) {
-        total += Number(h.quantity) || Number(h.stock) || Number(h.qty) || 0;
-      }
-    }
-    return total;
+    const filteredHubList = hubStock.filter(h => {
+      const isMatch = (String(h.productId) === String(productId) || String(h.sku) === String(sku));
+      if (!isMatch) return false;
+      // Validates against existing warehouses just like Master Inventory
+      return warehouses.some(w => String(w.id) === String(h.warehouseId));
+    });
+    return filteredHubList.reduce((acc, val) => acc + (Number(val.quantity) || 0), 0);
   };
 
   const getLiveOfficeStock = (productId: number | string): number => {
-    if (!products || !Array.isArray(products)) return 0;
     const prod = products.find(p => String(p.id) === String(productId));
     return prod ? (Number(prod.currentStock) || 0) : 0;
   };
@@ -191,7 +186,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       
       showToast("Order Slip OS Generated successfully.", "success");
       setDraftItems([]); setSelectedCustomerId(''); setCustomerSearchTerm(''); setIsVatApplied(false);
-      fetchData(); setActiveTab('OS_LIST');
+      fetchAllData(); setActiveTab('OS_LIST');
     } catch (e) { showToast("Failed to generate O.S.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -215,7 +210,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       
       showToast("O.S. Processed! Shortages and Final Orders generated.", "success");
       setVerifyModal({ isOpen: false, os: null, physicalCounts: {} });
-      fetchData(); setActiveTab('FINAL_ORDERS');
+      fetchAllData(); setActiveTab('FINAL_ORDERS');
     } catch (e) { showToast("Error processing verification.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -228,7 +223,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ grandTotal: finalTotal, items: editModal.items }) 
       }).catch(()=>{});
       
-      fetchData(); showToast("Order modifications saved.", "success");
+      fetchAllData(); showToast("Order modifications saved.", "success");
       setEditModal({ isOpen: false, order: null, items: [] });
     } catch(e) { showToast("Failed to update order.", "error"); } finally { setIsProcessing(false); }
   };
@@ -238,7 +233,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       await fetch(`${API_BASE_URL}/erp/order-slips/${returnModal.order.id}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: 'RETURNED' }) }).catch(()=>{});
-      fetchData(); showToast(`Transaction Reversed!`, "success");
+      fetchAllData(); showToast(`Transaction Reversed!`, "success");
       setReturnModal({ isOpen: false, order: null });
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
   };
@@ -249,7 +244,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       await fetch(`${API_BASE_URL}/erp/order-slips/${order.id}`, { method: 'DELETE' }).catch(()=>{});
-      fetchData(); showToast(`Transaction ${order.osNumber} permanently deleted.`, "success");
+      fetchAllData(); showToast(`Transaction ${order.osNumber} permanently deleted.`, "success");
     } catch (e) { showToast("Failed to delete transaction.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -257,10 +252,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     if(!window.confirm("Remove this shortage from the database?")) return;
     try {
       await fetch(`${API_BASE_URL}/shortages/${shortageId}`, { method: 'DELETE' }).catch(()=>{});
-      fetchData(); showToast("Shortage record cleared.", "success");
+      fetchAllData(); showToast("Shortage record cleared.", "success");
     } catch (e) { showToast("Failed to delete shortage.", "error"); }
   };
 
+  // --- RENDER HELPERS ---
   const handlePrint = (type: 'OS' | 'PO' | 'PL', data: any) => { setPrintDoc({ type, data }); setTimeout(() => window.print(), 500); };
 
   const checkDateFilter = (dateStr: string) => {
@@ -308,7 +304,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           <main className={`flex-1 relative ${activeTab === 'CREATE_OS' ? 'overflow-hidden flex flex-col p-4 sm:p-6' : 'overflow-y-auto p-4 sm:p-8'}`}>
             <div className={`max-w-[1400px] mx-auto w-full ${activeTab === 'CREATE_OS' ? 'h-full flex flex-col min-h-0' : ''}`}>
               
-              {/* TAB 1: CREATE O.S. */}
+              {/* TAB 1: CREATE O.S. (FULL SCREEN & HORIZONTAL LAYOUT) */}
               {activeTab === 'CREATE_OS' && (
                 <div className="flex flex-col h-full gap-4 min-h-0">
                   <div className="relative z-30 shrink-0">
@@ -932,4 +928,4 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       )}
     </>
   );
-}   
+}
