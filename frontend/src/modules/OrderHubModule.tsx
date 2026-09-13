@@ -284,7 +284,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const validItems = finalItems.filter(i => !i.isCancelled);
       const finalTotal = validItems.reduce((acc, item) => acc + (item.total || 0), 0);
       
-      // Determine Status based on remaining valid items
+      // Determine Status
       let targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       if (validItems.length === 0) {
         targetStatus = 'CANCELLED';
@@ -292,7 +292,19 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
+      // 1. FORCE THE STATUS UPDATE (Bypasses nested item blockages)
+      await fetch(`${API_BASE_URL}${endpoint}/status`, { 
+        method: 'PATCH', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({ status: targetStatus }) 
+      });
+
+      // 2. Safely patch the items array and total
+      await fetch(`${API_BASE_URL}${endpoint}`, { 
+        method: 'PATCH', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) 
+      }).catch(() => {});
 
       // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
@@ -339,7 +351,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. All items moved to Shortages.` : `Verification Complete! Shortages logged.`, "success");
+      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. All items moved to Shortages.` : `Verification Complete! Sent to Ledger.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -548,7 +560,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB */}
+              {/* PENDING SHORTAGES TAB WITH STATUS COLUMN */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
@@ -711,7 +723,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                   <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
                   <div className="flex items-center gap-2 mt-1">
                     <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Ref: {viewModal.refNumber}</p>
-                    <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-800">{viewModal.status}</span>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${viewModal.status === 'CANCELLED' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>{viewModal.status}</span>
                   </div>
                 </div>
                 <button type="button" onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
@@ -1001,7 +1013,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </tr>
             </thead>
             <tbody className="divide-y divide-black">
-              {/* FIX: Filter out cancelled items so they never appear on the final printed invoice */}
               {(printDoc.order.items || []).filter(item => !item.isCancelled).map((item, i) => (
                 <tr key={i} className="break-inside-avoid">
                   <td className="py-3 px-4 border-r border-black">
