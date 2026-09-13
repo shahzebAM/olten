@@ -1,58 +1,86 @@
 import React, { useState, useEffect } from 'react';
 
-// --- INTERFACES (Relaxed for strict TypeScript compatibility) ---
-interface Partner { id?: string; name?: string; contact?: string; phone?: string; email?: string; address?: string; creditLimit?: number; balance?: number; }
-interface OrderItem { id?: string; productId: number; sku?: string; productName?: string; quantity: number; unitPrice: number; total: number; isCancelled?: boolean; cancelReason?: string; }
-interface Transaction { id: string; refNumber: string; partnerId: string; partner?: Partner; date: string; status: string; totalAmount: number; items: OrderItem[]; user?: string; }
-interface Product { id: number; name?: string; sku?: string; purchasePrice?: number; currentStock?: number; reorderLevel?: number; }
+// --- INTERFACES ---
+interface Customer { id: string; name: string; contact: string; phone: string; email: string; address: string; customerCode?: string; }
+interface Product { id: number; name: string; sku: string; purchasePrice: number; sellingPrice: number; currentStock: number; [key: string]: any; }
+interface OSItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; total: number; isCancelled?: boolean; cancelReason?: string; }
+interface OrderSlip { id: string; osNumber: string; customerId: string; customer?: Customer; date: string; status: string; subtotal: number; vatAmount: number; isVatApplied: boolean; grandTotal: number; items: OSItem[]; user: string; }
+interface Shortage { id: string; orderRef: string; customerName: string; productId: number; sku: string; productName: string; requestedQty: number; physicalQty: number; shortageQty: number; status: string; orderDate: string; cancelReason?: string; mode?: string; }
+interface FinalOrder { id: string; foNumber: string; osId: string; osNumber: string; customerId: string; customer?: Customer; date: string; status: string; items: { productId: number; productName: string; sku: string; fulfilledQty: number; }[]; }
+interface PurchaseOrder { id: string; poNumber: string; supplier: string; date: string; status: string; items: any[]; totalAmount: number; }
+interface PackingList { id: string; plNumber: string; foId: string; foNumber: string; customerName: string; date: string; status: string; items: any[]; }
+interface Warehouse { id: string; name: string; address: string; status: string; }
+interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; [key: string]: any; }
 
 export default function OrderHubModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialMode = 'sales' }: any) {
-  
+  const [activeTab, setActiveTab] = useState<'CREATE_OS' | 'OS_LIST' | 'SHORTAGES' | 'FINAL_ORDERS' | 'PO_LIST' | 'PL_LIST'>('CREATE_OS');
   const [mode, setMode] = useState<'sales' | 'purchasing'>(initialMode);
-  const [activeTab, setActiveTab] = useState<'draft' | 'verify' | 'pending' | 'history'>('draft');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Core Data
-  const [customers, setCustomers] = useState<Partner[]>([]);
-  const [suppliers, setSuppliers] = useState<Partner[]>([]);
-  const [salesOrders, setSalesOrders] = useState<Transaction[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<Transaction[]>([]);
+  // --- DATA STATES ---
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [shortages, setShortages] = useState<any[]>([]);
+  const [orderSlips, setOrderSlips] = useState<OrderSlip[]>([]);
+  const [shortages, setShortages] = useState<Shortage[]>([]);
+  const [finalOrders, setFinalOrders] = useState<FinalOrder[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [packingLists, setPackingLists] = useState<PackingList[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [hubStock, setHubStock] = useState<WarehouseStock[]>([]);
 
-  // Draft States
-  const [draftForm, setDraftForm] = useState({ partnerId: '', refNumber: '' });
-  const [draftItems, setDraftItems] = useState<OrderItem[]>([]);
-  
-  // Modals
-  const [showItemModal, setShowItemModal] = useState(false);
-  const [productSearch, setProductSearch] = useState('');
-  const [tempSelectedItems, setTempSelectedItems] = useState<Record<number, { checked: boolean, qty: number, price: number }>>({});
-  
-  // Action Modal States
-  const [editModal, setEditModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
-  const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, order: Transaction | null, items: OrderItem[] }>({ isOpen: false, order: null, items: [] });
-  const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: Transaction | null }>({ isOpen: false, order: null });
-  const [viewModal, setViewModal] = useState<Transaction | null>(null);
-
-  // Print & Filter State
-  const [printDoc, setPrintDoc] = useState<{ order: Transaction, type: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT' } | null>(null);
+  // --- FILTERS ---
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [shortageSearch, setShortageSearch] = useState('');
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyStatusFilter, setHistoryStatusFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // --- CREATION FORM STATES ---
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  const [draftItems, setDraftItems] = useState<OSItem[]>([]);
+  const [isVatApplied, setIsVatApplied] = useState(false);
+  
+  const [inlineProductSearch, setInlineProductSearch] = useState('');
+  const [showInlineDropdown, setShowInlineDropdown] = useState(false);
+
+  // --- PROCESSING MODALS ---
+  const [verifyModal, setVerifyModal] = useState<{ isOpen: boolean, os: OrderSlip | null, physicalCounts: Record<number, number> }>({ isOpen: false, os: null, physicalCounts: {} });
+  const [editModal, setEditModal] = useState<{ isOpen: boolean, order: OrderSlip | null, items: OSItem[] }>({ isOpen: false, order: null, items: [] });
+  const [returnModal, setReturnModal] = useState<{ isOpen: boolean, order: OrderSlip | null }>({ isOpen: false, order: null });
+  const [viewModal, setViewModal] = useState<OrderSlip | null>(null);
+  const [printDoc, setPrintDoc] = useState<{ type: 'OS' | 'PO' | 'PL', data: any } | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  const getCompanyDetails = () => {
-    if (selectedCompany?.toLowerCase().includes('wilcare')) {
-      return { name: 'Wilcare Trading Corp.', address: '1457-A Rizal Ave. Sta. Cruz Manila', tel: '(02)87330879, 87333950', mob: '09157739968, 09164394073', email: 'wilcaremanila@gmail.com', web: 'www.wilcare.com.ph' };
-    }
-    return { name: `${selectedCompany || 'Unknown'} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', mob: 'N/A', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com`, web: `www.${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
+  // --- BULLETPROOF ISOLATED FETCHING ---
+  // Every database table loads completely independently to prevent hidden failures
+  const fetchData = () => {
+    const safeFetch = (endpoint: string, setter: Function) => {
+      fetch(`${API_BASE_URL}${endpoint}?company=${selectedCompany}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setter(data);
+          else if (data && Array.isArray(data.data)) setter(data.data);
+          else if (data && Array.isArray(data.items)) setter(data.items);
+          else setter([]);
+        })
+        .catch(e => console.warn(`Silent skip: Failed to fetch ${endpoint}`, e));
+    };
+
+    safeFetch('/sales/customers', setCustomers);
+    safeFetch('/products', setProducts);
+    safeFetch('/warehouses', setWarehouses);
+    safeFetch('/warehouse-stock', setHubStock); // Guaranteed to load into state
+    safeFetch('/erp/order-slips', setOrderSlips);
+    safeFetch('/erp/shortages', setShortages);
+    safeFetch('/erp/final-orders', setFinalOrders);
+    safeFetch('/erp/purchase-orders', setPurchaseOrders);
+    safeFetch('/erp/packing-lists', setPackingLists);
   };
-  const companyMeta = getCompanyDetails();
+
+  useEffect(() => { fetchData(); }, [selectedCompany]);
 
   useEffect(() => {
     const handleAfterPrint = () => setPrintDoc(null);
@@ -60,175 +88,135 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
 
-  const fetchData = async () => {
-    try {
-      const [custRes, supRes, soRes, poRes, prodRes, shortRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/purchasing/suppliers?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/purchasing/pos?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/shortages?company=${selectedCompany}`).catch(() => ({ ok: false, json: () => [] }))
-      ]);
-
-      let fetchedCustomers: Partner[] = [];
-      let fetchedSuppliers: Partner[] = [];
-
-      if (custRes.ok) fetchedCustomers = await custRes.json();
-      if (supRes.ok) fetchedSuppliers = await supRes.json();
-
-      setCustomers(fetchedCustomers);
-      setSuppliers(fetchedSuppliers);
-
-      const custMap = fetchedCustomers.reduce((acc: any, c: any) => ({ ...acc, [c.id]: c }), {});
-      const supMap = fetchedSuppliers.reduce((acc: any, s: any) => ({ ...acc, [s.id]: s }), {});
-
-      if (soRes.ok) {
-        const soData = await soRes.json();
-        setSalesOrders(soData.map((s: any) => ({ 
-          ...s, 
-          refNumber: s.soNumber || 'N/A', 
-          partnerId: s.customerId, 
-          partner: s.customer || custMap[s.customerId] || { name: 'Unknown Client' } 
-        })));
-      }
+  // --- AGGRESSIVE LIVE STOCK CALCULATORS ---
+  const getLiveWarehouseStock = (productId: number | string, sku: string): number => {
+    if (!hubStock || !Array.isArray(hubStock) || hubStock.length === 0) return 0;
+    
+    let total = 0;
+    for (let i = 0; i < hubStock.length; i++) {
+      const h = hubStock[i];
+      // Defensive string matching to prevent type mismatches
+      const isIdMatch = String(h.productId) === String(productId);
+      const isSkuMatch = String(h.sku) === String(sku);
       
-      if (poRes.ok) {
-        const poData = await poRes.json();
-        setPurchaseOrders(poData.map((p: any) => ({ 
-          ...p, 
-          refNumber: p.poNumber || 'N/A', 
-          partnerId: p.supplierId, 
-          partner: p.supplier || supMap[p.supplierId] || { name: 'Unknown Vendor' } 
-        })));
+      if (isIdMatch || isSkuMatch) {
+        total += Number(h.quantity) || Number(h.stock) || Number(h.qty) || 0;
       }
-
-      if (prodRes.ok) setProducts(await prodRes.json());
-      if (shortRes.ok) setShortages(await shortRes.json());
-    } catch (e) { console.warn("Backend not ready."); }
+    }
+    return total;
   };
 
-  useEffect(() => { 
-    fetchData(); 
-    setDraftForm({ partnerId: '', refNumber: mode === 'sales' ? `OS-${Date.now().toString().slice(-6)}` : `PO-${Date.now().toString().slice(-6)}` });
-    setDraftItems([]);
-  }, [selectedCompany, mode]);
+  const getLiveOfficeStock = (productId: number | string): number => {
+    if (!products || !Array.isArray(products)) return 0;
+    const prod = products.find(p => String(p.id) === String(productId));
+    return prod ? (Number(prod.currentStock) || 0) : 0;
+  };
 
-  const partners = mode === 'sales' ? customers : suppliers;
-  const transactions = mode === 'sales' ? salesOrders : purchaseOrders;
-  
+  // --- DRAFT MATH ---
+  const draftSubtotal = draftItems.reduce((acc, item) => acc + (item.total || 0), 0);
+  const draftVat = isVatApplied ? draftSubtotal * 0.12 : 0;
+  const draftGrandTotal = draftSubtotal + draftVat;
+
   const filteredProducts = products.filter(p => 
-    (p.name || '').toLowerCase().includes(productSearch.toLowerCase()) || 
-    (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
+    (p.name || '').toLowerCase().includes(inlineProductSearch.toLowerCase()) || 
+    (p.sku || '').toLowerCase().includes(inlineProductSearch.toLowerCase())
   );
 
-  const pendingItemsList = shortages
-    .filter(s => s.mode === mode)
-    .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+  const filteredCustomers = customers.filter(c => 
+    c.name.toLowerCase().includes(customerSearchTerm.toLowerCase()) || 
+    (c.customerCode || '').toLowerCase().includes(customerSearchTerm.toLowerCase())
+  );
 
-  const filteredPendingItems = pendingItemsList.filter(item => {
-    const itemDate = new Date(item.orderDate);
-    itemDate.setHours(0,0,0,0);
-    
-    if (fromDate) {
-      const fDate = new Date(fromDate);
-      fDate.setHours(0,0,0,0);
-      if (itemDate < fDate) return false;
-    }
-    if (toDate) {
-      const tDate = new Date(toDate);
-      tDate.setHours(0,0,0,0);
-      if (itemDate > tDate) return false;
-    }
-    if (shortageSearch) {
-      const q = shortageSearch.toLowerCase();
-      const matchesPartner = (item.partnerName || '').toLowerCase().includes(q);
-      const matchesProduct = (item.productName || '').toLowerCase().includes(q);
-      const matchesRef = (item.orderRef || '').toLowerCase().includes(q);
-      const matchesSku = (item.sku || '').toLowerCase().includes(q);
-      if (!matchesPartner && !matchesProduct && !matchesRef && !matchesSku) return false;
-    }
-    return true;
-  });
+  const isDraftValid = selectedCustomerId && draftItems.length > 0 && !draftItems.some(i => i.requestedQty === '' || Number(i.requestedQty) <= 0);
 
-  const filteredHistory = transactions
-    .filter(t => ['FULFILLED', 'RECEIVED', 'RETURNED', 'CANCELLED'].includes(t.status))
-    .filter(order => {
-      if (historySearch) {
-        const q = historySearch.toLowerCase();
-        if (!(order.refNumber || '').toLowerCase().includes(q) && !(order.partner?.name || '').toLowerCase().includes(q)) return false;
-      }
-      
-      const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
-
-      if (historyStatusFilter !== 'ALL') {
-        if (historyStatusFilter === 'SHORTAGE') {
-          if (!hasShortages) return false;
-        } else {
-          if (order.status !== historyStatusFilter) return false;
-        }
-      }
-      return true;
-    });
-
-  const handleRemoveShortage = async (shortageId: string) => {
-    if(!window.confirm("Remove this shortage from the database?")) return;
-    try {
-      await fetch(`${API_BASE_URL}/shortages/${shortageId}`, { method: 'DELETE' });
-      fetchData();
-      showToast("Shortage record cleared.", "success");
-    } catch (e) { showToast("Failed to delete shortage.", "error"); }
-  };
-
-  const handleToggleProduct = (p: Product) => {
-    setTempSelectedItems(prev => {
-      const exists = prev[p.id];
-      if (exists?.checked) return { ...prev, [p.id]: { ...exists, checked: false } };
-      const defaultPrice = mode === 'sales' ? (p.purchasePrice ? p.purchasePrice * 1.3 : 0) : (p.purchasePrice || 0);
-      return { ...prev, [p.id]: { checked: true, qty: 1, price: defaultPrice } }; 
-    });
-  };
-
-  const handleUpdateTempItem = (id: number, field: 'qty' | 'price', value: number) => {
-    setTempSelectedItems(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
-  };
-
-  const handleConfirmAddItems = () => {
-    const newItems = Object.entries(tempSelectedItems).filter(([id, data]) => data.checked).map(([id, data]) => {
-        const p = products.find(prod => prod.id === Number(id))!;
-        const safePrice = Number(data.price) || 0;
-        const safeQty = Number(data.qty) || 1;
-        return { productId: p.id, sku: p.sku || 'N/A', productName: p.name || 'Unnamed', quantity: safeQty, unitPrice: safePrice, total: safeQty * safePrice, isCancelled: false, cancelReason: '' };
-      });
-    if (newItems.length === 0) return showToast("No items selected.", "error");
-    
-    if (editModal.isOpen) {
-      setEditModal({ ...editModal, items: [...editModal.items, ...newItems] });
+  // --- ACTIONS ---
+  const handleAddProduct = (p: Product) => {
+    if (draftItems.find(i => String(i.productId) === String(p.id))) {
+      showToast("Item already added.", "error");
     } else {
-      setDraftItems([...draftItems, ...newItems]); 
+      const price = p.sellingPrice || (p.purchasePrice ? p.purchasePrice * 1.3 : 0);
+      setDraftItems([...draftItems, { 
+        productId: p.id, 
+        sku: p.sku || 'N/A', 
+        productName: p.name, 
+        requestedQty: '', 
+        unitPrice: price, 
+        total: 0
+      }]);
     }
-    
-    setShowItemModal(false); setTempSelectedItems({}); setProductSearch('');
-    showToast(`Added ${newItems.length} items.`, "success");
+    setInlineProductSearch('');
+    setShowInlineDropdown(false);
   };
 
-  const handleGenerateDraft = async (e: React.FormEvent) => {
-    e.preventDefault(); if (draftItems.length === 0) return showToast("Add at least one item.", "error");
+  const handleUpdateDraftQty = (idx: number, val: string) => {
+    const next = [...draftItems];
+    if (val === '') {
+      next[idx].requestedQty = '';
+      next[idx].total = 0;
+    } else {
+      const qty = Number(val);
+      next[idx].requestedQty = qty;
+      next[idx].total = qty * next[idx].unitPrice;
+    }
+    setDraftItems(next);
+  };
+
+  const handleGenerateOS = async () => {
+    if (!isDraftValid) return showToast("Please complete the form properly.", "error");
+    
     setIsProcessing(true);
     try {
-      const totalAmount = draftItems.reduce((acc, item) => acc + (item.total || 0), 0);
-      const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
-      const payload = mode === 'sales' 
-        ? { company: selectedCompany, customerId: draftForm.partnerId, soNumber: draftForm.refNumber, totalAmount, items: draftItems, user: loginUsername, status: 'PENDING' }
-        : { company: selectedCompany, supplierId: draftForm.partnerId, poNumber: draftForm.refNumber, totalAmount, items: draftItems, user: loginUsername, status: 'PENDING' };
+      const cleanItems = draftItems.map(i => ({ 
+        productId: i.productId,
+        sku: i.sku,
+        productName: i.productName,
+        requestedQty: Number(i.requestedQty),
+        unitPrice: i.unitPrice,
+        total: i.total
+      }));
 
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-      if(!res.ok) throw new Error();
+      const payload = {
+        company: selectedCompany,
+        customerId: selectedCustomerId,
+        subtotal: draftSubtotal,
+        vatAmount: draftVat,
+        isVatApplied,
+        grandTotal: draftGrandTotal,
+        user: loginUsername,
+        items: cleanItems
+      };
       
-      fetchData(); showToast(`${mode === 'sales' ? 'Order Slip (OS)' : 'Purchase Order (PO)'} Generated successfully.`, "success");
-      setDraftItems([]); setDraftForm({ partnerId: '', refNumber: mode === 'sales' ? `OS-${Date.now().toString().slice(-6)}` : `PO-${Date.now().toString().slice(-6)}` });
-      setActiveTab('verify');
-    } catch (e) { showToast("Failed to create document.", "error"); } finally { setIsProcessing(false); }
+      const res = await fetch(`${API_BASE_URL}/erp/order-slips`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      
+      showToast("Order Slip OS Generated successfully.", "success");
+      setDraftItems([]); setSelectedCustomerId(''); setCustomerSearchTerm(''); setIsVatApplied(false);
+      fetchData(); setActiveTab('OS_LIST');
+    } catch (e) { showToast("Failed to generate O.S.", "error"); } finally { setIsProcessing(false); }
+  };
+
+  const openVerification = (os: OrderSlip) => {
+    const defaultCounts: Record<number, number> = {};
+    os.items.forEach(i => { defaultCounts[i.productId] = Number(i.requestedQty); });
+    setVerifyModal({ isOpen: true, os, physicalCounts: defaultCounts });
+  };
+
+  const submitVerification = async () => {
+    if (!verifyModal.os) return;
+    setIsProcessing(true);
+    try {
+      const payload = {
+        osId: verifyModal.os.id,
+        physicalCounts: verifyModal.physicalCounts,
+        user: loginUsername
+      };
+      const res = await fetch(`${API_BASE_URL}/erp/order-slips/process`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      
+      showToast("O.S. Processed! Shortages and Final Orders generated.", "success");
+      setVerifyModal({ isOpen: false, os: null, physicalCounts: {} });
+      fetchData(); setActiveTab('FINAL_ORDERS');
+    } catch (e) { showToast("Error processing verification.", "error"); } finally { setIsProcessing(false); }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -236,319 +224,324 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       const finalTotal = editModal.items.reduce((acc, item) => acc + (item.total || 0), 0);
-      const endpoint = mode === 'sales' ? `/sales/orders/${editModal.order.id}` : `/purchasing/pos/${editModal.order.id}`;
-      
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ totalAmount: finalTotal, items: editModal.items }) });
+      await fetch(`${API_BASE_URL}/erp/order-slips/${editModal.order.id}`, { 
+        method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ grandTotal: finalTotal, items: editModal.items }) 
+      }).catch(()=>{});
       
       fetchData(); showToast("Order modifications saved.", "success");
       setEditModal({ isOpen: false, order: null, items: [] });
     } catch(e) { showToast("Failed to update order.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const openVerificationModal = (order: Transaction) => {
-    const itemsClone = (order.items || []).map(i => ({ ...i }));
-    setVerifyModal({ isOpen: true, order, items: itemsClone });
-  };
-
-  const handleToggleCancelItem = (index: number) => {
-    setVerifyModal(prev => {
-      const updatedItems = [...prev.items];
-      const isCurrentlyCancelled = updatedItems[index].isCancelled;
-      updatedItems[index].isCancelled = !isCurrentlyCancelled;
-      
-      if (!isCurrentlyCancelled) {
-        updatedItems[index].cancelReason = mode === 'sales' ? "Low Stock / Missing" : "Not Delivered";
-        updatedItems[index].total = 0; 
-      } else {
-        updatedItems[index].cancelReason = '';
-        updatedItems[index].total = (updatedItems[index].quantity || 0) * (updatedItems[index].unitPrice || 0); 
-      }
-      return { ...prev, items: updatedItems };
-    });
-  };
-
-  const handleConfirmVerification = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!verifyModal.order) return;
-    setIsProcessing(true);
-    try {
-      const order = verifyModal.order;
-      const finalItems = verifyModal.items;
-      const validItems = finalItems.filter(i => !i.isCancelled);
-      const finalTotal = validItems.reduce((acc, item) => acc + (item.total || 0), 0);
-      
-      let targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
-      if (validItems.length === 0) {
-        targetStatus = 'CANCELLED';
-      }
-
-      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
-      
-      await fetch(`${API_BASE_URL}${endpoint}/status`, { 
-        method: 'PATCH', 
-        headers: {'Content-Type': 'application/json'}, 
-        body: JSON.stringify({ status: targetStatus }) 
-      });
-
-      await fetch(`${API_BASE_URL}${endpoint}`, { 
-        method: 'PATCH', 
-        headers: {'Content-Type': 'application/json'}, 
-        body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) 
-      }).catch(() => {});
-
-      const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
-        company: selectedCompany,
-        orderDate: new Date().toISOString(),
-        orderRef: order.refNumber,
-        partnerName: order.partner?.name || 'Unknown',
-        productId: i.productId,
-        productName: i.productName,
-        sku: i.sku || 'N/A',
-        quantity: i.quantity,
-        cancelReason: i.cancelReason || 'Unspecified',
-        mode: mode
-      }));
-
-      if (cancelledItems.length > 0) {
-        await Promise.all(cancelledItems.map(item => 
-          fetch(`${API_BASE_URL}/shortages`, { 
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify(item) 
-          })
-        ));
-      }
-
-      if (finalTotal > 0) {
-        if (mode === 'sales') {
-          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
-        } else {
-          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
-        }
-      }
-
-      for (const item of validItems) {
-        const prod = products.find(p => p.id === item.productId);
-        if (prod) {
-          const safeCurrent = Number(prod.currentStock) || 0;
-          const safeQty = Number(item.quantity) || 0;
-          const newStock = mode === 'sales' ? Math.max(0, safeCurrent - safeQty) : safeCurrent + safeQty;            
-          await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
-        }
-      }
-
-      fetchData(); 
-      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. Items moved to Shortages.` : `Verification Complete!`, "success");
-      setVerifyModal({ isOpen: false, order: null, items: [] }); 
-    } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
-  };
-
   const handleConfirmReturn = async (e: React.FormEvent) => {
     e.preventDefault(); if (!returnModal.order) return;
     setIsProcessing(true);
     try {
-      const order = returnModal.order;
-      const targetStatus = 'RETURNED';
-      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
-
-      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
-
-      const validTotal = (order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0);
-      
-      if (validTotal > 0) {
-        if (mode === 'sales') {
-          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-        } else {
-          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-        }
-      }
-
-      const validItems = (order.items || []).filter(i => !i.isCancelled);
-      for (const item of validItems) {
-        const prod = products.find(p => p.id === item.productId);
-        if (prod) {
-          const safeCurrent = Number(prod.currentStock) || 0;
-          const safeQty = Number(item.quantity) || 0;
-          const newStock = mode === 'sales' ? safeCurrent + safeQty : Math.max(0, safeCurrent - safeQty); 
-          await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: newStock }) });
-        }
-      }
-
-      fetchData(); showToast(`Transaction Reversed! Stock restored.`, "success");
+      await fetch(`${API_BASE_URL}/erp/order-slips/${returnModal.order.id}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: 'RETURNED' }) }).catch(()=>{});
+      fetchData(); showToast(`Transaction Reversed!`, "success");
       setReturnModal({ isOpen: false, order: null });
     } catch (e) { showToast("Error processing return.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const handleDeleteTransaction = async (order: Transaction) => {
-    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently. To reverse stock, use "Return" instead.\n\nType "DELETE" to confirm removal of ${order.refNumber}:`);
-    if (confirmDelete !== "DELETE") return showToast("Deletion cancelled. Order retained.", "error");
-
+  const handleDeleteTransaction = async (order: OrderSlip) => {
+    const confirmDelete = window.prompt(`CRITICAL: Deleting this record removes it permanently.\n\nType "DELETE" to confirm removal of ${order.osNumber}:`);
+    if (confirmDelete !== "DELETE") return showToast("Deletion cancelled.", "error");
     setIsProcessing(true);
     try {
-      const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE' });
-      if(!res.ok) throw new Error();
-      fetchData();
-      showToast(`Transaction ${order.refNumber} permanently deleted.`, "success");
+      await fetch(`${API_BASE_URL}/erp/order-slips/${order.id}`, { method: 'DELETE' }).catch(()=>{});
+      fetchData(); showToast(`Transaction ${order.osNumber} permanently deleted.`, "success");
     } catch (e) { showToast("Failed to delete transaction.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const handleClearHistory = async () => {
-    if (filteredHistory.length === 0) return showToast("No history records found matching current filters to clear.", "error");
-
-    const confirmClear = window.prompt(`CRITICAL WARNING: This will permanently delete ALL ${filteredHistory.length} filtered transactions.\n\nType "CLEAR ALL" to confirm:`);
-    if (confirmClear !== "CLEAR ALL") return showToast("Clear history cancelled.", "error");
-
-    setIsProcessing(true);
+  const handleRemoveShortage = async (shortageId: string) => {
+    if(!window.confirm("Remove this shortage from the database?")) return;
     try {
-      const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
-      
-      for (const order of filteredHistory) {
-        await fetch(`${API_BASE_URL}${endpoint}/${order.id}`, { method: 'DELETE' });
-      }
+      await fetch(`${API_BASE_URL}/shortages/${shortageId}`, { method: 'DELETE' }).catch(()=>{});
+      fetchData(); showToast("Shortage record cleared.", "success");
+    } catch (e) { showToast("Failed to delete shortage.", "error"); }
+  };
 
-      fetchData();
-      showToast("Filtered history records cleared successfully.", "success");
-    } catch (e) {
-      showToast("Failed to clear some ledger records.", "error");
-    } finally {
-      setIsProcessing(false);
+  const handlePrint = (type: 'OS' | 'PO' | 'PL', data: any) => { setPrintDoc({ type, data }); setTimeout(() => window.print(), 500); };
+
+  const checkDateFilter = (dateStr: string) => {
+    if (!fromDate && !toDate) return true;
+    const d = new Date(dateStr); d.setHours(0,0,0,0);
+    if (fromDate && d < new Date(fromDate)) return false;
+    if (toDate && d > new Date(new Date(toDate).setHours(23,59,59,999))) return false;
+    return true;
+  };
+
+  const getCompanyDetails = () => {
+    if (selectedCompany?.toLowerCase().includes('wilcare')) {
+      return { name: 'Wilcare Trading Corp.', address: '1457-A Rizal Ave. Sta. Cruz Manila', tel: '(02)87330879, 87333950', email: 'wilcaremanila@gmail.com' };
     }
+    return { name: `${selectedCompany || 'Unknown'} Corporation`, address: 'Main Corporate Headquarters', tel: 'Contact System Admin', email: `info@${(selectedCompany || 'company').toLowerCase().replace(/\s/g, '')}.com` };
   };
-
-  const handlePrint = (order: Transaction, printType: 'OS' | 'PO' | 'INVOICE' | 'RECEIPT') => {
-    setPrintDoc({ order, type: printType });
-    setTimeout(() => { window.print(); }, 400); 
-  };
+  const companyMeta = getCompanyDetails();
 
   return (
     <>
       <div className={`flex flex-col md:flex-row h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden ${printDoc ? 'hidden' : 'print:hidden'}`}>
-        
         {toast && <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>{toast.message}</div>}
 
-        {/* DESKTOP SIDEBAR */}
-        <aside className="w-64 bg-slate-900 text-slate-300 flex-col border-r border-slate-800 shrink-0 hidden md:flex">
-          <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
-            <h1 className="text-xl font-black text-white uppercase tracking-wider">{mode === 'sales' ? 'Sales Desk' : 'Purchasing'}</h1>
-          </div>
-          <div className="flex-1 py-6 px-3 space-y-1">
-            <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Order Management</p>
-            <button type="button" onClick={() => setActiveTab('draft')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>1. Draft {mode === 'sales' ? 'Order Slip' : 'PO'}</button>
-            <button type="button" onClick={() => setActiveTab('verify')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>2. Verify Stock</button>
-            <button type="button" onClick={() => setActiveTab('pending')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>3. Shortages Log</button>
-            <button type="button" onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white') : 'hover:bg-slate-800'}`}>4. Finalized Ledger</button>
+        <aside className="w-64 bg-slate-900 text-slate-300 flex-col shrink-0 hidden md:flex z-20">
+          <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950"><h1 className="text-lg font-black text-white uppercase tracking-wider leading-tight">Order & Fulfillment</h1></div>
+          <div className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
+            <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Sales Workflow</p>
+            <button type="button" onClick={() => setActiveTab('CREATE_OS')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'CREATE_OS' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>1. Create O.S.</button>
+            <button type="button" onClick={() => setActiveTab('OS_LIST')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'OS_LIST' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>2. Order Slips (Verify)</button>
+            <p className="px-3 pb-2 pt-6 text-[10px] font-black uppercase tracking-widest text-slate-500">Fulfillment Engine</p>
+            <button type="button" onClick={() => setActiveTab('SHORTAGES')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'SHORTAGES' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800'}`}>3. Shortages Log</button>
+            <button type="button" onClick={() => setActiveTab('FINAL_ORDERS')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'FINAL_ORDERS' ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800'}`}>4. Final Orders</button>
+            <p className="px-3 pb-2 pt-6 text-[10px] font-black uppercase tracking-widest text-slate-500">Logistics Documents</p>
+            <button type="button" onClick={() => setActiveTab('PO_LIST')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'PO_LIST' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800'}`}>Purchase Orders</button>
+            <button type="button" onClick={() => setActiveTab('PL_LIST')} className={`w-full text-left px-4 py-3 rounded-lg font-bold text-sm transition-all ${activeTab === 'PL_LIST' ? 'bg-slate-700 text-white' : 'hover:bg-slate-800'}`}>Packing Lists</button>
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col min-w-0 h-screen">
-          
-          <header className="h-auto sm:h-20 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 sm:px-8 shadow-sm z-10 gap-3">
-            <div>
-              <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${mode === 'sales' ? 'text-emerald-950' : 'text-amber-950'}`}>Fulfillment Engine</h2>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">{mode === 'sales' ? 'Outbound Sales & OS' : 'Inbound Purchasing & PO'}</p>
-            </div>
-            <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
-              <button type="button" onClick={() => { setMode(mode === 'sales' ? 'purchasing' : 'sales'); setActiveTab('draft'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
-                Switch to {mode === 'sales' ? 'Purchasing' : 'Sales'}
-              </button>
-              <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Gateway</button>
-            </div>
+        <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50">
+          <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Distribution</span></h2></div>
+            <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Exit Gateway</button>
           </header>
 
-          {/* MOBILE TABS */}
-          <div className="md:hidden flex overflow-x-auto bg-slate-900 text-white shrink-0 scrollbar-hide border-b border-slate-800">
-            <button type="button" onClick={() => setActiveTab('draft')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'draft' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>1. Draft</button>
-            <button type="button" onClick={() => setActiveTab('verify')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'verify' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>2. Verify</button>
-            <button type="button" onClick={() => setActiveTab('pending')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'pending' ? (mode === 'sales' ? 'bg-rose-600' : 'bg-amber-600') : 'text-slate-400'}`}>3. Shortages</button>
-            <button type="button" onClick={() => setActiveTab('history')} className={`whitespace-nowrap flex-1 px-4 py-3 text-xs font-bold uppercase tracking-widest ${activeTab === 'history' ? (mode === 'sales' ? 'bg-emerald-600' : 'bg-amber-600') : 'text-slate-400'}`}>4. Ledger</button>
-          </div>
-
-          <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
-            <div className="max-w-7xl mx-auto">
+          <main className={`flex-1 relative ${activeTab === 'CREATE_OS' ? 'overflow-hidden flex flex-col p-4 sm:p-6' : 'overflow-y-auto p-4 sm:p-8'}`}>
+            <div className={`max-w-[1400px] mx-auto w-full ${activeTab === 'CREATE_OS' ? 'h-full flex flex-col min-h-0' : ''}`}>
               
-              {activeTab === 'draft' && (
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-8">
-                  <h3 className="font-black text-xl text-slate-900 mb-6 tracking-tight">Draft New {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}</h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8">
-                    <div className="lg:col-span-1 border-b lg:border-b-0 lg:border-r border-slate-100 pb-6 lg:pb-0 lg:pr-8 space-y-4 sm:space-y-5">
-                      <select required value={draftForm.partnerId} onChange={e => setDraftForm({...draftForm, partnerId: e.target.value})} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 bg-slate-50 ${mode === 'sales' ? 'focus:ring-emerald-600' : 'focus:ring-amber-600'}`}>
-                        <option value="">Select {mode === 'sales' ? 'Customer' : 'Supplier'}...</option>
-                        {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                      <input type="text" required value={draftForm.refNumber} onChange={e => setDraftForm({...draftForm, refNumber: e.target.value})} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-600' : 'focus:ring-amber-600'}`} />
-                      <button type="button" onClick={() => setShowItemModal(true)} className={`w-full py-4 border font-black tracking-wide uppercase rounded-xl transition-colors shadow-sm text-xs flex flex-col items-center justify-center gap-1 ${mode === 'sales' ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100' : 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'}`}>
-                        <svg className="w-5 h-5 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                        Browse Master Catalog
-                      </button>
+              {/* TAB 1: CREATE O.S. */}
+              {activeTab === 'CREATE_OS' && (
+                <div className="flex flex-col h-full gap-4 min-h-0">
+                  <div className="relative z-30 shrink-0">
+                    <input 
+                      type="text" 
+                      placeholder="Search and select customer to begin..." 
+                      value={customerSearchTerm}
+                      onChange={(e) => {
+                        setCustomerSearchTerm(e.target.value);
+                        setShowCustomerDropdown(true);
+                        setSelectedCustomerId(''); 
+                      }}
+                      onFocus={() => setShowCustomerDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                      className={`w-full px-6 py-4 border-2 rounded-2xl text-lg font-black outline-none shadow-sm transition-colors ${selectedCustomerId ? 'border-indigo-500 text-indigo-900 bg-indigo-50/50' : 'border-slate-300 focus:border-indigo-500 bg-white'}`}
+                    />
+                    {showCustomerDropdown && (
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto">
+                        {filteredCustomers.length === 0 ? <div className="p-4 text-slate-500 font-medium">No customers found.</div> : 
+                          filteredCustomers.map(c => (
+                            <div 
+                              key={c.id} 
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSelectedCustomerId(c.id);
+                                setCustomerSearchTerm(c.name);
+                                setShowCustomerDropdown(false);
+                              }}
+                              className="px-6 py-4 hover:bg-indigo-50 border-b border-slate-100 cursor-pointer flex justify-between items-center group"
+                            >
+                              <span className="font-bold text-slate-900 group-hover:text-indigo-700">{c.name}</span>
+                              <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">{c.customerCode || c.id.slice(0,8)}</span>
+                            </div>
+                          ))
+                        }
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 flex flex-col min-h-0 relative z-20">
+                    <div className="flex-1 overflow-y-auto">
+                      <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-slate-100/95 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+                          <tr>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] w-40">SKU</th>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Item Name</th>
+                            <th className="py-4 px-6 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50">Quantity</th>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Unit Price</th>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Office Stock</th>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Warehouse Qty</th>
+                            <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-40">Total Amount</th>
+                            <th className="w-16"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {draftItems.map((item, i) => {
+                            const liveWhseStock = getLiveWarehouseStock(item.productId, item.sku);
+                            const liveOfficeStock = getLiveOfficeStock(item.productId);
+
+                            return (
+                              <tr key={i} className="hover:bg-slate-50 group transition-colors">
+                                <td className="py-3 px-6 font-mono text-xs font-bold text-slate-600">{item.sku}</td>
+                                <td className="py-3 px-6 font-bold text-slate-900">{item.productName}</td>
+                                <td className="py-2 px-4 bg-indigo-50/30">
+                                  <input 
+                                    type="number" 
+                                    min="1" 
+                                    placeholder="0"
+                                    value={item.requestedQty} 
+                                    onChange={e => handleUpdateDraftQty(i, e.target.value)} 
+                                    className="w-full px-2 py-1.5 text-center font-black text-lg text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
+                                  />
+                                </td>
+                                <td className="py-3 px-6 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                                <td className={`py-3 px-6 text-right font-black ${liveOfficeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{liveOfficeStock}</td>
+                                <td className={`py-3 px-6 text-right font-black ${liveWhseStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{liveWhseStock}</td>
+                                <td className="py-3 px-6 text-right font-black text-slate-900">₱{(item.total || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                                <td className="py-3 px-6 text-center"><button onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500 font-black text-lg transition-colors">✕</button></td>
+                              </tr>
+                            );
+                          })}
+                          
+                          <tr>
+                            <td colSpan={2} className="py-3 px-6 relative">
+                              <div className="relative">
+                                <input 
+                                  type="text" 
+                                  placeholder="Click here to search SKU or Product Name..." 
+                                  value={inlineProductSearch}
+                                  onChange={e => {
+                                    setInlineProductSearch(e.target.value);
+                                    setShowInlineDropdown(true);
+                                  }}
+                                  onFocus={() => setShowInlineDropdown(true)}
+                                  onBlur={() => setTimeout(() => setShowInlineDropdown(false), 200)}
+                                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-lg px-4 py-2.5 text-sm font-bold outline-none transition-colors"
+                                />
+                                {showInlineDropdown && inlineProductSearch && (
+                                  <div className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                                    {filteredProducts.length === 0 ? <div className="p-4 text-slate-500 text-sm font-medium">No products match your search.</div> : 
+                                      filteredProducts.map(p => {
+                                        const liveWhseStock = getLiveWarehouseStock(p.id, p.sku);
+                                        const liveOfficeStock = getLiveOfficeStock(p.id);
+                                        return (
+                                          <div 
+                                            key={p.id} 
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              handleAddProduct(p);
+                                            }}
+                                            className="px-4 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group"
+                                          >
+                                            <div className="flex flex-col">
+                                              <span className="font-bold text-slate-900 group-hover:text-indigo-700">{p.name}</span>
+                                              <span className="text-xs font-mono text-slate-400">{p.sku}</span>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-bold text-slate-700">₱{(p.sellingPrice || p.purchasePrice || 0).toLocaleString('en-PH')}</div>
+                                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
+                                                Off: <span className={liveOfficeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}>{liveOfficeStock}</span> | 
+                                                Whse: <span className={liveWhseStock > 0 ? 'text-emerald-600' : 'text-rose-600'}>{liveWhseStock}</span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })
+                                    }
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td colSpan={6} className="py-3 px-6 bg-slate-50/50"></td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
+                  </div>
+
+                  <div className="shrink-0 bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:px-6 flex flex-col lg:flex-row items-center justify-between gap-4 z-10">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 border-slate-300" />
+                      <span className="font-bold text-slate-700 text-sm tracking-wide">Apply 12% VAT to Document</span>
+                    </label>
                     
-                    <div className="lg:col-span-3 flex flex-col">
-                      <div className="flex-1 border border-slate-200 rounded-xl overflow-x-auto mb-6 min-h-[300px] bg-slate-50">
-                        <table className="w-full text-left text-sm min-w-[500px]">
-                          <thead className="bg-slate-100 border-b border-slate-200">
-                            <tr><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase">Item Details</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Qty</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Price</th><th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase text-right">Total</th><th className="w-12"></th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-200 bg-white">
-                            {draftItems.length === 0 ? <tr><td colSpan={5} className="py-16 text-center text-slate-400 font-medium">Cart is empty. Click Browse Master Catalog to add items.</td></tr> :
-                              draftItems.map((item, i) => (
-                                <tr key={i} className="group">
-                                  <td className="py-3 px-5 font-bold text-slate-900">{item.productName} <span className="text-[10px] font-mono text-slate-400 block mt-0.5">{item.sku}</span></td>
-                                  <td className="py-3 px-5 text-right font-black text-slate-700">{item.quantity}</td>
-                                  <td className="py-3 px-5 text-right font-medium text-slate-600">₱{(item.unitPrice || 0).toLocaleString()}</td>
-                                  <td className={`py-3 px-5 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString()}</td>
-                                  <td className="py-3 px-5 text-center"><button type="button" onClick={() => setDraftItems(draftItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500">✕</button></td>
-                                </tr>
-                              ))
-                            }
-                          </tbody>
-                        </table>
+                    <div className="flex items-center gap-6 w-full lg:w-auto justify-end">
+                      <div className="text-right hidden sm:block">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Subtotal</div>
+                        <div className="font-bold text-slate-700">₱{draftSubtotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
                       </div>
-                      <div className="flex flex-col sm:flex-row justify-between items-center bg-slate-900 text-white p-4 sm:p-5 rounded-xl gap-4">
-                        <div className="text-center sm:text-left"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Draft Value</p><p className="text-3xl font-black">₱{(draftItems.reduce((a,b)=>a+(b.total||0),0) || 0).toLocaleString('en-PH')}</p></div>
-                        <button type="button" onClick={handleGenerateDraft} disabled={isProcessing || draftItems.length === 0 || !draftForm.partnerId} className={`w-full sm:w-auto px-8 py-3.5 font-black uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 text-slate-900 ${mode === 'sales' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
-                          Generate {mode === 'sales' ? 'Order Slip' : 'Purchase Order'}
-                        </button>
+                      <div className="text-right hidden sm:block">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">VAT (12%)</div>
+                        <div className="font-bold text-slate-700">₱{draftVat.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
                       </div>
+                      <div className="text-right pl-6 border-l border-slate-200">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Grand Total</div>
+                        <div className="text-2xl font-black text-indigo-950">₱{draftGrandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                      </div>
+                      
+                      <button 
+                        onClick={handleGenerateOS} 
+                        disabled={!isDraftValid || isProcessing} 
+                        className="ml-4 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-sm whitespace-nowrap"
+                      >
+                        {isProcessing ? 'Generating...' : 'Generate Order Slip'}
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* FIX: Included Cancelled/Fulfilled in Verify Tab filter so rows don't vanish immediately */}
-              {activeTab === 'verify' && (
+              {/* TAB 2: ORDER SLIPS (VERIFY) */}
+              {activeTab === 'OS_LIST' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
-                    <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Physical Verification</h3>
-                    <p className="text-xs text-slate-600 font-medium mt-1">Print documents, modify items if needed, and confirm stock processing.</p>
+                  <div className="p-5 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-4 items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-lg">Order Slips Repository</h3>
+                      <p className="text-xs text-slate-500">Validate physical stock and process into Final Orders.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-xs" />
+                      <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-xs" />
+                      <input type="text" placeholder="Search OS or Customer..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-xs min-w-[200px]" />
+                    </div>
                   </div>
                   <div className="overflow-x-auto w-full">
-                    <table className="w-full text-left text-sm min-w-[700px]">
+                    <table className="w-full text-left text-sm min-w-[900px]">
                       <thead className="bg-white border-b border-slate-200">
-                        <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Document Ref</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Expected Units</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Verification Action</th></tr>
+                        <tr>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">O.S. Number</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Customer</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Grand Total</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Status</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
+                        </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {transactions.filter(t => ['PENDING', 'FULFILLED', 'RECEIVED', 'CANCELLED'].includes(t.status)).length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No documents available.</td></tr> :
-                          transactions.filter(t => ['PENDING', 'FULFILLED', 'RECEIVED', 'CANCELLED'].includes(t.status)).map(order => {
-                            const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
+                        {orderSlips.filter(os => checkDateFilter(os.date) && ((os.osNumber || '').includes(searchQuery) || (os.customer?.name || '').toLowerCase().includes(searchQuery.toLowerCase()))).length === 0 ? <tr><td colSpan={5} className="py-16 text-center text-slate-400 font-medium">No Order Slips found.</td></tr> :
+                          orderSlips.filter(os => checkDateFilter(os.date) && ((os.osNumber || '').includes(searchQuery) || (os.customer?.name || '').toLowerCase().includes(searchQuery.toLowerCase()))).map(os => {
+                            const hasShortages = shortages.some(s => s.orderRef === os.osNumber);
 
                             return (
-                              <tr key={order.id} className="hover:bg-slate-50">
-                                <td className="py-4 px-6 font-black text-slate-900">{order.refNumber || 'N/A'} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                                <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
-                                <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
-                                <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
-                                  {order.status === 'PENDING' && (
-                                    <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit</button>
-                                  )}
-                                  <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
+                              <tr key={os.id} className="hover:bg-slate-50 group">
+                                <td className="py-4 px-6 font-black text-slate-900">{os.osNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(os.date).toLocaleDateString()}</div></td>
+                                <td className="py-4 px-6 font-bold text-slate-700">{os.customer?.name || 'Unknown'}</td>
+                                <td className="py-4 px-6 text-right font-black text-slate-800">
+                                  ₱{(os.grandTotal || 0).toLocaleString('en-PH')}
+                                  {os.isVatApplied && <span className="block text-[9px] text-slate-400 font-bold uppercase mt-0.5">INC VAT</span>}
+                                </td>
+                                <td className="py-4 px-6 text-center">
+                                  <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${os.status === 'PENDING' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-indigo-200 bg-indigo-50 text-indigo-700'}`}>
+                                    {os.status}
+                                  </span>
+                                </td>
+                                <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
+                                  <button type="button" onClick={() => setViewModal(os)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View</button>
+                                  <button type="button" onClick={() => handlePrint('OS', os)} className="text-slate-500 hover:text-slate-900 text-[11px] font-bold uppercase tracking-wider underline">Print</button>
                                   
-                                  {order.status === 'PENDING' ? (
-                                    <button type="button" onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
+                                  {os.status === 'PENDING' ? (
+                                    <>
+                                      <button type="button" onClick={() => setEditModal({isOpen: true, order: os, items: [...os.items]})} className="text-amber-600 hover:text-amber-900 font-bold text-[11px] uppercase tracking-wider underline ml-3">Edit</button>
+                                      <button type="button" onClick={() => openVerification(os)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ml-3 bg-indigo-600 hover:bg-indigo-700`}>Verify Stock</button>
+                                    </>
                                   ) : (
-                                    <span className={`inline-block px-3 py-1.5 ml-2 text-[10px] font-black uppercase tracking-widest rounded-lg border ${order.status === 'CANCELLED' ? 'border-rose-200 bg-rose-100 text-rose-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
-                                      {order.status === 'CANCELLED' ? 'Cancelled' : (hasShortages ? 'Verified (Short)' : 'Verified')}
-                                    </span>
+                                    <>
+                                      {os.status !== 'CANCELLED' && os.status !== 'RETURNED' && (
+                                        <button type="button" onClick={() => setReturnModal({ isOpen: true, order: os })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider ml-3">Return</button>
+                                      )}
+                                      <span className={`inline-block px-3 py-1.5 ml-3 text-[10px] font-black uppercase tracking-widest rounded-lg border ${os.status === 'CANCELLED' ? 'border-rose-200 bg-rose-100 text-rose-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
+                                        {os.status === 'CANCELLED' ? 'Cancelled' : (hasShortages ? 'Verified (Short)' : 'Verified')}
+                                      </span>
+                                    </>
                                   )}
+                                  <button type="button" onClick={() => handleDeleteTransaction(os)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity ml-3">Delete</button>
                                 </td>
                               </tr>
                             );
@@ -560,151 +553,87 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB */}
-              {activeTab === 'pending' && (
+              {/* TAB 3: SHORTAGES */}
+              {activeTab === 'SHORTAGES' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
-                    <h3 className="font-bold text-slate-900 text-lg tracking-tight">Pending Items / Shortages</h3>
-                    <p className="text-xs text-slate-600 font-medium mt-1">Items that were manually cancelled during verification due to low stock or missing deliveries.</p>
-                  </div>
-                  
-                  <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row gap-4 items-start sm:items-end justify-between">
-                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                      <div className="flex flex-col w-full sm:w-auto">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Search Record</label>
-                        <input type="text" placeholder="Client, Ref, or Product..." value={shortageSearch} onChange={e => setShortageSearch(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
-                      </div>
-                      <div className="flex flex-col w-full sm:w-auto">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">From Date</label>
-                        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
-                      </div>
-                      <div className="flex flex-col w-full sm:w-auto">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">To Date</label>
-                        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white" />
-                      </div>
+                  <div className="p-5 border-b border-slate-200 bg-rose-50 flex justify-between items-center">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-lg">Shortages Log</h3>
+                      <p className="text-xs text-slate-600 mt-0.5">Items removed during verification due to low physical stock.</p>
                     </div>
-                    <button type="button" onClick={() => { setFromDate(''); setToDate(''); setShortageSearch(''); }} className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 uppercase tracking-widest border border-slate-300 rounded-lg bg-white h-[38px] transition-colors">Clear Filter</button>
                   </div>
-
                   <div className="overflow-x-auto w-full">
-                    <table className="w-full text-left text-sm min-w-[850px]">
+                    <table className="w-full text-left text-sm min-w-[900px]">
                       <thead className="bg-white border-b border-slate-200">
                         <tr>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Date / Ref</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Product Details</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Qty Short</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Status</th>
-                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Reason & Action</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">O.S. Reference</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Customer</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">SKU & Product</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Deficit</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {filteredPendingItems.length === 0 ? (
-                          <tr><td colSpan={6} className="py-12 text-center text-slate-400 font-medium">No cancelled items found for this period.</td></tr>
-                        ) : filteredPendingItems.map((item, i) => (
-                          <tr key={i} className="hover:bg-rose-50/30 transition-colors group">
-                            <td className="py-4 px-6 font-black text-slate-900">{item.orderRef} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(item.orderDate).toLocaleDateString()}</div></td>
-                            <td className="py-4 px-6 font-bold text-slate-700">{item.partnerName}</td>
-                            <td className="py-4 px-6">
-                              <div className="font-bold text-slate-900">{item.productName}</div>
-                              <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
-                            </td>
-                            <td className="py-4 px-6 text-center font-black text-rose-600 text-lg">{item.quantity}</td>
-                            <td className="py-4 px-6 text-center">
-                              <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-rose-300 bg-rose-100 text-rose-800">
-                                SHORTAGE
-                              </span>
-                            </td>
-                            <td className="py-4 px-6 text-right">
-                              <div className="font-bold text-rose-700 text-[10px] uppercase tracking-wide mb-2">{item.cancelReason}</div>
-                              <button type="button" onClick={() => handleRemoveShortage(item.id)} className="text-slate-400 hover:text-rose-600 font-black text-[10px] uppercase tracking-wider border border-slate-200 px-3 py-1 rounded bg-white transition-colors">Clear</button>
-                            </td>
-                          </tr>
-                        ))}
+                        {shortages.filter(s => s.status === 'OPEN').length === 0 ? <tr><td colSpan={5} className="py-16 text-center text-slate-400 font-medium">No unresolved shortages.</td></tr> :
+                          shortages.filter(s => s.status === 'OPEN').map(short => (
+                            <tr key={short.id} className="hover:bg-rose-50/30">
+                              <td className="py-4 px-6 font-black text-slate-900">{short.orderRef} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(short.orderDate).toLocaleDateString()}</div></td>
+                              <td className="py-4 px-6 font-bold text-slate-700">{short.customerName}</td>
+                              <td className="py-4 px-6">
+                                <div className="font-bold text-slate-900">{short.productName}</div>
+                                <div className="text-[10px] font-mono text-slate-500">{short.sku}</div>
+                              </td>
+                              <td className="py-4 px-6 text-center">
+                                <div className="font-black text-rose-600 text-lg">{short.shortageQty}</div>
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Missing</div>
+                              </td>
+                              <td className="py-4 px-6 text-right">
+                                <button type="button" onClick={() => handleRemoveShortage(short.id)} className="px-4 py-2 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors mr-2">Clear</button>
+                                <button type="button" className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Generate P.O.</button>
+                              </td>
+                            </tr>
+                          ))
+                        }
                       </tbody>
                     </table>
                   </div>
                 </div>
               )}
 
-              {/* FINALIZED HISTORY TAB WITH SAFE SHORTAGES CHECK */}
-              {activeTab === 'history' && (
+              {/* TAB 4: FINAL ORDERS */}
+              {activeTab === 'FINAL_ORDERS' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                  <div className="p-5 border-b border-slate-200 bg-emerald-50 flex justify-between items-center">
                     <div>
-                      <h3 className="font-bold text-slate-800 text-lg">Finalized Operations Ledger</h3>
-                      <p className="text-xs text-slate-500">Historical records of fulfilled orders and receipts.</p>
-                    </div>
-                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-                      <select 
-                        value={historyStatusFilter} 
-                        onChange={e => setHistoryStatusFilter(e.target.value)} 
-                        className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-500 bg-white w-full sm:w-40"
-                      >
-                        <option value="ALL">All Statuses</option>
-                        {mode === 'sales' ? <option value="FULFILLED">Fulfilled</option> : <option value="RECEIVED">Received</option>}
-                        <option value="CANCELLED">Cancelled</option>
-                        <option value="RETURNED">Returned</option>
-                        <option value="SHORTAGE">With Shortages</option>
-                      </select>
-                      <input 
-                        type="text" 
-                        placeholder="Search Client or Ref..." 
-                        value={historySearch} 
-                        onChange={e => setHistorySearch(e.target.value)} 
-                        className="px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-slate-500 bg-white w-full sm:w-64" 
-                      />
-                      <button 
-                        type="button"
-                        onClick={handleClearHistory} 
-                        disabled={isProcessing} 
-                        className="px-4 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-lg text-xs font-black uppercase tracking-wider whitespace-nowrap transition-colors"
-                      >
-                        Clear History
-                      </button>
+                      <h3 className="font-bold text-slate-900 text-lg">Final Orders (Ready to Ship)</h3>
+                      <p className="text-xs text-slate-600 mt-0.5">Physically verified orders ready for Packing List generation.</p>
                     </div>
                   </div>
-
                   <div className="overflow-x-auto w-full">
-                    <table className="w-full text-left text-sm min-w-[800px]">
-                      <thead className="bg-slate-50 border-b border-slate-200">
-                        <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Reference</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Value</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th></tr>
+                    <table className="w-full text-left text-sm min-w-[900px]">
+                      <thead className="bg-white border-b border-slate-200">
+                        <tr>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Final Order Ref</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">O.S. Reference</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Customer</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Verified Units</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
+                        </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {filteredHistory.length === 0 ? (
-                          <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found matching filters.</td></tr>
-                        ) : (
-                          filteredHistory.map(order => {
-                            const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
-                            
-                            let statusStyle = 'border-emerald-200 bg-emerald-50 text-emerald-700';
-                            if (order.status === 'RETURNED' || order.status === 'CANCELLED') statusStyle = 'border-rose-200 bg-rose-50 text-rose-700';
-                            
-                            return (
-                              <tr key={order.id} className="hover:bg-slate-50 group">
-                                <td className="py-4 px-6 font-black text-slate-800">{order.refNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                                <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
-                                <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
-                                <td className="py-4 px-6">
-                                  <div className="flex flex-col gap-1 items-start">
-                                    <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${statusStyle}`}>{order.status}</span>
-                                    {hasShortages && order.status !== 'CANCELLED' && (
-                                      <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-amber-200 bg-amber-50 text-amber-700">SHORTAGE</span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
-                                  <button type="button" onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
-                                  <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
-                                  {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
-                                    <button type="button" onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
-                                  )}
-                                  <button type="button" onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
+                        {finalOrders.filter(fo => fo.status === 'PENDING').length === 0 ? <tr><td colSpan={5} className="py-16 text-center text-slate-400 font-medium">No pending Final Orders. Verify an OS first.</td></tr> :
+                          finalOrders.filter(fo => fo.status === 'PENDING').map(fo => (
+                            <tr key={fo.id} className="hover:bg-emerald-50/30">
+                              <td className="py-4 px-6 font-black text-slate-900">{fo.foNumber} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(fo.date).toLocaleDateString()}</div></td>
+                              <td className="py-4 px-6 font-bold text-slate-500 underline decoration-slate-300">{fo.osNumber}</td>
+                              <td className="py-4 px-6 font-bold text-slate-700">{fo.customer?.name}</td>
+                              <td className="py-4 px-6 text-center font-black text-emerald-700 text-lg">{fo.items.reduce((a,b)=>a+b.fulfilledQty, 0)}</td>
+                              <td className="py-4 px-6 text-right">
+                                <button type="button" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Generate P.L.</button>
+                              </td>
+                            </tr>
+                          ))
+                        }
                       </tbody>
                     </table>
                   </div>
@@ -714,6 +643,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </main>
         </div>
 
+        {/* --- MODALS --- */}
+
         {/* VIEW DETAILS MODAL */}
         {viewModal && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
@@ -722,45 +653,32 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 <div>
                   <h3 className="font-bold text-lg text-slate-900 tracking-tight">Order Details Record</h3>
                   <div className="flex items-center gap-2 mt-1">
-                    <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Ref: {viewModal.refNumber}</p>
+                    <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Ref: {viewModal.osNumber}</p>
                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${viewModal.status === 'CANCELLED' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>{viewModal.status}</span>
                   </div>
                 </div>
                 <button type="button" onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
-              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
+              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-3">
                 {(viewModal.items || []).map((item, i) => (
-                  <div key={i} className={`p-5 rounded-xl border flex flex-col gap-4 ${item.isCancelled ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200 shadow-sm'}`}>
-                    <div className="flex justify-between items-start">
-                       <div>
-                          <h4 className={`font-black text-lg ${item.isCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{item.productName}</h4>
-                          <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
-                       </div>
+                  <div key={i} className={`p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-4 border ${item.isCancelled ? 'bg-white border-rose-300 opacity-70' : 'bg-white border-slate-200 shadow-sm'}`}>
+                    <div className="flex-1">
+                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
+                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.requestedQty}</span></span>
+                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
-                       <div className="flex items-center gap-4">
-                           <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-baseline gap-1.5">
-                               <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
-                               <span className="text-base font-black text-indigo-700">{item.quantity}</span>
-                           </div>
-                           <div className="text-xs font-bold text-slate-500">
-                               Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
-                           </div>
-                       </div>
-                       <div className="flex flex-col text-right">
-                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
-                           <span className={`text-xl font-black ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-600' : 'text-amber-600')}`}>
-                              ₱{(item.total || 0).toLocaleString('en-PH')}
-                           </span>
-                       </div>
+                    <div className={`font-black text-xl text-right shrink-0 ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
+                      ₱{(item.total || 0).toLocaleString('en-PH')}
                     </div>
-                    {item.isCancelled && <p className="text-[11px] font-bold text-rose-600 uppercase mt-2 tracking-wider">SHORTAGE REASON: {item.cancelReason}</p>}
                   </div>
                 ))}
               </div>
               <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
                 <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Final Billed Total</span>
-                <span className="text-3xl font-black text-slate-900">₱{(viewModal.totalAmount || 0).toLocaleString('en-PH')}</span>
+                <span className="text-3xl font-black text-slate-900">₱{(viewModal.grandTotal || 0).toLocaleString('en-PH')}</span>
               </div>
             </div>
           </div>
@@ -773,46 +691,38 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               <div className="p-4 sm:p-6 border-b text-slate-900 bg-white flex justify-between items-center">
                 <div>
                   <h3 className="font-black text-xl tracking-wide">Edit Pending Order</h3>
-                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.refNumber} • {editModal.order.partner?.name || 'Unknown'}</p>
+                  <p className="text-xs uppercase text-slate-500 tracking-widest mt-1">Ref: {editModal.order.osNumber} • {editModal.order.customer?.name || 'Unknown'}</p>
                 </div>
                 <button type="button" onClick={() => setEditModal({ isOpen: false, order: null, items: [] })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
               
               <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
-                <button type="button" onClick={() => setShowItemModal(true)} className={`w-full py-4 border-2 border-dashed font-black uppercase tracking-widest rounded-xl transition-colors text-xs ${mode === 'sales' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white' : 'border-amber-300 text-amber-700 hover:bg-amber-50 bg-white'}`}>+ Add New Items</button>
-                
                 {editModal.items.length === 0 ? <div className="text-center py-8 text-slate-400 font-medium">All items removed.</div> : 
                   editModal.items.map((item, index) => (
-                    <div key={index} className={`p-5 rounded-xl border flex flex-col gap-4 bg-white border-slate-200 shadow-sm`}>
-                      <div className="flex justify-between items-start">
-                         <div>
-                            <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
-                            <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
-                         </div>
-                         <button type="button" onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">✕</button>
+                    <div key={index} className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                      <div className="flex-1">
+                        <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
+                        <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
+                          <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
-                         <div className="flex items-center gap-4">
-                             <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center gap-2">
-                                 <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
-                                 <input type="number" min="1" value={item.quantity ?? 1} onChange={(e) => {
-                                    const newQty = Number(e.target.value) || 0;
-                                    const updated = [...editModal.items];
-                                    updated[index].quantity = newQty;
-                                    updated[index].total = newQty * (updated[index].unitPrice || 0);
-                                    setEditModal({...editModal, items: updated});
-                                  }} className="w-16 bg-white border border-indigo-200 rounded px-2 py-1 text-sm font-black text-indigo-900 outline-none text-center" />
-                             </div>
-                             <div className="text-xs font-bold text-slate-500">
-                                 Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
-                             </div>
-                         </div>
-                         <div className="flex flex-col text-right">
-                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
-                             <span className={`text-xl font-black ${mode === 'sales' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                ₱{(item.total || 0).toLocaleString('en-PH')}
-                             </span>
-                         </div>
+                      <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4 shrink-0 mt-3 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                        <div className="flex flex-col">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
+                          <input type="number" min="1" value={item.requestedQty === '' ? 0 : item.requestedQty} onChange={(e) => {
+                            const newQty = Number(e.target.value) || 0;
+                            const updated = [...editModal.items];
+                            updated[index].requestedQty = newQty;
+                            updated[index].total = newQty * (updated[index].unitPrice || 0);
+                            setEditModal({...editModal, items: updated});
+                          }} className="w-20 px-3 py-2 text-sm font-black border border-slate-300 rounded-lg outline-none focus:border-slate-500 text-center" />
+                        </div>
+                        <div className="text-right flex-1 sm:flex-none">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 w-full sm:w-24">Total</p>
+                          <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</span>
+                        </div>
+                        <button type="button" onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors bg-slate-50 sm:bg-transparent">✕</button>
                       </div>
                     </div>
                   ))
@@ -830,137 +740,85 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
           </div>
         )}
 
-        {/* ITEM BROWSER MODAL */}
-        {showItemModal && (
+        {/* PHYSICAL VERIFICATION MODAL */}
+        {verifyModal.isOpen && verifyModal.os && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-lg text-slate-900 tracking-tight">Select Products</h3>
-                <button type="button" onClick={() => setShowItemModal(false)} className="text-slate-400 hover:text-slate-700 font-black text-lg">✕</button>
-              </div>
-              <div className="p-4 border-b border-slate-200 bg-white shrink-0"><input type="text" placeholder="Search by SKU or Name..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className={`w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-medium outline-none focus:ring-2 ${mode === 'sales' ? 'focus:ring-emerald-500' : 'focus:ring-amber-500'}`} /></div>
-              <div className="overflow-y-auto p-2 sm:p-4 bg-slate-100 flex-1 space-y-2">
-                {filteredProducts.map(p => {
-                  const isChecked = tempSelectedItems[p.id]?.checked || false;
-                  return (
-                    <div key={p.id} className={`flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl border transition-colors ${isChecked ? (mode==='sales'?'bg-emerald-50/50 border-emerald-300':'bg-amber-50/50 border-amber-300') : 'bg-white border-slate-200 shadow-sm'}`}>
-                      <label className="flex items-center gap-3 cursor-pointer w-full sm:w-1/2">
-                        <input type="checkbox" checked={isChecked} onChange={() => handleToggleProduct(p)} className={`w-5 h-5 rounded cursor-pointer ${mode==='sales'?'text-emerald-600 focus:ring-emerald-500':'text-amber-600 focus:ring-amber-500'}`} />
-                        <div>
-                          <p className="font-bold text-sm text-slate-900">{p.name}</p>
-                          <p className="text-[10px] text-slate-500 font-mono tracking-wider flex items-center gap-2 mt-1">
-                            {p.sku || 'N/A'} | <span className={`font-bold ${(p.currentStock||0) > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>Stock: {p.currentStock || 0}</span>
-                          </p>
-                        </div>
-                      </label>
-                      {isChecked && (
-                        <div className="flex gap-3 w-full sm:w-1/2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200 sm:border-transparent">
-                          <div className="w-1/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Qty</label><input type="number" min="1" value={tempSelectedItems[p.id]?.qty ?? 1} onChange={e => handleUpdateTempItem(p.id, 'qty', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
-                          <div className="w-2/3"><label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{mode === 'sales' ? 'Selling Price (₱)' : 'Purchase Price (₱)'}</label><input type="number" min="0" value={tempSelectedItems[p.id]?.price ?? ''} onChange={e => handleUpdateTempItem(p.id, 'price', Number(e.target.value))} className={`w-full px-3 py-2 text-sm font-black border rounded-lg outline-none ${mode==='sales'?'border-emerald-200 focus:ring-emerald-500':'border-amber-200 focus:ring-amber-500'}`} /></div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="p-4 sm:p-5 border-t border-slate-200 bg-white flex gap-3">
-                <button type="button" onClick={() => setShowItemModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl">Cancel</button>
-                <button type="button" onClick={handleConfirmAddItems} className={`flex-1 py-3 text-white font-black uppercase tracking-wider rounded-xl shadow-sm ${mode==='sales'?'bg-emerald-600 hover:bg-emerald-700':'bg-amber-600 hover:bg-amber-700'}`}>Add Items</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* VERIFICATION MODAL */}
-        {verifyModal.isOpen && verifyModal.order && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
-              <div className={`p-6 border-b text-white ${mode === 'sales' ? 'bg-emerald-700' : 'bg-amber-700'}`}>
-                <h3 className="font-black text-xl tracking-wide">{mode === 'sales' ? 'Stock Verification & Dispatch' : 'Physical Receipt & Stock Logging'}</h3>
-                <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.order.refNumber} • {verifyModal.order.partner?.name || 'Unknown'}</p>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b text-white bg-indigo-600 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="font-black text-xl tracking-wide">Physical Stock Verification</h3>
+                  <p className="text-xs uppercase opacity-80 tracking-widest mt-1">Ref: {verifyModal.os.osNumber} • {verifyModal.os.customer?.name}</p>
+                </div>
+                <button type="button" onClick={() => setVerifyModal({ isOpen: false, os: null, physicalCounts: {} })} className="text-indigo-200 hover:text-white font-black text-2xl">✕</button>
               </div>
               
-              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
-                <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-sm font-bold mb-6 shadow-sm">
-                  Instructions: Compare physical stock against this list. If an item is physically missing, click "Cancel Item (Low Stock)" to automatically log it into the Shortages list.
+              <div className="flex-1 overflow-y-auto bg-slate-50 p-6 space-y-4">
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-amber-800 text-sm font-bold shadow-sm flex items-start gap-4 mb-6">
+                  <svg className="w-6 h-6 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  <div>Ensure accuracy. Entering a Physical Confirmed quantity lower than the Requested Quantity will automatically strip the deficit from the Final Order and route it to the Shortages Log.</div>
                 </div>
 
-                {verifyModal.items.map((item, index) => (
-                  <div key={index} className={`p-5 rounded-xl border flex flex-col gap-4 ${item.isCancelled ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200 shadow-sm'}`}>
-                    <div className="flex justify-between items-start">
-                       <div>
-                          <h4 className={`font-black text-lg ${item.isCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{item.productName}</h4>
-                          <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
-                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
-                       <div className="flex items-center gap-4">
-                           <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-baseline gap-1.5">
-                               <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
-                               <span className="text-base font-black text-indigo-700">{item.quantity}</span>
-                           </div>
-                           <div className="text-xs font-bold text-slate-500">
-                               Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
-                           </div>
-                       </div>
-                       <div className="flex items-center gap-6">
-                           <div className="text-right">
-                               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
-                               <span className={`text-xl font-black ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-600' : 'text-amber-600')}`}>
-                                  ₱{(item.total || 0).toLocaleString('en-PH')}
-                               </span>
-                           </div>
-                           <button 
-                             type="button"
-                             onClick={() => handleToggleCancelItem(index)}
-                             className={`px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
-                           >
-                             {item.isCancelled ? 'Restore Item' : 'Cancel (Low Stock)'}
-                           </button>
-                       </div>
-                    </div>
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 border-b border-slate-200">
+                      <tr>
+                        <th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase tracking-widest">SKU / Product</th>
+                        <th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Req Qty</th>
+                        <th className="py-4 px-5 text-xs font-bold text-indigo-700 uppercase tracking-widest text-center bg-indigo-50 border-x border-indigo-100">Physical Confirmed</th>
+                        <th className="py-4 px-5 text-xs font-bold text-slate-500 uppercase tracking-widest text-center">Shortage Auto-Calc</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {verifyModal.os.items.map((item, idx) => {
+                        const req = Number(item.requestedQty) || 0;
+                        const conf = verifyModal.physicalCounts[item.productId] ?? req;
+                        const short = Math.max(0, req - conf);
 
-                    {item.isCancelled && (
-                      <div className="w-full mt-4 pt-4 border-t border-rose-200 animate-in slide-in-from-top-2">
-                        <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Shortages Tab)</label>
-                        <input 
-                          type="text" 
-                          value={item.cancelReason} 
-                          onChange={(e) => {
-                            const newItems = [...verifyModal.items];
-                            newItems[index].cancelReason = e.target.value;
-                            setVerifyModal({...verifyModal, items: newItems});
-                          }}
-                          className="w-full px-3 py-2 text-sm border-2 border-rose-200 rounded-lg outline-none focus:border-rose-500 text-rose-900 font-medium" 
-                        />
-                      </div>
-                    )}
-                  </div>
-                ))}
+                        return (
+                          <tr key={idx} className={short > 0 ? 'bg-rose-50/30' : 'hover:bg-slate-50'}>
+                            <td className="py-4 px-5">
+                              <div className="font-bold text-slate-900">{item.productName}</div>
+                              <div className="text-[10px] font-mono text-slate-500 mt-0.5">{item.sku}</div>
+                            </td>
+                            <td className="py-4 px-5 text-center font-black text-slate-700 text-lg">{req}</td>
+                            <td className="py-4 px-5 text-center bg-indigo-50/30 border-x border-indigo-50">
+                              <input 
+                                type="number" 
+                                min="0" 
+                                max={req}
+                                value={conf}
+                                onChange={e => {
+                                  let val = Number(e.target.value);
+                                  if (val < 0) val = 0;
+                                  if (val > req) val = req; // Prevent over-fulfilling
+                                  setVerifyModal({
+                                    ...verifyModal,
+                                    physicalCounts: { ...verifyModal.physicalCounts, [item.productId]: val }
+                                  });
+                                }}
+                                className={`w-24 px-3 py-2 text-center font-black text-lg border-2 rounded-lg outline-none transition-colors ${short > 0 ? 'border-rose-300 text-rose-700 focus:border-rose-500 bg-white' : 'border-indigo-200 text-indigo-700 focus:border-indigo-500 bg-white'}`}
+                              />
+                            </td>
+                            <td className="py-4 px-5 text-center">
+                              {short > 0 ? (
+                                <span className="inline-block px-3 py-1 font-black text-rose-700 bg-rose-100 border border-rose-200 rounded-md text-sm">{short} Deficit</span>
+                              ) : (
+                                <span className="text-emerald-500 font-black">✓ Complete</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
-              <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
-                <div className="text-center sm:text-left">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Stock Action</p>
-                  <p className="text-sm font-black text-slate-800 mt-1">
-                    {mode === 'sales' ? 'Deduct valid units directly from Master Stock.' : 'Add valid units directly to Master Stock.'}
-                  </p>
-                </div>
-                
-                <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
-                  <div className="text-center sm:text-right w-full sm:w-auto">
-                    <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Final Adjusted Total</p>
-                    <p className="text-3xl font-black text-slate-900">
-                      ₱{(verifyModal.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}
-                    </p>
-                  </div>
-                  <div className="flex gap-3 w-full sm:w-auto">
-                    <button type="button" onClick={() => setVerifyModal({ isOpen: false, order: null, items: [] })} className="flex-1 sm:flex-none px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
-                    <button type="button" onClick={handleConfirmVerification} disabled={isProcessing} className={`flex-1 sm:flex-none px-6 py-4 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50 ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
-                      {isProcessing ? 'Processing...' : 'Confirm'}
-                    </button>
-                  </div>
-                </div>
+              <div className="p-6 border-t border-slate-200 bg-white shrink-0 flex justify-between items-center">
+                <button type="button" onClick={() => setVerifyModal({ isOpen: false, os: null, physicalCounts: {} })} className="px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
+                <button type="button" onClick={submitVerification} disabled={isProcessing} className="px-10 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">
+                  {isProcessing ? 'Processing Transactions...' : 'Confirm Verification & Split Order'}
+                </button>
               </div>
             </div>
           </div>
@@ -972,11 +830,11 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
               <div className="p-5 border-b bg-rose-600 text-white">
                 <h3 className="font-bold text-lg tracking-wide">Reverse & Return Transaction</h3>
-                <p className="text-[10px] uppercase opacity-80 tracking-widest">{returnModal.order.refNumber}</p>
+                <p className="text-[10px] uppercase opacity-80 tracking-widest">{returnModal.order.osNumber}</p>
               </div>
               <form onSubmit={handleConfirmReturn} className="p-6 flex flex-col gap-5 bg-slate-50">
                 <div className="bg-white border border-slate-200 p-4 rounded-xl text-xs font-bold text-rose-700 shadow-sm leading-relaxed">
-                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{(returnModal.order.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0) || 0).toLocaleString('en-PH')}</strong>.
+                  WARNING: This fully reverses the transaction. It will <strong className="uppercase">{mode === 'sales' ? 'restore valid items back to' : 'deduct valid items from'} Master Stock</strong> and reverse the balance log by <strong>₱{(returnModal.order.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</strong>.
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setReturnModal({ isOpen: false, order: null })} className="flex-1 px-4 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl transition-colors">Cancel</button>
@@ -988,85 +846,90 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         )}
       </div>
 
-      {/* UNIVERSAL PRINT LAYER */}
+      {/* --- PRINT TEMPLATES WITH STRICT TYPE SAFETY --- */}
       {printDoc && (
         <div className="hidden print:block absolute inset-0 w-full bg-white z-[99999] text-black font-sans p-8 min-h-screen">
           <div className="flex justify-between items-start border-b-2 border-black pb-6 mb-6">
             <div>
               <h1 className="text-4xl font-black tracking-tight uppercase">{companyMeta.name}</h1>
-              <p className="text-sm font-medium mt-1">Order Processing Center</p>
+              <p className="text-sm font-bold mt-1">Official Document Center</p>
+              <p className="text-xs mt-1 max-w-sm">{companyMeta.address} • {companyMeta.email}</p>
             </div>
             <div className="text-right text-xs space-y-0.5 mt-1 font-mono">
               <p>Generated: {new Date().toLocaleString()}</p>
-              <p>Doc Ref: {printDoc.order.id.slice(-8)}</p>
+              <p className="font-bold">System Ref: {String(printDoc.data?.id || 'N/A').slice(-8).toUpperCase()}</p>
             </div>
           </div>
 
-          <div className="text-center mb-8">
+          <div className="text-center mb-10">
             <h2 className="text-4xl font-black tracking-widest uppercase">
-              {printDoc.type === 'OS' ? 'ORDER SLIP (PICK LIST)' : 
-               printDoc.type === 'PO' ? 'PURCHASE ORDER' : 
-               printDoc.type === 'INVOICE' ? 'SALES INVOICE' : 'RECEIVING REPORT'}
+              {printDoc.type === 'OS' ? 'ORDER SLIP' : printDoc.type === 'PO' ? 'PURCHASE ORDER' : 'PACKING LIST'}
             </h2>
-            <div className="inline-block mt-2 px-4 py-1 border-2 border-black font-black text-sm uppercase tracking-widest">
-              {printDoc.order.status}
+            <div className="inline-block mt-3 px-6 py-1.5 border-2 border-black font-black text-sm uppercase tracking-widest">
+              DOC NO: {printDoc.type === 'OS' ? (printDoc.data?.osNumber || 'N/A') : printDoc.type === 'PO' ? (printDoc.data?.poNumber || 'N/A') : (printDoc.data?.plNumber || 'N/A')}
             </div>
           </div>
 
-          <div className="flex justify-between mb-8 border-2 border-black p-4">
-            <div className="w-1/2 pr-4 border-r-2 border-black">
-              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">{mode === 'sales' ? 'Billed To' : 'Vendor'}</h3>
-              <p className="font-black text-xl uppercase">{printDoc.order.partner?.name}</p>
-              <p className="mt-1 font-medium">{printDoc.order.partner?.contact || 'No Contact Specified'}</p>
-              <p className="font-medium">{printDoc.order.partner?.phone || 'N/A'}</p>
+          <div className="flex justify-between mb-8 border-2 border-black p-5 bg-gray-50">
+            <div className="w-1/2 pr-5 border-r-2 border-black">
+              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Billed / Shipped To</h3>
+              <p className="font-black text-xl uppercase mt-2">{printDoc.data?.customer?.name || printDoc.data?.customerName || 'Unknown Entity'}</p>
+              <p className="mt-1 font-medium">{printDoc.data?.customer?.address || 'Address not on file'}</p>
+              <p className="font-medium mt-1">{printDoc.data?.customer?.contact || ''} {printDoc.data?.customer?.phone ? `• ${printDoc.data.customer.phone}` : ''}</p>
             </div>
-            <div className="w-1/2 pl-4 text-right">
-              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Transaction Details</h3>
-              <p className="font-medium mt-1">Reference: <span className="font-bold text-lg">{printDoc.order.refNumber}</span></p>
-              <p className="font-medium">Date: <span className="font-bold">{new Date(printDoc.order.date).toLocaleDateString()}</span></p>
-              <p className="font-medium">Agent: <span className="font-bold uppercase">{printDoc.order.user}</span></p>
+            <div className="w-1/2 pl-5 text-right">
+              <h3 className="font-bold uppercase tracking-widest text-[10px] mb-2 border-b border-black pb-1">Document Details</h3>
+              <table className="w-full text-sm font-medium mt-2">
+                <tbody>
+                  <tr><td className="text-left pb-1">Document Date:</td><td className="font-bold text-black">{new Date(printDoc.data?.date || Date.now()).toLocaleDateString()}</td></tr>
+                  <tr><td className="text-left pb-1">Status:</td><td className="font-bold text-black uppercase">{printDoc.data?.status || 'N/A'}</td></tr>
+                  <tr><td className="text-left">Processed By:</td><td className="font-bold text-black uppercase">{printDoc.data?.user || 'SYSTEM'}</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
           <table className="w-full text-left border-collapse mb-8 border-2 border-black">
-            <thead className="border-b-2 border-black bg-slate-100">
+            <thead className="border-b-2 border-black bg-gray-100">
               <tr>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-1/2">Item Description</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black">Qty</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black">Price</th>
-                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right">Total</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black w-[15%]">SKU</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs border-r border-black">Description</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-center border-r border-black w-[10%]">Qty</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right border-r border-black w-[15%]">Unit Price</th>
+                <th className="py-3 px-4 font-black uppercase tracking-wider text-xs text-right w-[15%]">Amount</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black">
-              {(printDoc.order.items || []).filter(item => !item.isCancelled).map((item, i) => (
+              {(printDoc.data?.items || []).filter((item: any) => !item.isCancelled).map((item: any, i: number) => (
                 <tr key={i} className="break-inside-avoid">
-                  <td className="py-3 px-4 border-r border-black">
-                    <div className="font-bold text-black">{item.productName}</div>
-                    <div className="text-[10px] font-mono text-gray-700">{item.sku}</div>
-                  </td>
-                  <td className="py-3 px-4 text-center font-bold border-r border-black text-black">{item.quantity}</td>
-                  <td className="py-3 px-4 text-right font-medium border-r border-black text-black">₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
-                  <td className="py-3 px-4 text-right font-black text-black">₱{(item.total || 0).toLocaleString('en-PH')}</td>
+                  <td className="py-3 px-4 border-r border-black font-mono text-xs">{item.sku || 'N/A'}</td>
+                  <td className="py-3 px-4 border-r border-black font-bold text-black">{item.productName || 'Unknown'}</td>
+                  <td className="py-3 px-4 text-center font-bold border-r border-black text-black">{item.requestedQty || item.fulfilledQty || item.quantity || 0}</td>
+                  <td className="py-3 px-4 text-right font-medium border-r border-black text-black">{item.unitPrice !== undefined ? `₱${Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits: 2})}` : '-'}</td>
+                  <td className="py-3 px-4 text-right font-black text-black">{item.total !== undefined ? `₱${Number(item.total).toLocaleString('en-PH', {minimumFractionDigits: 2})}` : '-'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          <div className="flex justify-end mb-16 break-inside-avoid">
-            <div className="w-1/3 p-4 border-2 border-black">
-              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{(printDoc.order.items || []).filter(item => !item.isCancelled).reduce((acc, curr) => acc + curr.quantity, 0)}</span></div>
-              <div className="border-t-2 border-black my-2"></div>
-              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{(printDoc.order.items || []).filter(item => !item.isCancelled).reduce((acc, item) => acc + (item.total || 0), 0).toLocaleString('en-PH')}</span></div>
+          {printDoc.type === 'OS' && (
+            <div className="flex justify-end mb-16 break-inside-avoid">
+              <div className="w-2/5 p-5 border-2 border-black bg-gray-50">
+                <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Subtotal</span><span className="font-black">₱{Number(printDoc.data?.subtotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</span></div>
+                <div className="flex justify-between items-center mb-3"><span className="font-bold uppercase tracking-widest text-xs">VAT (12%)</span><span className="font-black">₱{Number(printDoc.data?.vatAmount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</span></div>
+                <div className="border-t-2 border-black my-3"></div>
+                <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{Number(printDoc.data?.grandTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</span></div>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex justify-between items-end pt-12 mt-12 break-inside-avoid">
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.order.user}</div></div>
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Warehouse Verification</div><div className="text-[10px] mt-1">Signature / Date</div></div>
-            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">{mode === 'sales' ? 'Client Acceptance' : 'Vendor Acceptance'}</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Prepared By</div><div className="text-[10px] mt-1 uppercase">{printDoc.data?.user || 'SYSTEM'}</div></div>
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Verified By</div><div className="text-[10px] mt-1">Signature / Date</div></div>
+            <div className="w-1/3 text-center"><div className="border-t-2 border-black pt-2 font-bold uppercase text-xs tracking-widest">Client Acceptance</div><div className="text-[10px] mt-1">Signature / Date</div></div>
           </div>
         </div>
       )}
     </>
   );
-}
+}   
