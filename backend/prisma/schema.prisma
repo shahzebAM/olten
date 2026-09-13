@@ -273,17 +273,59 @@ model SalesOrder {
   user        String
 }
 
+model OrderSlip {
+  id           String          @id @default(uuid())
+  osNumber     String          @unique
+  company      String
+  customerId   String
+  subtotal     Float
+  vatAmount    Float
+  isVatApplied Boolean
+  grandTotal   Float
+  date         DateTime        @default(now())
+  status       String          @default("PENDING") // PENDING, PROCESSED, CANCELLED
+  user         String
+  items        OrderSlipItem[]
+}
+
+model OrderSlipItem {
+  id           String     @id @default(uuid())
+  orderSlipId  String
+  orderSlip    OrderSlip  @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
+  productId    Int
+  sku          String
+  productName  String
+  requestedQty Int
+  unitPrice    Float
+  total        Float
+}
+
+model FinalOrder {
+  id          String   @id @default(uuid())
+  foNumber    String   @unique
+  osId        String
+  osNumber    String
+  company     String
+  customerId  String
+  date        DateTime @default(now())
+  status      String   @default("PENDING") // PENDING, PACKED
+  items       Json     // Store fulfilled items securely
+}
+
 model Shortage {
   id           String   @id @default(uuid())
   company      String
   orderDate    DateTime
   orderRef     String
-  partnerName  String
+  customerName String   @default("Unknown")
   productId    Int
   productName  String
   sku          String
-  quantity     Int
-  cancelReason String
-  mode         String   // 'sales' or 'purchasing'
+  requestedQty Int      @default(0)
+  physicalQty  Int      @default(0)
+  shortageQty  Int      @default(0)
+  cancelReason String?  
+  status       String   @default("OPEN")
+  mode         String   @default("sales")
   createdAt    DateTime @default(now())
 }

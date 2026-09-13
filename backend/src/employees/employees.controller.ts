@@ -142,12 +142,14 @@ export class EmployeesController {
         company: data.company,
         orderDate: new Date(data.orderDate),
         orderRef: data.orderRef,
-        partnerName: data.partnerName,
-        productId: Number(data.productId), // Safely convert to Int for DB
+        customerName: data.partnerName || 'Unknown',
+        productId: Number(data.productId),
         productName: data.productName,
         sku: data.sku,
-        quantity: Number(data.quantity),   // Safely convert to Int for DB
-        cancelReason: data.cancelReason,
+        // Map old generic properties to the new strict ERP schema
+        requestedQty: Number(data.quantity || 0),
+        physicalQty: 0, 
+        shortageQty: Number(data.quantity || 0),
         mode: data.mode
       }
     });
@@ -155,9 +157,7 @@ export class EmployeesController {
 
   @Delete('shortages/:id')
   async deleteShortage(@Param('id') id: string) {
-    // Dynamically checks if the ID in your database is an Int or a String UUID
     const shortageId = isNaN(Number(id)) ? id : Number(id);
-
     return await prisma.shortage.delete({
       where: { id: shortageId as any }
     });
