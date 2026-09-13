@@ -70,16 +70,53 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/shortages?company=${selectedCompany}`).catch(() => ({ ok: false, json: () => [] }))
       ]);
-      if (custRes.ok) setCustomers(await custRes.json());
-      if (supRes.ok) setSuppliers(await supRes.json());
+
+      let fetchedCustomers: Partner[] = [];
+      let fetchedSuppliers: Partner[] = [];
+
+      if (custRes.ok) fetchedCustomers = await custRes.json();
+      if (supRes.ok) fetchedSuppliers = await supRes.json();
+
+      setCustomers(fetchedCustomers);
+      setSuppliers(fetchedSuppliers);
+
+      // Create lookup maps to force correct Client/Vendor names even if relation isn't populated
+      const custMap = fetchedCustomers.reduce((acc: any, c: any) => ({ ...acc, [c.id]: c }), {});
+      const supMap = fetchedSuppliers.reduce((acc: any, s: any) => ({ ...acc, [s.id]: s }), {});
+
       if (soRes.ok) {
         const soData = await soRes.json();
-        setSalesOrders(soData.map((s: any) => ({ ...s, refNumber: s.soNumber || 'N/A', partnerId: s.customerId, partner: s.customer || { name: 'Unknown' } })));
+        setSalesOrders(soData.map((s: any) => {
+          // If the order is finalized, strip out cancelled items entirely for the ledger
+          const isFinalized = ['FULFILLED', 'RECEIVED', 'RETURNED'].includes(s.status);
+          const displayItems = isFinalized ? (s.items || []).filter((i: any) => !i.isCancelled) : (s.items || []);
+          
+          return {
+            ...s,
+            items: displayItems,
+            refNumber: s.soNumber || 'N/A',
+            partnerId: s.customerId,
+            partner: s.customer || custMap[s.customerId] || { name: 'Unknown Client' }
+          };
+        }));
       }
+
       if (poRes.ok) {
         const poData = await poRes.json();
-        setPurchaseOrders(poData.map((p: any) => ({ ...p, refNumber: p.poNumber || 'N/A', partnerId: p.supplierId, partner: p.supplier || { name: 'Unknown' } })));
+        setPurchaseOrders(poData.map((p: any) => {
+          const isFinalized = ['FULFILLED', 'RECEIVED', 'RETURNED'].includes(p.status);
+          const displayItems = isFinalized ? (p.items || []).filter((i: any) => !i.isCancelled) : (p.items || []);
+
+          return {
+            ...p,
+            items: displayItems,
+            refNumber: p.poNumber || 'N/A',
+            partnerId: p.supplierId,
+            partner: p.supplier || supMap[p.supplierId] || { name: 'Unknown Vendor' }
+          };
+        }));
       }
+
       if (prodRes.ok) setProducts(await prodRes.json());
       if (shortRes.ok) setShortages(await shortRes.json());
     } catch (e) { console.warn("Backend not ready."); }
@@ -99,7 +136,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
   );
 
-  // --- SHORTAGES FILTERING ---
+  // --- SHORTAGES FILTERING (Driven by pure Database Shortages logic) ---
   const pendingItemsList = shortages
     .filter(s => s.mode === mode)
     .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
@@ -129,7 +166,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  // --- HISTORY FILTERING (SAFE SHORTAGES CHECK BYPASSING BACKEND LIMITATION) ---
+  // --- HISTORY FILTERING ---
   const filteredHistory = transactions
     .filter(t => t.status === 'FULFILLED' || t.status === 'RECEIVED' || t.status === 'RETURNED')
     .filter(order => {
@@ -138,7 +175,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         if (!(order.refNumber || '').toLowerCase().includes(q) && !(order.partner?.name || '').toLowerCase().includes(q)) return false;
       }
       
-      // Look directly at the Shortages database array to see if this refNumber had cancelled items
       const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
 
       if (historyStatusFilter !== 'ALL') {
@@ -265,6 +301,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
+      // Update Main Order with ONLY Valid Items so Ledger strips shortages automatically
       await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: validItems }) });
 
       // Log Cancelled Items into DATABASE Shortage Ledger
@@ -291,14 +328,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         ));
       }
 
-      // Update Ledger Balances
       if (mode === 'sales') {
         await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
       } else {
         await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
       }
 
-      // Process Direct Master Stock
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
@@ -518,7 +553,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB WITH STATUS COLUMN */}
+              {/* PENDING SHORTAGES TAB */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
@@ -677,17 +712,16 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-3">
                 {(viewModal.items || []).map((item, i) => (
-                  <div key={i} className={`p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-4 border ${item.isCancelled ? 'bg-white border-rose-300 opacity-70' : 'bg-white border-slate-200 shadow-sm'}`}>
+                  <div key={i} className={`p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-4 border bg-white border-slate-200 shadow-sm`}>
                     <div className="flex-1">
-                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
+                      <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
                       <div className="flex flex-wrap items-center gap-3 mt-1.5">
                         <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
                         <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
                         <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
                       </div>
-                      {item.isCancelled && <p className="text-[11px] font-bold text-rose-600 uppercase mt-3 tracking-wider">SHORTAGE REASON: {item.cancelReason}</p>}
                     </div>
-                    <div className={`font-black text-xl text-right shrink-0 ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
+                    <div className="font-black text-xl text-right shrink-0 text-slate-900">
                       ₱{(item.total || 0).toLocaleString('en-PH')}
                     </div>
                   </div>
@@ -750,7 +784,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
               <div className="p-4 sm:p-6 border-t border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
                 <div className="text-center sm:text-left">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest text-slate-400">New Adjusted Total</p>
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400">New Adjusted Total</p>
                   <p className="text-2xl font-black text-slate-900">₱{(editModal.items.reduce((acc, item) => acc + (item.total || 0), 0) || 0).toLocaleString('en-PH')}</p>
                 </div>
                 <button type="button" onClick={handleSaveEdit} disabled={isProcessing} className="w-full sm:w-auto px-8 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-md disabled:opacity-50">Save Changes</button>
