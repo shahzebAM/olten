@@ -80,7 +80,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       setCustomers(fetchedCustomers);
       setSuppliers(fetchedSuppliers);
 
-      // FIX: Lookup maps to inject missing client names if backend relation fails
       const custMap = fetchedCustomers.reduce((acc: any, c: any) => ({ ...acc, [c.id]: c }), {});
       const supMap = fetchedSuppliers.reduce((acc: any, s: any) => ({ ...acc, [s.id]: s }), {});
 
@@ -153,17 +152,23 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  // --- HISTORY FILTERING (FIX: Added SHORTAGE to valid statuses) ---
+  // --- HISTORY FILTERING ---
   const filteredHistory = transactions
-    .filter(t => ['FULFILLED', 'RECEIVED', 'RETURNED', 'SHORTAGE'].includes(t.status))
+    .filter(t => ['FULFILLED', 'RECEIVED', 'RETURNED', 'CANCELLED'].includes(t.status))
     .filter(order => {
       if (historySearch) {
         const q = historySearch.toLowerCase();
         if (!(order.refNumber || '').toLowerCase().includes(q) && !(order.partner?.name || '').toLowerCase().includes(q)) return false;
       }
+      
+      const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
 
       if (historyStatusFilter !== 'ALL') {
-        if (order.status !== historyStatusFilter) return false;
+        if (historyStatusFilter === 'SHORTAGE') {
+          if (!hasShortages) return false;
+        } else {
+          if (order.status !== historyStatusFilter) return false;
+        }
       }
       return true;
     });
@@ -279,16 +284,15 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const validItems = finalItems.filter(i => !i.isCancelled);
       const finalTotal = validItems.reduce((acc, item) => acc + (item.total || 0), 0);
       
-      // FIX: Dynamically assign SHORTAGE status if items are missing
-      const hasMissing = finalItems.some(i => i.isCancelled);
-      const targetStatus = hasMissing ? 'SHORTAGE' : (mode === 'sales' ? 'FULFILLED' : 'RECEIVED'); 
+      // Determine Status based on remaining valid items
+      let targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
+      if (validItems.length === 0) {
+        targetStatus = 'CANCELLED';
+      }
+
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // Force update main order. If DB blocks items array, fallback to just status & total
-      const patchRes = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
-      if (!patchRes.ok) {
-        await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal }) });
-      }
+      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus, totalAmount: finalTotal, items: finalItems }) });
 
       // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
@@ -306,16 +310,24 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       if (cancelledItems.length > 0) {
         await Promise.all(cancelledItems.map(item => 
-          fetch(`${API_BASE_URL}/shortages`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item) })
+          fetch(`${API_BASE_URL}/shortages`, { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify(item) 
+          })
         ));
       }
 
-      if (mode === 'sales') {
-        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
-      } else {
-        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
+      // Update Ledger Balances only if there's a valid amount
+      if (finalTotal > 0) {
+        if (mode === 'sales') {
+          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
+        } else {
+          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) });
+        }
       }
 
+      // Process Direct Master Stock
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
@@ -327,7 +339,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(`Verification Complete! Valid items processed. Shortages logged to database.`, "success");
+      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. All items moved to Shortages.` : `Verification Complete! Shortages logged.`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
       setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
@@ -342,14 +354,16 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const targetStatus = 'RETURNED';
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
 
-      await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
+      await fetch(`${API_BASE_URL}${endpoint}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: targetStatus }) });
 
       const validTotal = (order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0);
       
-      if (mode === 'sales') {
-        await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
-      } else {
-        await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+      if (validTotal > 0) {
+        if (mode === 'sales') {
+          await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+        } else {
+          await fetch(`${API_BASE_URL}/purchasing/suppliers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: -validTotal }) });
+        }
       }
 
       const validItems = (order.items || []).filter(i => !i.isCancelled);
@@ -534,7 +548,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB WITH STATUS COLUMN */}
+              {/* PENDING SHORTAGES TAB */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
@@ -617,8 +631,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                       >
                         <option value="ALL">All Statuses</option>
                         {mode === 'sales' ? <option value="FULFILLED">Fulfilled</option> : <option value="RECEIVED">Received</option>}
-                        <option value="SHORTAGE">Shortage</option>
+                        <option value="CANCELLED">Cancelled</option>
                         <option value="RETURNED">Returned</option>
+                        <option value="SHORTAGE">With Shortages</option>
                       </select>
                       <input 
                         type="text" 
@@ -628,6 +643,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         className="px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-slate-500 bg-white w-full sm:w-64" 
                       />
                       <button 
+                        type="button"
                         onClick={handleClearHistory} 
                         disabled={isProcessing} 
                         className="px-4 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-lg text-xs font-black uppercase tracking-wider whitespace-nowrap transition-colors"
@@ -647,9 +663,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium">No ledger records found matching filters.</td></tr>
                         ) : (
                           filteredHistory.map(order => {
+                            const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
+                            
                             let statusStyle = 'border-emerald-200 bg-emerald-50 text-emerald-700';
-                            if (order.status === 'RETURNED') statusStyle = 'border-rose-200 bg-rose-50 text-rose-700';
-                            if (order.status === 'SHORTAGE') statusStyle = 'border-amber-200 bg-amber-50 text-amber-700';
+                            if (order.status === 'RETURNED' || order.status === 'CANCELLED') statusStyle = 'border-rose-200 bg-rose-50 text-rose-700';
                             
                             return (
                               <tr key={order.id} className="hover:bg-slate-50 group">
@@ -657,12 +674,17 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                 <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
                                 <td className={`py-4 px-6 text-right font-black ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(order.totalAmount || 0).toLocaleString('en-PH')}</td>
                                 <td className="py-4 px-6">
-                                  <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${statusStyle}`}>{order.status}</span>
+                                  <div className="flex flex-col gap-1 items-start">
+                                    <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border ${statusStyle}`}>{order.status}</span>
+                                    {hasShortages && order.status !== 'CANCELLED' && (
+                                      <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border border-amber-200 bg-amber-50 text-amber-700">SHORTAGE</span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-4 px-6 text-right space-x-3 whitespace-nowrap">
                                   <button type="button" onClick={() => setViewModal(order)} className="text-sky-600 hover:text-sky-900 font-bold text-[11px] uppercase tracking-wider underline">View Details</button>
                                   <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'INVOICE' : 'RECEIPT')} className="text-slate-500 hover:text-slate-900 font-bold text-[11px] uppercase tracking-wider underline">Print Doc</button>
-                                  {(order.status === 'FULFILLED' || order.status === 'RECEIVED' || order.status === 'SHORTAGE') && (
+                                  {(order.status === 'FULFILLED' || order.status === 'RECEIVED') && (
                                     <button type="button" onClick={() => setReturnModal({ isOpen: true, order })} className="text-amber-600 hover:text-amber-800 font-black text-[11px] uppercase tracking-wider">Return</button>
                                   )}
                                   <button type="button" onClick={() => handleDeleteTransaction(order)} className="text-rose-600 hover:text-rose-900 font-black text-[11px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
@@ -979,16 +1001,16 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
               </tr>
             </thead>
             <tbody className="divide-y divide-black">
-              {(printDoc.order.items || []).map((item, i) => (
+              {/* FIX: Filter out cancelled items so they never appear on the final printed invoice */}
+              {(printDoc.order.items || []).filter(item => !item.isCancelled).map((item, i) => (
                 <tr key={i} className="break-inside-avoid">
                   <td className="py-3 px-4 border-r border-black">
-                    <div className={`font-bold ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.productName}</div>
-                    <div className="text-[10px] font-mono">{item.sku}</div>
-                    {item.isCancelled && <div className="text-xs font-bold text-black uppercase mt-1">*** SHORTAGE: {item.cancelReason} ***</div>}
+                    <div className="font-bold text-black">{item.productName}</div>
+                    <div className="text-[10px] font-mono text-gray-700">{item.sku}</div>
                   </td>
-                  <td className={`py-3 px-4 text-center font-bold border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>{item.quantity}</td>
-                  <td className={`py-3 px-4 text-right font-medium border-r border-black ${item.isCancelled ? 'line-through text-slate-400' : ''}`}>₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
-                  <td className="py-3 px-4 text-right font-black">₱{(item.isCancelled ? 0 : (item.total || 0)).toLocaleString('en-PH')}</td>
+                  <td className="py-3 px-4 text-center font-bold border-r border-black text-black">{item.quantity}</td>
+                  <td className="py-3 px-4 text-right font-medium border-r border-black text-black">₱{(item.unitPrice || 0).toLocaleString('en-PH')}</td>
+                  <td className="py-3 px-4 text-right font-black text-black">₱{(item.total || 0).toLocaleString('en-PH')}</td>
                 </tr>
               ))}
             </tbody>
@@ -996,9 +1018,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
           <div className="flex justify-end mb-16 break-inside-avoid">
             <div className="w-1/3 p-4 border-2 border-black">
-              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{(printDoc.order.items || []).reduce((acc, curr) => acc + (curr.isCancelled ? 0 : curr.quantity), 0)}</span></div>
+              <div className="flex justify-between items-center mb-2"><span className="font-bold uppercase tracking-widest text-xs">Valid Units</span><span className="font-black">{(printDoc.order.items || []).filter(item => !item.isCancelled).reduce((acc, curr) => acc + curr.quantity, 0)}</span></div>
               <div className="border-t-2 border-black my-2"></div>
-              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{(printDoc.order.items || []).reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.total || 0)), 0).toLocaleString('en-PH')}</span></div>
+              <div className="flex justify-between items-center"><span className="font-black uppercase tracking-widest text-sm">Grand Total</span><span className="font-black text-2xl">₱{(printDoc.order.items || []).filter(item => !item.isCancelled).reduce((acc, item) => acc + (item.total || 0), 0).toLocaleString('en-PH')}</span></div>
             </div>
           </div>
 
