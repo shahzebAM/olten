@@ -96,4 +96,4 @@ export class PurchasingController {
       include: { items: true, supplier: true }
     });
   }
-}
+} 
