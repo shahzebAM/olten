@@ -9,7 +9,7 @@ datasource db {
 }
 
 model Employee {
-  id                     Int      @id @default(autoincrement())
+  id                     Int                 @id @default(autoincrement())
   employeeId             String?
   firstName              String
   middleName             String?
@@ -19,22 +19,22 @@ model Employee {
   civilStatus            String
   baseRate               Float
   employmentStatus       String
-  tin                    String?  @unique
-  sssNumber              String?  @unique
-  philhealth             String?  @unique
-  pagIbig                String?  @unique
+  tin                    String?             @unique
+  sssNumber              String?             @unique
+  philhealth             String?             @unique
+  pagIbig                String?             @unique
   bankAccount            String?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @default(now()) @updatedAt
-  cashAdvanceBalance     Float    @default(0)
-  cashAdvanceInstallment Float    @default(0)
-  company                String   @default("Olten")
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @default(now()) @updatedAt
+  cashAdvanceBalance     Float               @default(0)
+  cashAdvanceInstallment Float               @default(0)
+  company                String              @default("Olten")
   
   attendances            Attendance[]
   payrolls               Payroll[]
-  inventoryMovements     InventoryMovement[]  // Ties employee to stock audits
-  loanBalance            Float    @default(0)
-  loanInstallment        Float    @default(0)
+  inventoryMovements     InventoryMovement[] // Ties employee to stock audits
+  loanBalance            Float               @default(0)
+  loanInstallment        Float               @default(0)
 }
 
 model Admin {
@@ -206,16 +206,36 @@ model WarehouseTransfer {
 }
 
 model Supplier {
-  id       String          @id @default(uuid())
+  id       String  @id @default(uuid())
   company  String
   name     String
   contact  String?
   phone    String?
   email    String?
-  balance  Float           @default(0) 
-  isActive Boolean         @default(true)
-  pos      PurchaseOrder[]
+  balance  Float   @default(0) 
+  isActive Boolean @default(true)
+  pos      PurchaseOrder[] // <-- Add this relationship back
 }
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  company     String
+  name        String
+  contact     String?
+  phone       String?
+  email       String?
+  address     String?
+  creditLimit Float    @default(0)
+  balance     Float    @default(0) // Tracks Outstanding Receivables
+  createdAt   DateTime @default(now())
+}
+
 
 model PurchaseOrder {
   id          String              @id @default(uuid())
@@ -240,92 +260,4 @@ model PurchaseOrderItem {
   quantity    Int
   unitPrice   Float
   total       Float
-}
-
-model Company {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-}
-
-model Customer {
-  id          String   @id @default(uuid())
-  company     String
-  name        String
-  contact     String?
-  phone       String?
-  email       String?
-  address     String?
-  creditLimit Float    @default(0)
-  balance     Float    @default(0) // Tracks Outstanding Receivables
-  createdAt   DateTime @default(now())
-}
-
-model SalesOrder {
-  id          String   @id @default(uuid())
-  company     String
-  soNumber    String
-  customerId  String
-  date        DateTime @default(now())
-  status      String   @default("PENDING") // PENDING, APPROVED, FULFILLED, RETURNED
-  totalAmount Float
-  items       Json
-  user        String
-}
-
-model OrderSlip {
-  id           String          @id @default(uuid())
-  osNumber     String          @unique
-  company      String
-  customerId   String
-  subtotal     Float
-  vatAmount    Float
-  isVatApplied Boolean
-  grandTotal   Float
-  date         DateTime        @default(now())
-  status       String          @default("PENDING") // PENDING, PROCESSED, CANCELLED
-  user         String
-  items        OrderSlipItem[]
-}
-
-model OrderSlipItem {
-  id           String     @id @default(uuid())
-  orderSlipId  String
-  orderSlip    OrderSlip  @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
-  productId    Int
-  sku          String
-  productName  String
-  requestedQty Int
-  unitPrice    Float
-  total        Float
-}
-
-model FinalOrder {
-  id          String   @id @default(uuid())
-  foNumber    String   @unique
-  osId        String
-  osNumber    String
-  company     String
-  customerId  String
-  date        DateTime @default(now())
-  status      String   @default("PENDING") // PENDING, PACKED
-  items       Json     // Store fulfilled items securely
-}
-
-model Shortage {
-  id           String   @id @default(uuid())
-  company      String
-  orderDate    DateTime
-  orderRef     String
-  customerName String   @default("Unknown")
-  productId    Int
-  productName  String
-  sku          String
-  requestedQty Int      @default(0)
-  physicalQty  Int      @default(0)
-  shortageQty  Int      @default(0)
-  cancelReason String?  
-  status       String   @default("OPEN")
-  mode         String   @default("sales")
-  createdAt    DateTime @default(now())
 }

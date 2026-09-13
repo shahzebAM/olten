@@ -33,35 +33,4 @@ export class SalesController {
       data: { balance: { increment: amount } }
     });
   }
-
-  // ==========================================
-  // SALES ORDERS
-  // ==========================================
-
-  @Get('orders')
-  async getOrders(@Query('company') company: string) {
-    if (!company) return [];
-    
-    // Fetch orders and customers to map them together for the frontend
-    const orders = await prisma.salesOrder.findMany({ where: { company } });
-    const customers = await prisma.customer.findMany({ where: { company } });
-    
-    return orders.map(order => ({
-      ...order,
-      customer: customers.find(c => c.id === order.customerId) || null
-    }));
-  }
-
-  @Post('orders')
-  async createOrder(@Body() data: any) {
-    return prisma.salesOrder.create({ data });
-  }
-
-  @Patch('orders/:id/status')
-  async updateOrderStatus(@Param('id') id: string, @Body('status') status: string) {
-    return prisma.salesOrder.update({ 
-      where: { id }, 
-      data: { status } 
-    });
-  }
 }
