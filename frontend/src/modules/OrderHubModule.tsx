@@ -284,7 +284,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       const validItems = finalItems.filter(i => !i.isCancelled);
       const finalTotal = validItems.reduce((acc, item) => acc + (item.total || 0), 0);
       
-      // Determine Status
       let targetStatus = mode === 'sales' ? 'FULFILLED' : 'RECEIVED'; 
       if (validItems.length === 0) {
         targetStatus = 'CANCELLED';
@@ -292,21 +291,18 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
 
       const endpoint = mode === 'sales' ? `/sales/orders/${order.id}` : `/purchasing/pos/${order.id}`;
       
-      // 1. FORCE THE STATUS UPDATE (Bypasses nested item blockages)
       await fetch(`${API_BASE_URL}${endpoint}/status`, { 
         method: 'PATCH', 
         headers: {'Content-Type': 'application/json'}, 
         body: JSON.stringify({ status: targetStatus }) 
       });
 
-      // 2. Safely patch the items array and total
       await fetch(`${API_BASE_URL}${endpoint}`, { 
         method: 'PATCH', 
         headers: {'Content-Type': 'application/json'}, 
         body: JSON.stringify({ totalAmount: finalTotal, items: finalItems }) 
       }).catch(() => {});
 
-      // Log Cancelled Items into DATABASE Shortage Ledger
       const cancelledItems = finalItems.filter(i => i.isCancelled).map(i => ({
         company: selectedCompany,
         orderDate: new Date().toISOString(),
@@ -330,7 +326,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         ));
       }
 
-      // Update Ledger Balances only if there's a valid amount
       if (finalTotal > 0) {
         if (mode === 'sales') {
           await fetch(`${API_BASE_URL}/sales/customers/${order.partnerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: finalTotal }) }); 
@@ -339,7 +334,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
         }
       }
 
-      // Process Direct Master Stock
       for (const item of validItems) {
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
@@ -351,9 +345,8 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       }
 
       fetchData(); 
-      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. All items moved to Shortages.` : `Verification Complete! Sent to Ledger.`, "success");
+      showToast(targetStatus === 'CANCELLED' ? `Order fully cancelled. Items moved to Shortages.` : `Verification Complete!`, "success");
       setVerifyModal({ isOpen: false, order: null, items: [] }); 
-      setActiveTab('history');
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -417,9 +410,12 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
-      await Promise.all(filteredHistory.map(order => 
-        fetch(`${API_BASE_URL}${endpoint}/${order.id}`, { method: 'DELETE' })
-      ));
+      
+      // FIX: Use sequential deletion loop to prevent database locking errors
+      for (const order of filteredHistory) {
+        await fetch(`${API_BASE_URL}${endpoint}/${order.id}`, { method: 'DELETE' });
+      }
+
       fetchData();
       showToast("Filtered history records cleared successfully.", "success");
     } catch (e) {
@@ -528,6 +524,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
+              {/* FIX: Included Cancelled/Fulfilled in the Verify Tab filter so they don't disappear */}
               {activeTab === 'verify' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
@@ -540,19 +537,33 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                         <tr><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Document Ref</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">{mode === 'sales' ? 'Client' : 'Vendor'}</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Expected Units</th><th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Verification Action</th></tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {transactions.filter(t => t.status === 'PENDING').length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No pending documents to verify.</td></tr> :
-                          transactions.filter(t => t.status === 'PENDING').map(order => (
-                            <tr key={order.id} className="hover:bg-slate-50">
-                              <td className="py-4 px-6 font-black text-slate-900">{order.refNumber || 'N/A'} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
-                              <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
-                              <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
-                              <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
-                                <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
-                                <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
-                                <button type="button" onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
-                              </td>
-                            </tr>
-                          ))
+                        {transactions.filter(t => ['PENDING', 'FULFILLED', 'RECEIVED', 'CANCELLED'].includes(t.status)).length === 0 ? <tr><td colSpan={4} className="py-12 text-center text-slate-400 font-medium">No documents available.</td></tr> :
+                          transactions.filter(t => ['PENDING', 'FULFILLED', 'RECEIVED', 'CANCELLED'].includes(t.status)).map(order => {
+                            const hasShortages = shortages.some(s => s.orderRef === order.refNumber);
+
+                            return (
+                              <tr key={order.id} className="hover:bg-slate-50">
+                                <td className="py-4 px-6 font-black text-slate-900">{order.refNumber || 'N/A'} <div className="text-[10px] text-slate-400 font-mono font-medium">{new Date(order.date).toLocaleDateString()}</div></td>
+                                <td className="py-4 px-6 font-bold text-slate-700">{order.partner?.name || 'Unknown'}</td>
+                                <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
+                                <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
+                                  {order.status === 'PENDING' && (
+                                    <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
+                                  )}
+                                  <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
+                                  
+                                  {/* FIX: Conditional display so rows stay visible but buttons change state */}
+                                  {order.status === 'PENDING' ? (
+                                    <button type="button" onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
+                                  ) : (
+                                    <span className={`inline-block px-3 py-1.5 ml-2 text-[10px] font-black uppercase tracking-widest rounded-lg border ${order.status === 'CANCELLED' ? 'border-rose-200 bg-rose-100 text-rose-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
+                                      {order.status === 'CANCELLED' ? 'Cancelled' : (hasShortages ? 'Verified (Short)' : 'Verified')}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         }
                       </tbody>
                     </table>
@@ -560,7 +571,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* PENDING SHORTAGES TAB WITH STATUS COLUMN */}
+              {/* PENDING SHORTAGES TAB */}
               {activeTab === 'pending' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-rose-50' : 'bg-amber-50'}`}>
@@ -627,7 +638,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* FINALIZED HISTORY TAB WITH SAFE SHORTAGES CHECK */}
+              {/* FINALIZED HISTORY TAB */}
               {activeTab === 'history' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
