@@ -122,7 +122,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     (p.sku || '').toLowerCase().includes(productSearch.toLowerCase())
   );
 
-  // --- SHORTAGES FILTERING ---
   const pendingItemsList = shortages
     .filter(s => s.mode === mode)
     .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
@@ -152,7 +151,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     return true;
   });
 
-  // --- HISTORY FILTERING ---
   const filteredHistory = transactions
     .filter(t => ['FULFILLED', 'RECEIVED', 'RETURNED', 'CANCELLED'].includes(t.status))
     .filter(order => {
@@ -179,12 +177,9 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
       await fetch(`${API_BASE_URL}/shortages/${shortageId}`, { method: 'DELETE' });
       fetchData();
       showToast("Shortage record cleared.", "success");
-    } catch (e) {
-      showToast("Failed to delete shortage.", "error");
-    }
+    } catch (e) { showToast("Failed to delete shortage.", "error"); }
   };
 
-  // --- ADD ITEMS LOGIC ---
   const handleToggleProduct = (p: Product) => {
     setTempSelectedItems(prev => {
       const exists = prev[p.id];
@@ -217,7 +212,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     showToast(`Added ${newItems.length} items.`, "success");
   };
 
-  // --- DRAFT CREATION ---
   const handleGenerateDraft = async (e: React.FormEvent) => {
     e.preventDefault(); if (draftItems.length === 0) return showToast("Add at least one item.", "error");
     setIsProcessing(true);
@@ -237,7 +231,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Failed to create document.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- EDIT EXISTING PENDING DRAFT ---
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!editModal.order) return;
     setIsProcessing(true);
@@ -252,7 +245,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch(e) { showToast("Failed to update order.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- VERIFICATION & STOCK COUNTING LOGIC ---
   const openVerificationModal = (order: Transaction) => {
     const itemsClone = (order.items || []).map(i => ({ ...i }));
     setVerifyModal({ isOpen: true, order, items: itemsClone });
@@ -350,7 +342,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { showToast("Error during verification process.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- RETURN LOGIC ---
   const handleConfirmReturn = async (e: React.FormEvent) => {
     e.preventDefault(); if (!returnModal.order) return;
     setIsProcessing(true);
@@ -411,7 +402,6 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
     try {
       const endpoint = mode === 'sales' ? '/sales/orders' : '/purchasing/pos';
       
-      // FIX: Use sequential deletion loop to prevent database locking errors
       for (const order of filteredHistory) {
         await fetch(`${API_BASE_URL}${endpoint}/${order.id}`, { method: 'DELETE' });
       }
@@ -524,7 +514,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* FIX: Included Cancelled/Fulfilled in the Verify Tab filter so they don't disappear */}
+              {/* FIX: Included Cancelled/Fulfilled in Verify Tab filter so rows don't vanish immediately */}
               {activeTab === 'verify' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className={`p-4 sm:p-6 border-b border-slate-200 ${mode === 'sales' ? 'bg-emerald-50' : 'bg-amber-50'}`}>
@@ -548,11 +538,10 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                                 <td className="py-4 px-6 font-black text-slate-600">{(order.items || []).reduce((a,b)=>a+(b.quantity||0),0)} Items</td>
                                 <td className="py-4 px-6 text-right space-x-2 whitespace-nowrap">
                                   {order.status === 'PENDING' && (
-                                    <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider underline">Edit</button>
+                                    <button type="button" onClick={() => setEditModal({ isOpen: true, order, items: (order.items||[]).map(i => ({...i})) })} className="text-amber-600 hover:text-amber-800 text-[11px] font-bold uppercase tracking-wider mr-2 underline">Edit</button>
                                   )}
                                   <button type="button" onClick={() => handlePrint(order, mode === 'sales' ? 'OS' : 'PO')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">Print {mode === 'sales' ? 'OS' : 'PO'}</button>
                                   
-                                  {/* FIX: Conditional display so rows stay visible but buttons change state */}
                                   {order.status === 'PENDING' ? (
                                     <button type="button" onClick={() => openVerificationModal(order)} className={`px-4 py-2 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm ${mode === 'sales' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>Verify Stock</button>
                                   ) : (
@@ -638,7 +627,7 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
               )}
 
-              {/* FINALIZED HISTORY TAB */}
+              {/* FINALIZED HISTORY TAB WITH SAFE SHORTAGES CHECK */}
               {activeTab === 'history' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
@@ -739,21 +728,33 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
                 <button type="button" onClick={() => setViewModal(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
               </div>
-              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-3">
+              <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6 space-y-4">
                 {(viewModal.items || []).map((item, i) => (
-                  <div key={i} className={`p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-4 border ${item.isCancelled ? 'bg-white border-rose-300 opacity-70' : 'bg-white border-slate-200 shadow-sm'}`}>
-                    <div className="flex-1">
-                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
-                      <div className="flex flex-wrap items-center gap-3 mt-1.5">
-                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
-                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
-                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
-                      </div>
-                      {item.isCancelled && <p className="text-[11px] font-bold text-rose-600 uppercase mt-3 tracking-wider">SHORTAGE REASON: {item.cancelReason}</p>}
+                  <div key={i} className={`p-5 rounded-xl border flex flex-col gap-4 ${item.isCancelled ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                    <div className="flex justify-between items-start">
+                       <div>
+                          <h4 className={`font-black text-lg ${item.isCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{item.productName}</h4>
+                          <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
+                       </div>
                     </div>
-                    <div className={`font-black text-xl text-right shrink-0 ${item.isCancelled ? 'text-rose-400 line-through' : 'text-slate-900'}`}>
-                      ₱{(item.total || 0).toLocaleString('en-PH')}
+                    <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+                       <div className="flex items-center gap-4">
+                           <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-baseline gap-1.5">
+                               <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
+                               <span className="text-base font-black text-indigo-700">{item.quantity}</span>
+                           </div>
+                           <div className="text-xs font-bold text-slate-500">
+                               Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
+                           </div>
+                       </div>
+                       <div className="flex flex-col text-right">
+                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
+                           <span className={`text-xl font-black ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-600' : 'text-amber-600')}`}>
+                              ₱{(item.total || 0).toLocaleString('en-PH')}
+                           </span>
+                       </div>
                     </div>
+                    {item.isCancelled && <p className="text-[11px] font-bold text-rose-600 uppercase mt-2 tracking-wider">SHORTAGE REASON: {item.cancelReason}</p>}
                   </div>
                 ))}
               </div>
@@ -782,30 +783,36 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 
                 {editModal.items.length === 0 ? <div className="text-center py-8 text-slate-400 font-medium">All items removed.</div> : 
                   editModal.items.map((item, index) => (
-                    <div key={index} className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-                      <div className="flex-1">
-                        <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
-                        <div className="flex flex-wrap items-center gap-3 mt-1.5">
-                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
-                          <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
-                        </div>
+                    <div key={index} className={`p-5 rounded-xl border flex flex-col gap-4 bg-white border-slate-200 shadow-sm`}>
+                      <div className="flex justify-between items-start">
+                         <div>
+                            <h4 className="font-black text-lg text-slate-900">{item.productName}</h4>
+                            <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
+                         </div>
+                         <button type="button" onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">✕</button>
                       </div>
-                      <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4 shrink-0 mt-3 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                        <div className="flex flex-col">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
-                          <input type="number" min="1" value={item.quantity ?? 1} onChange={(e) => {
-                            const newQty = Number(e.target.value) || 0;
-                            const updated = [...editModal.items];
-                            updated[index].quantity = newQty;
-                            updated[index].total = newQty * (updated[index].unitPrice || 0);
-                            setEditModal({...editModal, items: updated});
-                          }} className="w-20 px-3 py-2 text-sm font-black border border-slate-300 rounded-lg outline-none focus:border-slate-500 text-center" />
-                        </div>
-                        <div className="text-right flex-1 sm:flex-none">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 w-full sm:w-24">Total</p>
-                          <span className={`font-black text-xl ${mode === 'sales' ? 'text-emerald-700' : 'text-amber-700'}`}>₱{(item.total || 0).toLocaleString('en-PH')}</span>
-                        </div>
-                        <button type="button" onClick={() => setEditModal({...editModal, items: editModal.items.filter((_, i) => i !== index)})} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors bg-slate-50 sm:bg-transparent">✕</button>
+                      <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+                         <div className="flex items-center gap-4">
+                             <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center gap-2">
+                                 <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
+                                 <input type="number" min="1" value={item.quantity ?? 1} onChange={(e) => {
+                                    const newQty = Number(e.target.value) || 0;
+                                    const updated = [...editModal.items];
+                                    updated[index].quantity = newQty;
+                                    updated[index].total = newQty * (updated[index].unitPrice || 0);
+                                    setEditModal({...editModal, items: updated});
+                                  }} className="w-16 bg-white border border-indigo-200 rounded px-2 py-1 text-sm font-black text-indigo-900 outline-none text-center" />
+                             </div>
+                             <div className="text-xs font-bold text-slate-500">
+                                 Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
+                             </div>
+                         </div>
+                         <div className="flex flex-col text-right">
+                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
+                             <span className={`text-xl font-black ${mode === 'sales' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                ₱{(item.total || 0).toLocaleString('en-PH')}
+                             </span>
+                         </div>
                       </div>
                     </div>
                   ))
@@ -879,35 +886,42 @@ export default function OrderHubModule({ selectedCompany, loginUsername, API_BAS
                 </div>
 
                 {verifyModal.items.map((item, index) => (
-                  <div key={index} className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${item.isCancelled ? 'bg-white border-rose-300 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
-                    <div className="flex-1">
-                      <h4 className={`font-black text-lg ${item.isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.productName}</h4>
-                      <div className="flex flex-wrap items-center gap-3 mt-1.5">
-                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px] rounded uppercase leading-none">{item.sku}</span>
-                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs rounded leading-none tracking-widest">QTY: <span className="text-sm">{item.quantity}</span></span>
-                        <span className="text-xs font-semibold text-slate-500 leading-none">Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}</span>
-                      </div>
+                  <div key={index} className={`p-5 rounded-xl border flex flex-col gap-4 ${item.isCancelled ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                    <div className="flex justify-between items-start">
+                       <div>
+                          <h4 className={`font-black text-lg ${item.isCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{item.productName}</h4>
+                          <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku || 'N/A'}</p>
+                       </div>
                     </div>
-                    
-                    <div className="flex items-center justify-between w-full sm:w-auto gap-4 shrink-0 mt-3 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                      <div className="text-right">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total</p>
-                        <span className={`font-black text-xl ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-700' : 'text-amber-700')}`}>
-                          ₱{(item.total || 0).toLocaleString('en-PH')}
-                        </span>
-                      </div>
-                      
-                      <button 
-                        type="button"
-                        onClick={() => handleToggleCancelItem(index)}
-                        className={`px-4 py-3 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
-                      >
-                        {item.isCancelled ? 'Restore Item' : 'Cancel (Low Stock)'}
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+                       <div className="flex items-center gap-4">
+                           <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-baseline gap-1.5">
+                               <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">QTY:</span>
+                               <span className="text-base font-black text-indigo-700">{item.quantity}</span>
+                           </div>
+                           <div className="text-xs font-bold text-slate-500">
+                               Unit Price: ₱{(item.unitPrice || 0).toLocaleString('en-PH')}
+                           </div>
+                       </div>
+                       <div className="flex items-center gap-6">
+                           <div className="text-right">
+                               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Total</span>
+                               <span className={`text-xl font-black ${item.isCancelled ? 'text-rose-400 line-through' : (mode === 'sales' ? 'text-emerald-600' : 'text-amber-600')}`}>
+                                  ₱{(item.total || 0).toLocaleString('en-PH')}
+                               </span>
+                           </div>
+                           <button 
+                             type="button"
+                             onClick={() => handleToggleCancelItem(index)}
+                             className={`px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors ${item.isCancelled ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
+                           >
+                             {item.isCancelled ? 'Restore Item' : 'Cancel (Low Stock)'}
+                           </button>
+                       </div>
                     </div>
 
                     {item.isCancelled && (
-                      <div className="w-full mt-4 pt-4 border-t border-slate-200 animate-in slide-in-from-top-2">
+                      <div className="w-full mt-4 pt-4 border-t border-rose-200 animate-in slide-in-from-top-2">
                         <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1.5 block">Cancellation Reason (Saved to Shortages Tab)</label>
                         <input 
                           type="text" 
