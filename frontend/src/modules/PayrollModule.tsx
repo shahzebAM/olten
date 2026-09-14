@@ -278,7 +278,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
-  const [payrollComputeMonth, setPayrollComputeMonth] = useState(new Date().toISOString().slice(0, 7));
+  
+  // Custom Date Range for Payroll Computation
+  const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+  const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
+
   const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
 
@@ -363,7 +367,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
   const fetchEmployees = async () => {
     try {
-      // FIX: Added limit=5000 to fetch all employees without pagination cutoffs
       const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
       const data = await response.json();
@@ -400,6 +403,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   };
 
   // --- HELPERS ---
+  const isLogWithinPayrollPeriod = (dateStr: string) => {
+    if (!payrollStartDate || !payrollEndDate) return false;
+    const logDate = dateStr.split('T')[0];
+    return logDate >= payrollStartDate && logDate <= payrollEndDate;
+  };
+
   const calculateDynamicTax = (taxableIncome: number, brackets: any[]) => {
     if (taxableIncome <= 0) return { tax: 0, bracketMin: 0, rate: 0, minTax: 0, taxBase: 0 };
     const sorted = [...brackets].sort((a, b) => b.min - a.min);
@@ -511,7 +520,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     }
   };
 
-const handleImportAttendance = async (event: any) => {
+  const handleImportAttendance = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsSaving(true);
@@ -819,7 +828,11 @@ const handleImportAttendance = async (event: any) => {
     else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
 
     let totalGrossHours = Math.max(0, tOut - tIn);
-    if (totalGrossHours >= 5) totalGrossHours -= 1; 
+    
+    // Always deduct 1-hour unpaid break if employee worked any amount of time
+    if (totalGrossHours > 0) {
+      totalGrossHours = Math.max(0, totalGrossHours - 1);
+    }
 
     const maxRegularHours = 8;
     let regHrs = Math.min(totalGrossHours, maxRegularHours);
@@ -903,7 +916,7 @@ const handleImportAttendance = async (event: any) => {
   // --- PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
     setActiveEmployee(emp);
-    const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
+    const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
     const actualDays = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
     const defaultDays = actualDays > 0 ? actualDays.toString() : '13';
     const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
@@ -915,7 +928,7 @@ const handleImportAttendance = async (event: any) => {
 
   const calculatePayroll = () => {
     if (!activeEmployee) return null;
-    const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
+    const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
     // FIX: Using precise minutes calculation to avoid float drift
     let totalMinsWorked = 0; let otMins = 0; let regMins = 0;
@@ -939,7 +952,7 @@ const handleImportAttendance = async (event: any) => {
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
-    // Exact requested math format
+    // EXACT REQUESTED MATH
     const requiredMins = days * 8 * 60;
     const undertimeMins = Math.max(0, requiredMins - regMins);
     
@@ -1283,7 +1296,6 @@ const handleImportAttendance = async (event: any) => {
                   const otHours = Math.max(0, rec.totalHours - requiredHrs);
                   const otPay = otHours * (ratePerHour * 1.25); 
                   
-                  // Same strict Undertime calc logic
                   let undertimeDeduction = 0;
                   if (rec.totalHours < requiredHrs) { 
                       undertimeDeduction = (requiredHrs - rec.totalHours) * ratePerHour; 
@@ -1353,192 +1365,6 @@ const handleImportAttendance = async (event: any) => {
                     </table>
                   );
                 })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SUMMARY REPORT MODAL */}
-      {isReportModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print shrink-0">
-              <h2 className="font-bold text-slate-800">Summary Report Output</h2>
-              <div className="flex gap-2">
-                <button onClick={() => window.print()} className="bg-amber-600 text-white px-4 py-2 rounded-lg shadow-sm font-bold text-sm hover:bg-amber-700 flex items-center gap-2 transition-colors">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
-                  Print Report
-                </button>
-                <button onClick={() => setIsReportModalOpen(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg shadow-sm font-bold text-sm hover:bg-slate-300 transition-colors">Close</button>
-              </div>
-            </div>
-
-            <div className="overflow-y-auto p-4 sm:p-10 bg-white flex justify-center items-start print-modal-content">
-              <div id="report-print-area" className="bg-white w-full max-w-6xl font-sans text-black">
-                {(() => {
-                  const reportData = getFilteredReportData();
-                  const grandGross = reportData.reduce((s, r) => s + r.totalGross, 0);
-                  const grandDed = reportData.reduce((s, r) => s + r.totalDeductions, 0);
-                  const grandNet = reportData.reduce((s, r) => s + r.totalNet, 0);
-
-                  return (
-                    <div className="w-full">
-                      <div className="text-center mb-6">
-                        <h1 className="text-xl font-bold uppercase tracking-wider text-slate-900">{selectedCompany?.toUpperCase()} TRADING CORP.</h1>
-                        <h2 className="text-md font-semibold text-slate-700 mt-1">PAYROLL SUMMARY REPORT</h2>
-                        <p className="text-sm text-slate-500 mt-2">Date Range: <span className="font-bold text-slate-800">{reportFromDate ? formatMDY(reportFromDate) : 'Beginning'}</span> to <span className="font-bold text-slate-800">{reportToDate ? formatMDY(reportToDate) : 'Latest'}</span></p>
-                      </div>
-
-                      {reportData.length === 0 ? (
-                        <div className="py-12 text-center text-slate-500 font-medium border border-slate-200 bg-slate-50">No payroll records found for the selected criteria.</div>
-                      ) : (
-                        <table className="w-full text-left border-collapse border border-slate-400 text-xs sm:text-sm text-slate-800">
-                          <thead className="bg-slate-100 border-b-2 border-slate-400">
-                            <tr>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase">Emp ID</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase">Employee Name</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-center">Cutoffs</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right">Days Wkd</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right">Logged Hrs</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right">OT Hrs</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-emerald-800 bg-emerald-50">Gross Pay</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-rose-800 bg-rose-50">Total Ded.</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-indigo-900 bg-indigo-50">Net Pay</th>
-                              <th className="py-2.5 px-3 border border-slate-300 font-bold uppercase text-right text-amber-900 bg-amber-50">Loan Balances</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportData.map((row) => (
-                              <tr key={row.emp.id} className="hover:bg-slate-50">
-                                <td className="py-2 px-3 border border-slate-300 font-mono text-slate-500">{row.emp.employeeId || row.emp.id.toString().padStart(4, '0')}</td>
-                                <td className="py-2 px-3 border border-slate-300 font-bold uppercase text-slate-700">{row.emp.lastName}, {row.emp.firstName}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-center font-medium">{row.count}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatMoney(row.totalDays)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatDecToHM(row.totalHours)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono">{formatDecToHM(row.otHours)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-700 bg-emerald-50/50">{formatMoney(row.totalGross)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700 bg-rose-50/50">{formatMoney(row.totalDeductions)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-indigo-900 bg-indigo-50/50">{formatMoney(row.totalNet)}</td>
-                                <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-amber-700 bg-amber-50/50">{(row.emp.cashAdvanceBalance || 0) + (row.emp.loanBalance || 0) > 0 ? formatMoney((row.emp.cashAdvanceBalance || 0) + (row.emp.loanBalance || 0)) : '--'}</td>
-                              </tr>
-                            ))}
-                            <tr className="bg-slate-200 border-t-2 border-slate-500 font-bold">
-                              <td colSpan={6} className="py-3 px-3 border border-slate-400 text-right uppercase tracking-wider text-slate-800">Grand Total:</td>
-                              <td className="py-3 px-3 border border-slate-400 text-right font-mono text-emerald-800 text-sm">{formatMoney(grandGross)}</td>
-                              <td className="py-3 px-3 border border-slate-400 text-right font-mono text-rose-800 text-sm">{formatMoney(grandDed)}</td>
-                              <td className="py-3 px-3 border border-slate-400 text-right font-mono font-black text-indigo-950 text-[15px]">{formatMoney(grandNet)}</td>
-                              <td className="py-3 px-3 border border-slate-400 bg-slate-200"></td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* PAYROLL MODAL (COMPUTE) */}
-      {isPayrollModalOpen && activeEmployee && computed && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
-              <div>
-                <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
-                <p className="text-[10px] sm:text-xs text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
-              </div>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
-            </div>
-            <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
-              <div className="space-y-3">
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
-                </div>
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
-                  <div className="flex flex-col w-full">
-                    <InputField compact type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
-                    {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
-                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}</span>
-                    )}
-                  </div>
-                  <div className="flex flex-col w-full">
-                    <InputField compact type="number" step="0.01" label="Company Loan" value={payrollData.companyLoan} onChange={(e: any) => setPayrollData({...payrollData, companyLoan: e.target.value})} />
-                    {(activeEmployee?.loanBalance || 0) > 0 && (
-                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.loanBalance || 0) - (parseFloat(payrollData.companyLoan) || 0)))}</span>
-                    )}
-                  </div>
-                  <InputField compact type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG MP" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Housing" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Provident" value={payrollData.sssProvident} onChange={(e: any) => setPayrollData({...payrollData, sssProvident: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Salary" value={payrollData.sssSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, sssSalaryLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Calamity" value={payrollData.sssCalamityLoan} onChange={(e: any) => setPayrollData({...payrollData, sssCalamityLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Salary" value={payrollData.pagIbigSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigSalaryLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Calamity" value={payrollData.pagIbigCalamity} onChange={(e: any) => setPayrollData({...payrollData, pagIbigCalamity: e.target.value})} />
-                  <div className="flex flex-col justify-end w-full h-full sm:col-span-2">
-                    <label className={`flex items-center gap-2 p-1.5 border rounded-lg cursor-pointer transition-colors shadow-sm h-[42px] ${payrollData.isDeclared ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
-                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-3.5 h-3.5 ml-1 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0"/>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-slate-800 leading-none mt-0.5">Declared Salary</span>
-                        {payrollData.isDeclared ? (
-                          <span className="text-[9px] font-mono font-bold text-rose-600 mt-1">-₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})} Tax</span>
-                        ) : (
-                          <span className="text-[9px] text-slate-500 mt-1">Apply BIR Tax</span>
-                        )}
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col h-full">
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 mb-2.5 text-[11px] uppercase tracking-wider">Calculation Breakdown</h3>
-                <div className="space-y-1 text-xs flex-1">
-                  <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
-                  {computed.otHrs > 0 && (
-                    <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
-                      <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {computed.undertimeDeduction > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded text-[11px]">
-                      <span>Lates/Undertime Deduction:</span> 
-                      <span className="font-mono">- ₱{computed.undertimeDeduction.toFixed(2)}</span>
-                    </div>
-                  )}
-                  <hr className="my-1.5 border-slate-200" />
-                  <div className="flex justify-between font-bold text-slate-800 text-sm"><span>Gross Pay:</span> <span className="font-mono">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-                  {computed.autoTax > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-100 text-[11px]">
-                      <span>Withholding Tax (Auto):</span> 
-                      <span className="font-mono">- ₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-rose-600 font-semibold text-[11px]"><span>Total Deductions:</span> <span className="font-mono">- ₱{computed.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-                </div>
-
-                <div className="mt-3 p-3 bg-emerald-950 text-white rounded-xl shadow-inner text-center overflow-hidden shrink-0">
-                  <p className="text-emerald-200 text-[10px] font-semibold uppercase tracking-widest mb-0.5">Final Net Pay</p>
-                  <p className="text-3xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
-                </div>
-
-                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
-                  {isSaving ? "Saving..." : "Close & Save"}
-                </button>
               </div>
             </div>
           </div>
@@ -1901,17 +1727,31 @@ const handleImportAttendance = async (event: any) => {
                   <div className="p-4 border-b border-slate-200 bg-emerald-50/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
                       <h2 className="text-lg font-bold text-emerald-950">Active Employees (Compute Salary)</h2>
-                      <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider inline-block mt-2 sm:mt-0 sm:ml-2">Syncs with valid logged hours</span>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider inline-block mt-2 sm:mt-0">Syncs with valid logged hours</span>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                      <div className="relative">
-                        <input type="month" value={payrollComputeMonth} onChange={e => setPayrollComputeMonth(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                        <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white shadow-sm flex items-center justify-between w-full sm:w-[150px] pointer-events-none text-emerald-900 font-semibold">
-                          <span>{formatMonthYear(payrollComputeMonth)}</span>
-                          <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto items-start sm:items-center">
+                      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center border border-slate-300 p-2 rounded-xl bg-white shadow-sm w-full sm:w-auto">
+                        <div className="flex flex-col w-full sm:w-auto">
+                           <label className="text-[10px] font-bold text-slate-500 uppercase px-1">Cut-off Start</label>
+                           <div className="relative">
+                             <div className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 shadow-sm flex items-center justify-between w-full sm:w-[130px] pointer-events-none text-emerald-900 font-semibold">
+                               <span>{formatMDY(payrollStartDate)}</span>
+                             </div>
+                             <input type="date" value={payrollStartDate} onChange={e => setPayrollStartDate(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                           </div>
+                        </div>
+                        <span className="text-slate-300 font-bold hidden sm:block">-</span>
+                        <div className="flex flex-col w-full sm:w-auto">
+                           <label className="text-[10px] font-bold text-slate-500 uppercase px-1">Cut-off End</label>
+                           <div className="relative">
+                             <div className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 shadow-sm flex items-center justify-between w-full sm:w-[130px] pointer-events-none text-emerald-900 font-semibold">
+                               <span>{formatMDY(payrollEndDate)}</span>
+                             </div>
+                             <input type="date" value={payrollEndDate} onChange={e => setPayrollEndDate(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                           </div>
                         </div>
                       </div>
-                      <input type="text" placeholder="Search employee..." value={payrollActiveSearchQuery} onChange={e => setPayrollActiveSearchQuery(e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 shadow-sm w-full sm:w-auto min-w-[200px]" />
+                      <input type="text" placeholder="Search employee..." value={payrollActiveSearchQuery} onChange={e => setPayrollActiveSearchQuery(e.target.value)} className="px-3 py-2.5 h-[52px] border border-slate-300 rounded-xl text-sm outline-none focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 shadow-sm w-full sm:w-[200px]" />
                     </div>
                   </div>
                   <div className="overflow-x-auto">
@@ -1930,7 +1770,7 @@ const handleImportAttendance = async (event: any) => {
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
                         ) : (
                           filteredActiveEmployees.map((emp) => {
-                            const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
+                            const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
                             let totalLogged = 0; let totalOtLogged = 0;
                             empLogs.forEach(log => {
                                 if (!log.timeIn || !log.timeIn.includes(':')) { totalLogged += log.hours; } 
