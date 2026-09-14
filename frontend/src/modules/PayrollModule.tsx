@@ -802,7 +802,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     finally { setIsSaving(false); }
   };
 
-  const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
+const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
     if (!tInStr || !tOutStr || !tInStr.includes(':')) return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
     const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
 
@@ -818,6 +818,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     let totalGrossHours = Math.max(0, tOut - tIn);
     
+    // FIX: Always deduct 1-hour unpaid break, regardless of how short the shift was
     if (totalGrossHours > 0) {
       totalGrossHours = Math.max(0, totalGrossHours - 1);
     }
