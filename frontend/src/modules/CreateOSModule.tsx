@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
-interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; }
-interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; }
+interface WarehouseBreakdown { name: string; quantity: number; }
+interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
+interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
 
 interface CreateOSModuleProps {
   selectedCompany: string;
@@ -37,7 +38,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- FETCH INITIAL CUSTOMERS ---
   useEffect(() => {
     fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
       .then(res => res.json())
@@ -55,7 +55,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       .catch(() => console.warn(`Silent skip: Failed to fetch customers`));
   }, [selectedCompany, API_BASE_URL, initialCustomerId]);
 
-  // --- DEBOUNCED SERVER-SIDE PRODUCT SEARCH ---
   useEffect(() => {
     if (productSearch.trim().length < 2) {
       setProductSearchResults([]);
@@ -91,7 +90,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     );
   }, [customers, customerSearch]);
 
-  // --- ACTIONS ---
   const handleSelectCustomer = (c: Customer) => {
     setSelectedCustomer(c);
     setCustomerSearch(c.name);
@@ -109,6 +107,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       productName: p.name, 
       officeStock: p.officeStock,
       warehouseQty: p.warehouseQty,
+      warehouseBreakdown: p.warehouseBreakdown || [],
       requestedQty: 1, 
       unitPrice: p.sellingPrice || 0, 
       lineTotal: p.sellingPrice || 0 
@@ -154,7 +153,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setDraftItems(prev => prev.map(item => ({
         ...item,
         officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock,
-        warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty
+        warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty,
+        warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown
       })));
       
       showToast("Live stock validated with backend.", "success");
@@ -165,7 +165,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  // --- PHASE 5: STRICT FINANCIAL MATH ---
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
@@ -228,7 +227,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       <main className="flex-1 overflow-y-auto p-4 sm:p-8">
         <div className="max-w-7xl mx-auto space-y-6">
 
-          {/* STEP 1: CUSTOMER SELECTION */}
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Step 1: Select Customer</h3>
             
@@ -273,7 +271,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             )}
           </section>
 
-          {/* STEP 2: ORDER ITEMS */}
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
             <div className="p-6 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex items-center gap-4">
@@ -328,14 +325,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            <div className="overflow-x-auto w-full">
+            {/* Added pb-32 to prevent tooltip clipping */}
+            <div className="overflow-x-auto w-full pb-32 -mb-32">
               <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
                 <thead className="bg-white border-b border-slate-200">
                   <tr>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Description</th>
                     <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20">Off Qty</th>
-                    <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20 border-r border-slate-200">Whse Qty</th>
+                    <th className="py-4 px-3 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-24 border-r border-slate-200">Whse Qty</th>
                     <th className="py-4 px-5 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-36 bg-indigo-50/50">Requested</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-28">Unit Price</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Line Total</th>
@@ -355,7 +353,28 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-3 px-5 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
                           <td className="py-3 px-5 font-bold text-slate-900">{item.productName}</td>
                           <td className={`py-3 px-3 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
-                          <td className={`py-3 px-3 text-center font-black border-r border-slate-200 ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.warehouseQty}</td>
+                          
+                          {/* WAREHOUSE BREAKDOWN TOOLTIP */}
+                          <td className={`py-3 px-3 text-center font-black border-r border-slate-200 relative group ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            <div className="inline-flex items-center justify-center border-b-2 border-dotted border-current cursor-help pb-0.5">
+                              {item.warehouseQty}
+                            </div>
+                            
+                            {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-700 pb-1.5 text-left">Stock Locations</div>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                  {item.warehouseBreakdown.map((wb, i) => (
+                                    <div key={i} className="flex justify-between items-center text-xs">
+                                      <span className="truncate pr-3 font-medium text-slate-300">{wb.name}</span>
+                                      <span className="font-black text-emerald-400 shrink-0">{wb.quantity}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+
                           <td className="py-2 px-4 bg-indigo-50/30">
                             <input 
                               type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
@@ -379,8 +398,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
           </section>
 
-          {/* STEP 3: REVIEW & SUBMIT */}
-          <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col md:flex-row items-center justify-between p-6 gap-6">
+          <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col md:flex-row items-center justify-between p-6 gap-6 relative z-10">
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-5 h-5 rounded text-indigo-500 bg-slate-800 border-slate-700 focus:ring-indigo-500" />
               <span className="font-bold text-slate-300 text-sm tracking-wide uppercase">Apply 12% VAT</span>
