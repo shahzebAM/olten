@@ -166,34 +166,6 @@ export default function CompanyModule({
       <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
     
 
-
-        
-        {/* VENDOR CENTER */}
-        {hasPurchasing && (
-          <button onClick={() => onSelectModule('suppliers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Vendor Center</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage suppliers, contacts, and price ledgers.</p>
-            </div>
-          </button>
-        )}
-
-        {/* PURCHASING & RECEIVING */}
-        {hasPurchasing && (
-          <button onClick={() => onSelectModule('purchase_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-amber-950 transition-colors group-hover:text-amber-700">Purchasing</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft POs, verify inbound items, and receive physical stock.</p>
-            </div>
-          </button>
-        )}
-
         {/* UNIFIED MASTER INVENTORY MODULE */}
         {(hasProducts || hasInventory || hasWarehouses) && (
           <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
