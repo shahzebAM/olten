@@ -32,7 +32,7 @@ const format12Hour = (time24: string) => {
 
 const formatMoney = (val: number) => {
   if (!val || val === 0) return '-';
-  return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 const formatDecToHM = (decimalHours: number) => {
@@ -276,41 +276,36 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
+  
+  const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+  const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
+
   const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
 
-  // Date Filters
-  const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
-  const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
+  const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
+  const [editingLog, setEditingLog] = useState<AttendanceRecord | null>(null);
+  const [editLogForm, setEditLogForm] = useState({ date: '', timeIn: '', timeOut: '', type: 'regular', reason: '' });
+  const [monthLogsModalEmp, setMonthLogsModalEmp] = useState<Employee | null>(null);
   const [reportFromDate, setReportFromDate] = useState('');
   const [reportToDate, setReportToDate] = useState('');
   const [reportSelectedEmp, setReportSelectedEmp] = useState('all');
-
-  const [attendanceFilter, setAttendanceFilter] = useState<'day' | 'month'>('day');
-  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [attendanceMonth, setAttendanceMonth] = useState(new Date().toISOString().slice(0, 7)); 
-
-  // Modals & Status
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
-  const [editingLog, setEditingLog] = useState<AttendanceRecord | null>(null);
-  const [monthLogsModalEmp, setMonthLogsModalEmp] = useState<Employee | null>(null);
   const [activeEmployee, setActiveEmployee] = useState<Employee | null>(null);
-
-  const [editLogForm, setEditLogForm] = useState({ date: '', timeIn: '', timeOut: '', type: 'regular', reason: '' });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // Attendance Shifts
   const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [tempShiftEnd, setTempShiftEnd] = useState('17:00');
   const [shiftStart, setShiftStart] = useState('08:00');
   const [shiftEnd, setShiftEnd] = useState('17:00');
+  const [attendanceFilter, setAttendanceFilter] = useState<'day' | 'month'>('day');
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendanceMonth, setAttendanceMonth] = useState(new Date().toISOString().slice(0, 7)); 
   const [dailyTimeLogs, setDailyTimeLogs] = useState<Record<number, { timeIn: string, timeOut: string, type: string, reason: string }>>({});
 
   const initialFormState = {
@@ -337,7 +332,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     { id: 6, min: 333333, baseTax: 91770.7, rate: 0.35, excessOver: 333333 },
   ]);
 
-  // --- INITIAL DATA FETCH ---
   useEffect(() => {
     fetchEmployees();
     fetchAttendances();
@@ -345,7 +339,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     fetchSettings();
   }, [selectedCompany]);
 
-  // --- API CALLS ---
   const fetchSettings = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/settings?company=${selectedCompany}`);
@@ -367,7 +360,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
   const fetchEmployees = async () => {
     try {
-      // FIX: Added limit=5000 to fetch all employees without pagination cutoffs
       const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
       const data = await response.json();
@@ -403,7 +395,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     finally { setIsSaving(false); }
   };
 
-  // --- HELPERS ---
   const isLogWithinPayrollPeriod = (dateStr: string) => {
     if (!payrollStartDate || !payrollEndDate) return false;
     const logDate = dateStr.split('T')[0];
@@ -424,7 +415,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setTimeout(() => { setToast(null); }, 3500);
   };
 
-  // --- EXPORT/IMPORT ---
   const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
     const csvContent = [headers.join(','), ...data.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -696,7 +686,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     reader.readAsText(file);
   };
 
-  // --- CRUD ACTIONS ---
   const handleFormattedChange = (field: string, type: 'tin' | 'sss' | 'philhealth' | 'pagibig' | 'bank' | 'standard') => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let val = e.target.value;
     if (type !== 'standard') {
@@ -830,7 +819,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     let totalGrossHours = Math.max(0, tOut - tIn);
     
-    // Always deduct 1 hour unpaid break, even if they worked a 2 hour shift
+    // Always deduct 1 hour unpaid break, even if they worked a short shift
     if (totalGrossHours > 0) {
       totalGrossHours = Math.max(0, totalGrossHours - 1);
     }
@@ -951,19 +940,21 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
-    // FIX: STRICT FINANCIAL ROUNDING
-    const ratePerDay = days > 0 ? Math.round((basicSalary / days) * 100) / 100 : 0;
-    const ratePerHour = Math.round((ratePerDay / 8) * 100) / 100;
+    // FIX: STRICT FINANCIAL ROUNDING (Prevents cent-drift against Excel)
+    const ratePerDay = days > 0 ? Number((basicSalary / days).toFixed(2)) : 0;
+    const ratePerHour = Number((ratePerDay / 8).toFixed(2));
     
     const requiredMins = days * 8 * 60;
     const undertimeMins = Math.max(0, requiredMins - regMins);
     
-    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
-    const otRate = Math.round((ratePerHour * 1.25) * 100) / 100;
-    const otPay = Math.round(((otMins / 60) * otRate) * 100) / 100;
+    const undertimeHours = undertimeMins / 60;
+    const otHours = otMins / 60;
+
+    const undertimeDeduction = Number((undertimeHours * ratePerHour).toFixed(2));
+    const otRate = Number((ratePerHour * 1.25).toFixed(2));
+    const otPay = Number((otHours * otRate).toFixed(2));
     
-    // Gross Pay strictly relies on Regular Hours (Basic - Undertime) + OT Pay
-    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
+    const grossPay = Number((basicSalary - undertimeDeduction + otPay).toFixed(2));
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
@@ -973,16 +964,16 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     let companyLoanDed = parseFloat(payrollData.companyLoan) || 0;
     if (activeEmployee && companyLoanDed > (activeEmployee.loanBalance || 0)) { companyLoanDed = activeEmployee.loanBalance || 0; }
 
-    const taxableIncome = Math.round((grossPay - sssDed - pagIbigDed - philhealthDed) * 100) / 100;
+    const taxableIncome = Number((grossPay - sssDed - pagIbigDed - philhealthDed).toFixed(2));
     let autoTax = 0;
 
     if (payrollData.isDeclared && taxableIncome > 0) {
       const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
-      autoTax = Math.round(taxResult.tax * 100) / 100;
+      autoTax = Number((taxResult.tax).toFixed(2));
     }
 
-    const totalDeductions = Math.round((cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed) * 100) / 100;
-    const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
+    const totalDeductions = Number((cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed).toFixed(2));
+    const netPay = Number((grossPay - totalDeductions).toFixed(2));
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
@@ -1135,8 +1126,16 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         }
       `}</style>
 
-      {/* MODALS PLACED SAFELY AT THE ROOT LEVEL */}
+      {/* 1. ALL MODALS PLACED SAFELY AT THE ROOT OF THE COMPONENT */}
+      
+      {/* TOAST */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 slide-in-from-bottom-2 fade-in duration-300 ease-out border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'} print-hidden`}>
+          {toast.message}
+        </div>
+      )}
 
+      {/* EDIT EMPLOYEE MODAL */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
@@ -1157,6 +1156,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </div>
       )}
 
+      {/* MONTHLY LOGS MODAL */}
       {monthLogsModalEmp && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
@@ -1203,6 +1203,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </div>
       )}
 
+      {/* EDIT ATTENDANCE MODAL */}
       {editingLog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
@@ -1253,6 +1254,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </div>
       )}
 
+      {/* GENERATE PAYSLIP MODAL */}
       {selectedPayslip && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
@@ -1355,6 +1357,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </div>
       )}
 
+      {/* SUMMARY REPORT MODAL */}
       {isReportModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
