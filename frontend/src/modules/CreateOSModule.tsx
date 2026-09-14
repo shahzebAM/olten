@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
 interface WarehouseBreakdown { name: string; quantity: number; }
 interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
-interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
+interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
 
 interface CreateOSModuleProps {
   selectedCompany: string;
@@ -108,6 +108,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       officeStock: p.officeStock,
       warehouseQty: p.warehouseQty,
       warehouseBreakdown: p.warehouseBreakdown || [],
+      selectedWarehouseName: null, // Default to all warehouses
       requestedQty: 1, 
       unitPrice: p.sellingPrice || 0, 
       lineTotal: p.sellingPrice || 0 
@@ -128,6 +129,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       updated[index].requestedQty = qty;
       updated[index].lineTotal = qty * updated[index].unitPrice;
     }
+    setDraftItems(updated);
+  };
+
+  const handleSelectWarehouse = (index: number, warehouseName: string | null) => {
+    const updated = [...draftItems];
+    updated[index].selectedWarehouseName = warehouseName;
     setDraftItems(updated);
   };
 
@@ -325,7 +332,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            {/* Added pb-32 to prevent tooltip clipping */}
             <div className="overflow-x-auto w-full pb-32 -mb-32">
               <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
                 <thead className="bg-white border-b border-slate-200">
@@ -333,7 +339,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Description</th>
                     <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20">Off Qty</th>
-                    <th className="py-4 px-3 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-24 border-r border-slate-200">Whse Qty</th>
+                    <th className="py-4 px-3 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-28 border-r border-slate-200">Whse Qty</th>
                     <th className="py-4 px-5 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-36 bg-indigo-50/50">Requested</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-28">Unit Price</th>
                     <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Line Total</th>
@@ -346,7 +352,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   ) : (
                     draftItems.map((item, idx) => {
                       const reqQty = Number(item.requestedQty) || 0;
-                      const totalAvailable = item.officeStock + item.warehouseQty;
+                      
+                      // Calculate effective warehouse qty based on selection
+                      const effectiveWhseQty = item.selectedWarehouseName 
+                        ? (item.warehouseBreakdown.find(wb => wb.name === item.selectedWarehouseName)?.quantity || 0)
+                        : item.warehouseQty;
+
+                      const totalAvailable = item.officeStock + effectiveWhseQty;
 
                       return (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
@@ -354,21 +366,42 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-3 px-5 font-bold text-slate-900">{item.productName}</td>
                           <td className={`py-3 px-3 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                           
-                      {/* WAREHOUSE BREAKDOWN TOOLTIP */}
-<td className={`py-3 px-3 text-center font-black border-r border-slate-200 relative group ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-  <div className="inline-flex items-center justify-center">
-    {item.warehouseQty}
-  </div>
+                          {/* WAREHOUSE DROPDOWN SELECTOR */}
+                          <td className={`py-3 px-3 text-center border-r border-slate-200 relative group`}>
+                            <div className="inline-flex flex-col items-center justify-center cursor-pointer p-1.5 rounded-lg hover:bg-slate-200 transition-colors">
+                              <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {effectiveWhseQty}
+                              </span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                                {item.selectedWarehouseName || 'All Whse'}
+                              </span>
+                            </div>
                             
                             {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
-                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
-                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-700 pb-1.5 text-left">Stock Locations</div>
-                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-2 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-700 pb-1.5 px-2 text-left">Select Location</div>
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {/* Default 'All Warehouses' Option */}
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleSelectWarehouse(idx, null)}
+                                    className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${!item.selectedWarehouseName ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}
+                                  >
+                                    <span className="truncate pr-3 font-medium">All Warehouses</span>
+                                    <span className="font-black shrink-0">{item.warehouseQty}</span>
+                                  </button>
+                                  
+                                  {/* Specific Warehouse Options */}
                                   {item.warehouseBreakdown.map((wb, i) => (
-                                    <div key={i} className="flex justify-between items-center text-xs">
-                                      <span className="truncate pr-3 font-medium text-slate-300">{wb.name}</span>
-                                      <span className="font-black text-emerald-400 shrink-0">{wb.quantity}</span>
-                                    </div>
+                                    <button 
+                                      type="button"
+                                      key={i}
+                                      onClick={() => handleSelectWarehouse(idx, wb.name)}
+                                      className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${item.selectedWarehouseName === wb.name ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}
+                                    >
+                                      <span className="truncate pr-3 font-medium">{wb.name}</span>
+                                      <span className="font-black shrink-0">{wb.quantity}</span>
+                                    </button>
                                   ))}
                                 </div>
                               </div>
@@ -388,7 +421,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           </td>
                           <td className="py-3 px-5 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                           <td className="py-3 px-5 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                          <td className="py-3 px-5 text-center"><button onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors">✕</button></td>
+                          <td className="py-3 px-5 text-center"><button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors">✕</button></td>
                         </tr>
                       );
                     })
@@ -418,7 +451,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <div className="text-3xl font-black text-white">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
               </div>
 
-              <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="w-full md:w-auto px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
+              <button type="button" onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="w-full md:w-auto px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
                 {isProcessing ? 'Processing...' : 'Finalize & Generate O.S.'}
               </button>
             </div>
