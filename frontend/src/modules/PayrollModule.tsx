@@ -914,7 +914,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setIsPayrollModalOpen(true);
   };
 
-const calculatePayroll = () => {
+  const calculatePayroll = () => {
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
@@ -944,13 +944,13 @@ const calculatePayroll = () => {
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
-    // Hourly Rates (Exact floating point precision)
+    // Hourly Rates
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
     const requiredMins = days * 8 * 60;
     
-    // 2. Aggregate logic: offset lates with OT directly
+    // 2. Excel logic offsets lates with OT directly via aggregate difference
     const diffMins = totalMinsWorked - requiredMins;
     
     let otMins = 0;
@@ -962,7 +962,7 @@ const calculatePayroll = () => {
         undertimeMins = Math.abs(diffMins);
     }
 
-    // 3. Exact unrounded time multipliers rounded ONLY at the final peso amount
+    // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
     const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
     const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
     
@@ -1385,9 +1385,9 @@ const calculatePayroll = () => {
               <div className="space-y-3">
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-3 gap-2 sm:gap-3">
-   <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-<InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-<InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
+                  <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
+                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked * 60)} />
+                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs * 60)} />
                 </div>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
@@ -1437,11 +1437,11 @@ const calculatePayroll = () => {
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs * 60)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked * 60)}</span></div>
                   {computed.otHrs > 0 && (
-  <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-    <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
-    <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
-  </div>
-)}
+                    <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
+                      <span>Total Overtime ({computed.otHrs.toFixed(2)} Excel @ 125%):</span> 
+                      <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
+                    </div>
+                  )}
                   {computed.undertimeDeduction > 0 && (
                     <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded text-[11px]">
                       <span>Lates/Undertime Deduction:</span> 
