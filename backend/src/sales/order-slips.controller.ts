@@ -77,10 +77,8 @@ export class OrderSlipsController {
       if (!customer) throw new NotFoundException('Customer record not found.');
 
       // --- PHASE 4: STRICT BACKEND REVALIDATION ---
-      // We do not trust React's prices or stock values. We query the DB directly before final generation.
       const productIds = items.map((i: any) => Number(i.productId));
       const dbProducts = await tx.product.findMany({ where: { id: { in: productIds }, company } });
-      const dbStocks = await tx.warehouseStock.findMany({ where: { productId: { in: productIds }, company } });
 
       let calculatedSubtotal = 0;
       const cleanItems: any[] = [];
@@ -95,7 +93,8 @@ export class OrderSlipsController {
         if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
 
         const unitPrice = Number(product.sellingPrice); 
-        const lineTotal = requestedQty * unitPrice;
+        // PHASE 5: Strict Decimal Rounding
+        const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
         
         calculatedSubtotal += lineTotal;
         cleanItems.push({
@@ -120,8 +119,10 @@ export class OrderSlipsController {
       }
       const osNumber = `OS-${String(nextNum).padStart(6, '0')}`;
 
-      const calculatedVat = isVatApplied ? calculatedSubtotal * Number(vatRate) : 0;
-      const calculatedGrandTotal = calculatedSubtotal + calculatedVat;
+      // PHASE 5: Strict Decimal Rounding for Database Storage
+      calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
+      const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
+      const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
       return await tx.orderSlip.create({
         data: {
