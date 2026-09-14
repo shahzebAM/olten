@@ -666,6 +666,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
           if(res.ok) successCount++;
         }
         
+        
         await new Promise(resolve => setTimeout(resolve, 500));
         await fetchAttendances();
         
