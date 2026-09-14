@@ -914,16 +914,18 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setIsPayrollModalOpen(true);
   };
 
-  const calculatePayroll = () => {
+const calculatePayroll = () => {
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
-    // 1. Calculate Aggregate Total Minutes Worked Across All Days
-    let totalMinsWorked = 0;
+    let totalMinsWorked = 0; 
+    let regMins = 0;
 
     empLogs.forEach(log => {
         if (!log.timeIn || !log.timeIn.includes(':')) { 
-            totalMinsWorked += Math.round(log.hours * 60); 
+            const floatMins = Math.round(log.hours * 60);
+            totalMinsWorked += floatMins; 
+            regMins += Math.min(floatMins, 8 * 60);
         } 
         else {
             const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
@@ -933,24 +935,24 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             if (tOut < tIn) tOut += 24; 
             let grossHrs = tOut - tIn;
             
-            // Deduct 1-hour unpaid break unconditionally for any shifted work
             if (grossHrs > 0) {
               grossHrs = Math.max(0, grossHrs - 1);
             }
-            totalMinsWorked += Math.round(grossHrs * 60);
+            
+            const currentMins = Math.round(grossHrs * 60);
+            totalMinsWorked += currentMins;
+            regMins += Math.min(currentMins, 8 * 60);
         }
     });
 
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
-    // Hourly Rates
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
     const requiredMins = days * 8 * 60;
     
-    // 2. Excel logic offsets lates with OT directly via aggregate difference
     const diffMins = totalMinsWorked - requiredMins;
     
     let otMins = 0;
@@ -962,11 +964,19 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         undertimeMins = Math.abs(diffMins);
     }
 
-    // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
-    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
-    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
+    // STRICT EXCEL DECIMAL FORCING ("16h 12m" -> 16.12)
+    const toExcelDecimal = (mins: number) => {
+      const h = Math.floor(mins / 60);
+      const m = Math.round(mins % 60);
+      return parseFloat(`${h}.${m.toString().padStart(2, '0')}`);
+    };
+
+    const excelOtHours = toExcelDecimal(otMins);
+    const excelUndertimeHours = toExcelDecimal(undertimeMins);
+
+    const undertimeDeduction = Math.round((excelUndertimeHours * ratePerHour) * 100) / 100;
+    const otPay = Math.round((excelOtHours * (ratePerHour * 1.25)) * 100) / 100;
     
-    // 4. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
@@ -990,7 +1000,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      otHrs: excelOtHours, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
