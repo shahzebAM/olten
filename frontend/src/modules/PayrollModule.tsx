@@ -279,14 +279,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
-  // Custom Date Range for Payroll Computation
   const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
 
   const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
 
-  // Modals & Status
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
@@ -301,7 +299,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // Attendance & Shifts
   const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [tempShiftEnd, setTempShiftEnd] = useState('17:00');
   const [shiftStart, setShiftStart] = useState('08:00');
@@ -335,7 +332,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     { id: 6, min: 333333, baseTax: 91770.7, rate: 0.35, excessOver: 333333 },
   ]);
 
-  // --- INITIAL DATA FETCH ---
   useEffect(() => {
     fetchEmployees();
     fetchAttendances();
@@ -343,7 +339,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     fetchSettings();
   }, [selectedCompany]);
 
-  // --- API CALLS ---
   const fetchSettings = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/settings?company=${selectedCompany}`);
@@ -400,7 +395,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     finally { setIsSaving(false); }
   };
 
-  // --- HELPERS ---
   const isLogWithinPayrollPeriod = (dateStr: string) => {
     if (!payrollStartDate || !payrollEndDate) return false;
     const logDate = dateStr.split('T')[0];
@@ -421,7 +415,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setTimeout(() => { setToast(null); }, 3500);
   };
 
-  // --- EXPORT/IMPORT ---
   const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
     const csvContent = [headers.join(','), ...data.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -970,17 +963,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     }
 
     // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
-    const toExcelDecimal = (mins: number) => {
-      const h = Math.floor(mins / 60);
-      const m = Math.round(mins % 60);
-      return parseFloat(`${h}.${m.toString().padStart(2, '0')}`);
-    };
-
-    const excelOtHours = toExcelDecimal(otMins);
-    const excelUndertimeHours = toExcelDecimal(undertimeMins);
-
-    const undertimeDeduction = Math.round((excelUndertimeHours * ratePerHour) * 100) / 100;
-    const otPay = Math.round((excelOtHours * ratePerHour * 1.25) * 100) / 100;
+    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
+    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
     
     // 4. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
@@ -1006,7 +990,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: otMins / 60, excelOtHrs: excelOtHours, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
@@ -1454,7 +1438,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked * 60)}</span></div>
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({computed.excelOtHrs.toFixed(2)} Excel @ 125%):</span> 
+                      <span>Total Overtime ({computed.otHrs.toFixed(2)} Excel @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
