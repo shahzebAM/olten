@@ -947,12 +947,13 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const requiredMins = days * 8 * 60;
     const undertimeMins = Math.max(0, requiredMins - regMins);
     
-    const undertimeHours = undertimeMins / 60;
-    const otHours = otMins / 60;
+    // FIX: Match Excel's intermediate fractional rounding behavior
+    const undertimeHours = Math.round((undertimeMins / 60) * 100) / 100;
+    const otHours = Math.round((otMins / 60) * 100) / 100;
 
-    const undertimeDeduction = Number((undertimeHours * ratePerHour).toFixed(2));
-    const otRate = Number((ratePerHour * 1.25).toFixed(2));
-    const otPay = Number((otHours * otRate).toFixed(2));
+    const undertimeDeduction = Math.round((undertimeHours * ratePerHour) * 100) / 100;
+    const otRate = Math.round((ratePerHour * 1.25) * 100) / 100;
+    const otPay = Math.round((otHours * otRate) * 100) / 100;
     
     const grossPay = Number((basicSalary - undertimeDeduction + otPay).toFixed(2));
     
