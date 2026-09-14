@@ -9,6 +9,7 @@ import MasterInventory from './modules/MasterInventory';
 
 // NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
+import CreateOSModule from './modules/CreateOSModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -18,9 +19,10 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   
   // Updated to include the new split module route names
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders'>('none');
+  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
   
   const [companiesList, setCompaniesList] = useState<string[]>(['Surgicom', 'Olten', 'Ordent']);
 
@@ -163,7 +165,7 @@ export default function App() {
     if (activeModule !== 'none' && activeModule !== 'users') {
       // Map the active UI view to its underlying database permission key
       const requiredPermission = 
-        (activeModule === 'customers' || activeModule === 'sales_orders') ? 'sales' :
+        (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os') ? 'sales' :
         (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
         (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' : 
         activeModule;
@@ -211,7 +213,25 @@ export default function App() {
   }
 
   // ALL MODULE ROUTES
-  if (activeModule === 'customers') return <CustomerModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'customers') return (
+    <CustomerModule 
+      selectedCompany={selectedCompany!} 
+      loginUsername={loginUsername}
+      API_BASE_URL={API_BASE_URL} 
+      onBack={() => setActiveModule('none')} 
+      onRouteToOrderSlip={(id: string) => { setTargetCustomerId(id); setActiveModule('create_os'); }}
+    />
+  );
+
+  if (activeModule === 'create_os') return (
+    <CreateOSModule 
+      selectedCompany={selectedCompany!} 
+      loginUsername={loginUsername} 
+      API_BASE_URL={API_BASE_URL} 
+      initialCustomerId={targetCustomerId} 
+      onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }} 
+    />
+  );
 
   // UNIFIED MASTER INVENTORY ROUTE
   if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') {
