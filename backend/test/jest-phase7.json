@@ -1,0 +1,8 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testMatch": ["**/phase7.e2e-spec.ts"],
+  "transform": { "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": { "isolatedModules": true } }] },
+  "testTimeout": 60000
+}

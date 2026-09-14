@@ -32,18 +32,18 @@ model Employee {
   
   attendances            Attendance[]
   payrolls               Payroll[]
-  inventoryMovements     InventoryMovement[] // Ties employee to stock audits
+  inventoryMovements     InventoryMovement[]
   loanBalance            Float               @default(0)
   loanInstallment        Float               @default(0)
 }
 
 model Admin {
-  id       Int    @id @default(autoincrement())
-  username String @unique
+  id       Int     @id @default(autoincrement())
+  username String  @unique
   password String
-  role     String @default("Admin") // CRITICAL FIX: Prevent accidental Super Admin creation
+  role     String  @default("Admin")
   modules  Json?
-  status   String @default("Active")
+  status   String  @default("Active")
 }
 
 model Settings {
@@ -150,7 +150,7 @@ model InventoryMovement {
   productId     Int
   productName   String
   sku           String
-  type          String   // 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER'
+  type          String   
   quantity      Int
   previousStock Int
   newStock      Int
@@ -160,7 +160,6 @@ model InventoryMovement {
   user          String
   company       String
 
-  // --- Deep Accountability & Tracking ---
   batchNumber    String?
   expirationDate DateTime?
   
@@ -172,14 +171,14 @@ model InventoryMovement {
 }
 
 model Warehouse {
-  id        Int      @id @default(autoincrement())
-  company   String   // Ties the warehouse to the specific workspace
-  name      String   // e.g., "Main Medical Depot"
-  address   String   @default("Not Specified") 
-  status    String   @default("Active") // "Active" or "Inactive"
+  id       Int      @id @default(autoincrement())
+  company  String   
+  name     String   
+  address  String   @default("Not Specified") 
+  status   String   @default("Active") 
   createdAt DateTime @default(now())
 
-  inventoryMovements InventoryMovement[] // Tracks all ledger items hitting this warehouse
+  inventoryMovements InventoryMovement[] 
 }
 
 model WarehouseStock {
@@ -222,53 +221,78 @@ model Customer {
   email       String?
   address     String?
   creditLimit Float    @default(0)
-  balance     Float    @default(0) // Tracks Outstanding Receivables
+  balance     Float    @default(0) 
   createdAt   DateTime @default(now())
 
   orderSlips  OrderSlip[]
 }
 
 model OrderSlip {
-  id           String          @id @default(uuid())
-  osNumber     String          @unique
-  company      String
+  id          String         @id @default(uuid())
+  osNumber    String         @unique
+  company     String
   
-  customerId   String
-  customer     Customer        @relation(fields: [customerId], references: [id])
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id])
   
-  date         DateTime        @default(now())
-  status       String          @default("Draft") // Draft, Generated, Cancelled
+  date        DateTime       @default(now())
+  status      String         @default("Generated") 
+  processedAt DateTime?
+  processedBy String?
   
-  // Strict Decimal types for monetary precision
-  subtotal     Decimal         @db.Decimal(12, 2)
-  vatApplied   Boolean         @default(false)
-  vatRate      Decimal         @default(0.12) @db.Decimal(4, 2)
-  vatAmount    Decimal         @db.Decimal(12, 2)
-  grandTotal   Decimal         @db.Decimal(12, 2)
+  subtotal    Decimal        @db.Decimal(12, 2)
+  vatApplied  Boolean        @default(false)
+  vatRate     Decimal        @default(0.12) @db.Decimal(4, 2)
+  vatAmount   Decimal        @db.Decimal(12, 2)
+  grandTotal  Decimal        @db.Decimal(12, 2)
   
-  createdBy    String
-  updatedBy    String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  createdBy   String
+  updatedBy   String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
   
-  items        OrderSlipItem[]
+  items       OrderSlipItem[]
 
   @@index([company])
 }
 
 model OrderSlipItem {
-  id           String     @id @default(uuid())
+  id           String    @id @default(uuid())
   
   orderSlipId  String
-  orderSlip    OrderSlip  @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
+  orderSlip    OrderSlip @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
   
   productId    Int
-  product      Product    @relation(fields: [productId], references: [id])
+  product      Product   @relation(fields: [productId], references: [id])
   
   sku          String
-  productName  String     // Snapshot of name at time of order
+  productName  String    
   
   requestedQty Int
-  unitPrice    Decimal    @db.Decimal(12, 2)
-  lineTotal    Decimal    @db.Decimal(12, 2)
+  confirmedQty Int?      
+  shortageQty  Int?      
+  unitPrice    Decimal   @db.Decimal(12, 2)
+  lineTotal    Decimal   @db.Decimal(12, 2)
+}
+
+model Shortage {
+  id              String   @id @default(uuid())
+  company         String
+  orderSlipId     String
+  orderSlipItemId String   @unique
+  customerId      String
+  osNumber        String
+  sku             String
+  productName     String
+  requestedQty    Int
+  confirmedQty    Int
+  shortageQty     Int
+  status          String   @default("Open") 
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orderSlipId])
+  @@index([status, createdAt])
 }
