@@ -354,11 +354,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-3 px-5 font-bold text-slate-900">{item.productName}</td>
                           <td className={`py-3 px-3 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                           
-                          {/* WAREHOUSE BREAKDOWN TOOLTIP */}
-                          <td className={`py-3 px-3 text-center font-black border-r border-slate-200 relative group ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            <div className="inline-flex items-center justify-center border-b-2 border-dotted border-current cursor-help pb-0.5">
-                              {item.warehouseQty}
-                            </div>
+                      {/* WAREHOUSE BREAKDOWN TOOLTIP */}
+<td className={`py-3 px-3 text-center font-black border-r border-slate-200 relative group ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+  <div className="inline-flex items-center justify-center">
+    {item.warehouseQty}
+  </div>
                             
                             {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
                               <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
