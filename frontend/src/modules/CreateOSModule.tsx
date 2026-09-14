@@ -165,9 +165,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  const subtotal = draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0);
-  const vatAmount = isVatApplied ? subtotal * vatRate : 0;
-  const grandTotal = subtotal + vatAmount;
+  // --- PHASE 5: STRICT FINANCIAL MATH ---
+  const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
+  const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
+  const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
   const isFormValid = selectedCustomer && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0);
 
@@ -366,8 +367,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                               {totalAvailable > 0 && reqQty > totalAvailable && <span className="text-amber-600 font-bold text-[9px] uppercase tracking-widest">Short by {reqQty - totalAvailable}</span>}
                             </div>
                           </td>
-                          <td className="py-3 px-5 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
-                          <td className="py-3 px-5 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                          <td className="py-3 px-5 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                          <td className="py-3 px-5 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                           <td className="py-3 px-5 text-center"><button onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors">✕</button></td>
                         </tr>
                       );
@@ -388,15 +389,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="flex flex-wrap items-center gap-8 md:gap-12 w-full md:w-auto justify-end">
               <div className="text-right">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Subtotal</div>
-                <div className="font-bold text-slate-300">₱{subtotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                <div className="font-bold text-slate-300">₱{subtotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
               </div>
               <div className="text-right">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">VAT (12%)</div>
-                <div className="font-bold text-slate-300">₱{vatAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                <div className="font-bold text-slate-300">₱{vatAmount.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
               </div>
               <div className="text-right pl-6 border-l border-slate-700">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Grand Total</div>
-                <div className="text-3xl font-black text-white">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                <div className="text-3xl font-black text-white">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
               </div>
 
               <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="w-full md:w-auto px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
