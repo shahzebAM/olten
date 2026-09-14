@@ -279,14 +279,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
-  // Custom Date Range for Payroll Computation
   const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
 
   const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
 
-  // Modals & Status
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
@@ -301,7 +299,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // Attendance & Shifts
   const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [tempShiftEnd, setTempShiftEnd] = useState('17:00');
   const [shiftStart, setShiftStart] = useState('08:00');
@@ -821,7 +818,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     let totalGrossHours = Math.max(0, tOut - tIn);
     
-    // Always deduct 1 hour unpaid break
     if (totalGrossHours > 0) {
       totalGrossHours = Math.max(0, totalGrossHours - 1);
     }
@@ -905,7 +901,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     } catch (error) { showToast("Failed to delete log.", "error"); }
   };
 
-  // --- PAYROLL ENGINE ---
+  // --- EXCEL AGGREGATE PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
     setActiveEmployee(emp);
     const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
@@ -922,45 +918,55 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
-    let totalMinsWorked = 0; let otMins = 0; let regMins = 0;
+    // 1. Calculate Aggregate Total Minutes Worked Across All Days
+    let totalMinsWorked = 0;
 
     empLogs.forEach(log => {
         if (!log.timeIn || !log.timeIn.includes(':')) { 
-            const floatMins = Math.round(log.hours * 60);
-            totalMinsWorked += floatMins; 
-            regMins += Math.min(floatMins, 8 * 60);
+            totalMinsWorked += Math.round(log.hours * 60); 
         } 
         else {
-            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-            totalMinsWorked += Math.round(shiftCalc.total * 60);
-            otMins += Math.round(shiftCalc.ot * 60);
-            regMins += Math.round(shiftCalc.reg * 60);
+            const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
+            let tIn = timeToFloat(log.timeIn);
+            let tOut = timeToFloat(log.timeOut);
+            
+            if (tOut < tIn) tOut += 24; 
+            let grossHrs = tOut - tIn;
+            
+            // Deduct 1-hour unpaid break unconditionally for any shifted work
+            if (grossHrs > 0) {
+              grossHrs = Math.max(0, grossHrs - 1);
+            }
+            totalMinsWorked += Math.round(grossHrs * 60);
         }
     });
 
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
+    // Hourly Rates
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
     const requiredMins = days * 8 * 60;
-    const undertimeMins = Math.max(0, requiredMins - regMins);
-
-    // FIX: Force Excel's HH.MM decimal truncation rule
-    const toExcelDecimal = (mins: number) => {
-      const h = Math.floor(mins / 60);
-      const m = Math.round(mins % 60);
-      return parseFloat(`${h}.${m.toString().padStart(2, '0')}`);
-    };
-
-    const excelOtHours = toExcelDecimal(otMins);
-    const excelUndertimeHours = toExcelDecimal(undertimeMins);
-
-    const undertimeDeduction = Math.round((excelUndertimeHours * ratePerHour) * 100) / 100;
-    const otRate = ratePerHour * 1.25;
-    const otPay = Math.round((excelOtHours * otRate) * 100) / 100;
     
+    // 2. Excel logic offsets lates with OT directly via aggregate difference
+    const diffMins = totalMinsWorked - requiredMins;
+    
+    let otMins = 0;
+    let undertimeMins = 0;
+    
+    if (diffMins > 0) {
+        otMins = diffMins;
+    } else {
+        undertimeMins = Math.abs(diffMins);
+    }
+
+    // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
+    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
+    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
+    
+    // 4. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
@@ -984,7 +990,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: excelOtHours, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
