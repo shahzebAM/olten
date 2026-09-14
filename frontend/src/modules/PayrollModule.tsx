@@ -92,7 +92,6 @@ const TimePicker12h = ({ value, onChange, disabled = false, compact = false }: a
   );
 };
 
-// ADDED COMPACT PROP FOR THE NEW PAYROLL MODAL
 const InputField = ({ label, required = false, type = "text", placeholder = "", value, onChange, step, disabled = false, compact = false }: any) => {
   const renderInput = () => {
     if (type === 'date') {
@@ -362,27 +361,17 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     } catch (error) { console.warn("Could not connect to /settings backend endpoint."); }
   };
 
-const fetchEmployees = async () => {
+  const fetchEmployees = async () => {
     try {
-      // FIX: Added ?limit=1000 to prevent the backend from cutting off the list at 10 or 20
-      const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=1000`, { 
-        cache: 'no-store', 
-        headers: { 'Cache-Control': 'no-cache' } 
-      });
-      
+      // FIX: Added limit=5000 to fetch all employees without pagination cutoffs
+      const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
       const data = await response.json();
-      
-      // FIX: Safely handle both paginated objects { data: [...] } and raw arrays [...]
-      const list = Array.isArray(data) ? data : (data.data || []);
-      setEmployees(list);
-      
-    } catch (error) { 
-      showToast("Could not fetch employees.", "error"); 
-    }
+      setEmployees(Array.isArray(data) ? data : (data.data || []));
+    } catch (error) { showToast("Could not fetch employees.", "error"); }
   };
 
-const fetchAttendances = async () => {
+  const fetchAttendances = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
@@ -391,7 +380,7 @@ const fetchAttendances = async () => {
     } catch (error) { console.error(error); }
   };
 
-const fetchPayrolls = async () => {
+  const fetchPayrolls = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/employees/payroll/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
@@ -725,7 +714,6 @@ const handleImportAttendance = async (event: any) => {
       showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
     }
 
-    // FRONTEND UNIQUE EMPLOYEE ID VALIDATION
     const empIdToCheck = formData.employeeId.trim().toLowerCase();
     const isDuplicate = employees.find(emp => 
         emp.employeeId?.toLowerCase() === empIdToCheck && 
@@ -830,38 +818,21 @@ const handleImportAttendance = async (event: any) => {
     if (tIn < sIn && (sIn - tIn) >= 12) { tIn += 24; tOut += 24; } 
     else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
 
-let totalGrossHours = Math.max(0, tOut - tIn);
+    let totalGrossHours = Math.max(0, tOut - tIn);
+    if (totalGrossHours >= 5) totalGrossHours -= 1; 
 
-// Always deduct 1-hour unpaid break if employee worked any amount of time
-if (totalGrossHours > 0) {
-  totalGrossHours = Math.max(0, totalGrossHours - 1);
-}
+    const maxRegularHours = 8;
+    let regHrs = Math.min(totalGrossHours, maxRegularHours);
+    let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
 
-const maxRegularHours = 8;
+    let earlyOt = 0; let lateOt = 0;
+    if (totalOt > 0) {
+      if (tIn < sIn) { earlyOt = Math.min(totalOt, sIn - tIn); lateOt = totalOt - earlyOt; } 
+      else { lateOt = totalOt; }
+    }
 
-let regHrs = Math.min(totalGrossHours, maxRegularHours);
-let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
-
-let earlyOt = 0;
-let lateOt = 0;
-
-if (totalOt > 0) {
-  if (tIn < sIn) {
-    earlyOt = Math.min(totalOt, sIn - tIn);
-    lateOt = totalOt - earlyOt;
-  } else {
-    lateOt = totalOt;
-  }
-}
-
-return {
-  reg: regHrs,
-  ot: totalOt,
-  earlyOt: earlyOt,
-  lateOt: lateOt,
-  total: regHrs + totalOt
-};
-};
+    return { reg: regHrs, ot: totalOt, earlyOt: earlyOt, lateOt: lateOt, total: regHrs + totalOt };
+  };
 
   const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
     setDailyTimeLogs((prev) => {
@@ -946,12 +917,20 @@ return {
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && a.date.split('T')[0].startsWith(payrollComputeMonth));
     
-    let totalHoursWorked = 0; let otHrs = 0;
+    // FIX: Using precise minutes calculation to avoid float drift
+    let totalMinsWorked = 0; let otMins = 0; let regMins = 0;
+
     empLogs.forEach(log => {
-        if (!log.timeIn || !log.timeIn.includes(':')) { totalHoursWorked += log.hours; } 
+        if (!log.timeIn || !log.timeIn.includes(':')) { 
+            const floatMins = Math.round(log.hours * 60);
+            totalMinsWorked += floatMins; 
+            regMins += Math.min(floatMins, 8 * 60);
+        } 
         else {
             const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-            totalHoursWorked += shiftCalc.total; otHrs += shiftCalc.ot; 
+            totalMinsWorked += Math.round(shiftCalc.total * 60);
+            otMins += Math.round(shiftCalc.ot * 60);
+            regMins += Math.round(shiftCalc.reg * 60);
         }
     });
 
@@ -959,16 +938,17 @@ return {
     const days = parseFloat(payrollData.daysWorked) || 0;
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
-    const requiredHrs = days * 8; 
-    const otPay = otHrs * (ratePerHour * 1.25); 
-
-    // CRITICAL MATH FIX: Treat all logged hours (Total) as an offset to Required Hours
-    let undertimeDeduction = 0;
-    if (totalHoursWorked < requiredHrs) { 
-        undertimeDeduction = (requiredHrs - totalHoursWorked) * ratePerHour; 
-    }
-
-    const grossPay = (basicSalary + otPay) - undertimeDeduction;
+    
+    // Exact requested math format
+    const requiredMins = days * 8 * 60;
+    const undertimeMins = Math.max(0, requiredMins - regMins);
+    
+    const undertimeDeduction = (undertimeMins / 60) * ratePerHour;
+    const otRate = ratePerHour * 1.25;
+    const otPay = (otMins / 60) * otRate;
+    
+    // Gross Pay strictly relies on Regular Hours (Basic - Undertime) + OT Pay
+    const grossPay = basicSalary - undertimeDeduction + otPay;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
@@ -989,7 +969,14 @@ return {
     const totalDeductions = cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed;
     const netPay = grossPay - totalDeductions;
 
-    return { totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed };
+    return { 
+      totalHoursWorked: totalMinsWorked / 60, 
+      ratePerDay, ratePerHour, 
+      requiredHrs: requiredMins / 60, 
+      otHrs: otMins / 60, 
+      otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
+    };
   };
 
   const computed = calculatePayroll();
