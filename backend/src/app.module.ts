@@ -6,6 +6,8 @@ import { DocumentationModule } from './documentation/documentation.module';
 import { CompaniesController } from './companies/companies.controller';
 import { SettingsController } from './settings/settings.controller';
 import { MasterInventoryController } from './master-inventory/master-inventory.controller';
+import { SalesController } from './sales/sales.controller';
+import { OrderSlipsController } from './sales/order-slips.controller';
 
 @Module({
   imports: [
@@ -16,7 +18,9 @@ import { MasterInventoryController } from './master-inventory/master-inventory.c
     AppController,
     MasterInventoryController,
     CompaniesController,
-    SettingsController
+    SettingsController,
+        SalesController,
+    OrderSlipsController
   ],
   providers: [AppService],
 })
