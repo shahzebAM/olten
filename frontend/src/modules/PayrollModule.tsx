@@ -362,30 +362,41 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     } catch (error) { console.warn("Could not connect to /settings backend endpoint."); }
   };
 
-  const fetchEmployees = async () => {
+const fetchEmployees = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      // FIX: Added ?limit=1000 to prevent the backend from cutting off the list at 10 or 20
+      const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=1000`, { 
+        cache: 'no-store', 
+        headers: { 'Cache-Control': 'no-cache' } 
+      });
+      
       if (!response.ok) throw new Error();
       const data = await response.json();
-      setEmployees(Array.isArray(data) ? data : []);
-    } catch (error) { showToast("Could not fetch employees.", "error"); }
+      
+      // FIX: Safely handle both paginated objects { data: [...] } and raw arrays [...]
+      const list = Array.isArray(data) ? data : (data.data || []);
+      setEmployees(list);
+      
+    } catch (error) { 
+      showToast("Could not fetch employees.", "error"); 
+    }
   };
 
-  const fetchAttendances = async () => {
+const fetchAttendances = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance/all`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
       const data = await response.json();
-      setAttendances(Array.isArray(data) ? data : []);
+      setAttendances(Array.isArray(data) ? data : (data.data || []));
     } catch (error) { console.error(error); }
   };
 
-  const fetchPayrolls = async () => {
+const fetchPayrolls = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/payroll/all`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`${API_BASE_URL}/employees/payroll/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error();
       const data = await response.json();
-      setPayrolls(Array.isArray(data) ? data : []);
+      setPayrolls(Array.isArray(data) ? data : (data.data || []));
     } catch (error) { console.error(error); }
   };
 

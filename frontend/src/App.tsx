@@ -6,6 +6,7 @@ import PayrollModule from './modules/PayrollModule';
 import AiDocsModule from './modules/AiDocsModule';
 import DeveloperModule from './modules/DeveloperModule';
 import MasterInventory from './modules/MasterInventory';
+import OrderSlipsModule from './modules/OrderSlipsModule';
 
 // NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
@@ -241,6 +242,16 @@ export default function App() {
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   
+  // Inside your main render logic where other routes live:
+  if (activeModule === 'sales_orders') return (
+    <OrderSlipsModule 
+      selectedCompany={selectedCompany!} 
+      loginUsername={loginUsername} 
+      API_BASE_URL={API_BASE_URL} 
+      onBack={() => setActiveModule('none')} 
+    />
+  );
+
   if (activeModule === 'users') return (
     <UserControlModule 
       adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} 

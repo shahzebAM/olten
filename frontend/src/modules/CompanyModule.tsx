@@ -187,6 +187,15 @@ export default function CompanyModule({
                 <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft and process new customer orders.</p>
               </div>
             </button>
+            <button onClick={() => onSelectModule('sales_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-violet-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+              <div>
+                <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <svg className="w-5 h-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-violet-950 transition-colors group-hover:text-violet-700">O.S. Ledger</h2>
+                <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">View, print, and manage generated order slips.</p>
+              </div>
+            </button>
           </>
         )}
 
