@@ -913,7 +913,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0' });
     setIsPayrollModalOpen(true);
   };
-const calculatePayroll = () => {
+
+  const calculatePayroll = () => {
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
@@ -961,21 +962,11 @@ const calculatePayroll = () => {
         undertimeMins = Math.abs(diffMins);
     }
 
-    // 3. STRICT EXCEL DECIMAL FORCING (Converts "15h 46m" directly to 15.46)
-    const toExcelDecimal = (mins: number) => {
-      const h = Math.floor(mins / 60);
-      const m = Math.round(mins % 60);
-      return parseFloat(`${h}.${m.toString().padStart(2, '0')}`);
-    };
-
-    const excelOtHours = toExcelDecimal(otMins);
-    const excelUndertimeHours = toExcelDecimal(undertimeMins);
-
-    // 4. Exact unrounded time multipliers to prevent decimal truncation gaps
-    const undertimeDeduction = Math.round((excelUndertimeHours * ratePerHour) * 100) / 100;
-    const otPay = Math.round((excelOtHours * ratePerHour * 1.25) * 100) / 100;
+    // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
+    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
+    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
     
-    // 5. Gross Pay
+    // 4. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
@@ -999,7 +990,7 @@ const calculatePayroll = () => {
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: excelOtHours, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
