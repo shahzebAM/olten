@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
-interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; warehouseQty: number; }
-interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; warehouseQty: number; }
+interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; }
+interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; }
 
 interface CreateOSModuleProps {
   selectedCompany: string;
@@ -37,7 +37,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- FETCH INITIAL CUSTOMERS (Safe Fetch) ---
+  // --- FETCH INITIAL CUSTOMERS ---
   useEffect(() => {
     fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
       .then(res => res.json())
@@ -75,13 +75,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       } finally {
         setIsSearchingProducts(false);
       }
-    }, 400); // 400ms debounce
+    }, 400);
 
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
 
-
-  // --- FILTERED CUSTOMERS (Client-side fast filter) ---
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.toLowerCase();
     return customers.filter(c => 
@@ -92,7 +90,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       (c.email && c.email.toLowerCase().includes(query))
     );
   }, [customers, customerSearch]);
-
 
   // --- ACTIONS ---
   const handleSelectCustomer = (c: Customer) => {
@@ -110,6 +107,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       productId: p.id, 
       sku: p.sku, 
       productName: p.name, 
+      officeStock: p.officeStock,
       warehouseQty: p.warehouseQty,
       requestedQty: 1, 
       unitPrice: p.sellingPrice || 0, 
@@ -138,7 +136,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setDraftItems(draftItems.filter((_, i) => i !== index));
   };
 
-  // --- PHASE 4: REFRESH LIVE STOCK ---
   const handleRefreshStock = async () => {
     if (draftItems.length === 0) return;
     setIsRefreshingStock(true);
@@ -156,10 +153,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       setDraftItems(prev => prev.map(item => ({
         ...item,
-        warehouseQty: stockMap[item.productId] ?? item.warehouseQty
+        officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock,
+        warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty
       })));
       
-      showToast("Master stock validated with backend.", "success");
+      showToast("Live stock validated with backend.", "success");
     } catch (e) {
       showToast("Failed to refresh stock.", "error");
     } finally {
@@ -167,7 +165,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  // --- FINANCIAL MATH ---
   const subtotal = draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0);
   const vatAmount = isVatApplied ? subtotal * vatRate : 0;
   const grandTotal = subtotal + vatAmount;
@@ -200,19 +197,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || "Failed to create Order Slip.");
-      }
+      if (!res.ok) throw new Error("Failed to create Order Slip.");
 
       showToast("Order Slip generated successfully.", "success");
-      
-      // Reset form
       setDraftItems([]);
       setSelectedCustomer(null);
       setCustomerSearch('');
       setIsVatApplied(false);
-      
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
     } finally {
@@ -229,14 +220,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       )}
 
       <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
-        <div>
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2>
-        </div>
+        <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Back to Gateway</button>
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 sm:p-8">
-        <div className="max-w-6xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
 
           {/* STEP 1: CUSTOMER SELECTION */}
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
@@ -259,11 +248,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div>
                     ) : (
                       filteredCustomers.map(c => (
-                        <div 
-                          key={c.id} 
-                          onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }}
-                          className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group"
-                        >
+                        <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group">
                           <div>
                             <span className="font-bold text-slate-900 group-hover:text-indigo-700 block">{c.name}</span>
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mt-0.5">{c.company}</span>
@@ -279,9 +264,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 p-5 rounded-xl">
                 <div>
                   <h4 className="text-lg font-black text-indigo-900">{selectedCustomer.name}</h4>
-                  <div className="text-xs font-medium text-indigo-700 mt-1">
-                    {selectedCustomer.company} • {selectedCustomer.contact || 'No Direct Contact'} • {selectedCustomer.phone || 'No Phone'}
-                  </div>
+                  <div className="text-xs font-medium text-indigo-700 mt-1">{selectedCustomer.company} • {selectedCustomer.contact || 'No Direct Contact'} • {selectedCustomer.phone || 'No Phone'}</div>
                   <div className="text-xs text-indigo-500 mt-1 max-w-md truncate">{selectedCustomer.address || 'No Address Provided'}</div>
                 </div>
                 <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-bold text-[10px] uppercase tracking-widest rounded-lg transition-colors">Change Customer</button>
@@ -294,11 +277,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex items-center gap-4">
                 <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Step 2: Add Products</h3>
-                <button 
-                  onClick={handleRefreshStock} 
-                  disabled={isRefreshingStock || draftItems.length === 0}
-                  className="px-3 py-1.5 bg-slate-200 text-slate-600 hover:bg-slate-300 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-md transition-colors"
-                >
+                <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="px-3 py-1.5 bg-slate-200 text-slate-600 hover:bg-slate-300 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-md transition-colors">
                   {isRefreshingStock ? 'Refreshing...' : 'Refresh Stock'}
                 </button>
               </div>
@@ -316,9 +295,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 />
                 
                 {isSearchingProducts && (
-                  <div className="absolute right-4 top-3">
-                    <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                  </div>
+                  <div className="absolute right-4 top-3"><div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
                 )}
 
                 {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
@@ -327,11 +304,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <div className="p-4 text-slate-500 text-sm font-medium text-center">No products match your search.</div>
                     ) : (
                       productSearchResults.map(p => (
-                        <div 
-                          key={p.id} 
-                          onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }}
-                          className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-100 cursor-pointer flex justify-between items-center group"
-                        >
+                        <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-100 cursor-pointer flex justify-between items-center group">
                           <div className="flex flex-col">
                             <span className="font-bold text-slate-900 group-hover:text-indigo-700">{p.name}</span>
                             <div className="flex items-center gap-2 mt-1">
@@ -341,8 +314,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           </div>
                           <div className="text-right">
                             <div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div>
-                            <div className={`text-[10px] font-black uppercase tracking-widest mt-1 ${p.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              Warehouse: {p.warehouseQty}
+                            <div className="text-[9px] font-black uppercase tracking-widest mt-1 flex gap-2 justify-end">
+                              <span className={p.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}>Off: {p.officeStock}</span>
+                              <span className={p.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}>Whse: {p.warehouseQty}</span>
                             </div>
                           </div>
                         </div>
@@ -354,50 +328,47 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
 
             <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-sm whitespace-nowrap min-w-[800px]">
+              <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
                 <thead className="bg-white border-b border-slate-200">
                   <tr>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Description</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">Warehouse Qty</th>
-                    <th className="py-4 px-6 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">Requested Qty</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Unit Price</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Line Total</th>
-                    <th className="w-16 text-center"></th>
+                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
+                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Description</th>
+                    <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20">Off Qty</th>
+                    <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20 border-r border-slate-200">Whse Qty</th>
+                    <th className="py-4 px-5 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-36 bg-indigo-50/50">Requested</th>
+                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-28">Unit Price</th>
+                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Line Total</th>
+                    <th className="w-12 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {draftItems.length === 0 ? (
-                    <tr><td colSpan={7} className="py-12 text-center text-slate-400 font-medium">Search and select a product to begin building the order.</td></tr>
+                    <tr><td colSpan={8} className="py-12 text-center text-slate-400 font-medium">Search and select a product to begin building the order.</td></tr>
                   ) : (
                     draftItems.map((item, idx) => {
                       const reqQty = Number(item.requestedQty) || 0;
+                      const totalAvailable = item.officeStock + item.warehouseQty;
+
                       return (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-3 px-6 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
-                          <td className="py-3 px-6 font-bold text-slate-900">{item.productName}</td>
-                          <td className="py-3 px-6 text-center font-black text-slate-700">{item.warehouseQty}</td>
+                          <td className="py-3 px-5 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
+                          <td className="py-3 px-5 font-bold text-slate-900">{item.productName}</td>
+                          <td className={`py-3 px-3 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
+                          <td className={`py-3 px-3 text-center font-black border-r border-slate-200 ${item.warehouseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.warehouseQty}</td>
                           <td className="py-2 px-4 bg-indigo-50/30">
                             <input 
-                              type="number" 
-                              min="1" 
-                              placeholder="0"
-                              value={item.requestedQty} 
-                              onChange={e => handleUpdateQty(idx, e.target.value)} 
+                              type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
                               className="w-full px-2 py-1.5 text-center font-black text-lg text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
                             />
-                            {/* --- PHASE 4: EXPLICIT STOCK STATUS TEXT --- */}
                             <div className="mt-1 text-center">
-                              {item.warehouseQty === 0 && <span className="text-rose-600 font-bold text-[9px] uppercase tracking-widest">Out of Stock</span>}
-                              {item.warehouseQty > 0 && reqQty <= item.warehouseQty && <span className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest">Stock Sufficient</span>}
-                              {item.warehouseQty > 0 && reqQty > item.warehouseQty && <span className="text-amber-600 font-bold text-[9px] uppercase tracking-widest">Short by {reqQty - item.warehouseQty}</span>}
+                              {totalAvailable === 0 && <span className="text-rose-600 font-bold text-[9px] uppercase tracking-widest">Out of Stock</span>}
+                              {totalAvailable > 0 && reqQty <= totalAvailable && <span className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest">Stock Sufficient</span>}
+                              {totalAvailable > 0 && reqQty > totalAvailable && <span className="text-amber-600 font-bold text-[9px] uppercase tracking-widest">Short by {reqQty - totalAvailable}</span>}
                             </div>
                           </td>
-                          <td className="py-3 px-6 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
-                          <td className="py-3 px-6 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
-                          <td className="py-3 px-6 text-center">
-                            <button onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors" title="Remove Item">✕</button>
-                          </td>
+                          <td className="py-3 px-5 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                          <td className="py-3 px-5 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                          <td className="py-3 px-5 text-center"><button onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors">✕</button></td>
                         </tr>
                       );
                     })
@@ -428,11 +399,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <div className="text-3xl font-black text-white">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
               </div>
 
-              <button 
-                onClick={handleSubmit} 
-                disabled={!isFormValid || isProcessing} 
-                className="w-full md:w-auto px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg"
-              >
+              <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="w-full md:w-auto px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
                 {isProcessing ? 'Processing...' : 'Finalize & Generate O.S.'}
               </button>
             </div>
