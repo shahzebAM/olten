@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 @Controller('sales/order-slips')
 export class OrderSlipsController {
 
-  // --- PHASE 4: EFFICIENT SERVER-SIDE SEARCH WITH LIVE INVENTORY ---
+  // --- PHASE 4 & 5: EFFICIENT SERVER-SIDE SEARCH WITH WAREHOUSE BREAKDOWN ---
   @Get('search-products')
   async searchProducts(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
@@ -27,39 +27,65 @@ export class OrderSlipsController {
 
     if (products.length === 0) return [];
 
-    // 2. Fetch precise master warehouse stock for these matched products only
+    // 2. Fetch precise master warehouse stock and warehouse names
     const productIds = products.map(p => p.id);
-    const hubStocks = await prisma.warehouseStock.findMany({
-      where: { company, productId: { in: productIds } }
-    });
+    const [hubStocks, allWarehouses] = await Promise.all([
+      prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } }),
+      prisma.warehouse.findMany({ where: { company } })
+    ]);
 
-    // 3. Map both stock totals back to the products
+    // Create a fast dictionary to look up Warehouse Names by their IDs
+    const whMap = new Map(allWarehouses.map(w => [String(w.id), w.name]));
+
+    // 3. Map both stock totals and granular breakdown back to the products
     return products.map(p => {
-      const warehouseQty = hubStocks.filter(h => h.productId === p.id).reduce((sum, h) => sum + h.quantity, 0);
+      const productStocks = hubStocks.filter(h => h.productId === p.id);
+      const warehouseQty = productStocks.reduce((sum, h) => sum + h.quantity, 0);
+      
+      const warehouseBreakdown = productStocks
+        .filter(h => h.quantity > 0)
+        .map(h => ({
+          name: whMap.get(String(h.warehouseId)) || `Depot ${h.warehouseId}`,
+          quantity: h.quantity
+        }));
+
       return { 
         ...p, 
         officeStock: p.currentStock || 0,
-        warehouseQty 
+        warehouseQty,
+        warehouseBreakdown
       };
     });
   }
 
-  // --- PHASE 4: LIVE STOCK REFRESH ---
+  // --- PHASE 4 & 5: LIVE STOCK REFRESH WITH BREAKDOWN ---
   @Post('refresh-stock')
   async refreshStock(@Body() data: { company: string, productIds: number[] }) {
     const { company, productIds } = data;
     if (!company || !productIds || productIds.length === 0) return {};
 
-    const [dbProducts, hubStocks] = await Promise.all([
+    const [dbProducts, hubStocks, allWarehouses] = await Promise.all([
       prisma.product.findMany({ where: { company, id: { in: productIds } } }),
-      prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } })
+      prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } }),
+      prisma.warehouse.findMany({ where: { company } })
     ]);
 
-    const stockMap: Record<number, { officeStock: number, warehouseQty: number }> = {};
-    productIds.forEach(id => stockMap[id] = { officeStock: 0, warehouseQty: 0 });
+    const whMap = new Map(allWarehouses.map(w => [String(w.id), w.name]));
+    const stockMap: Record<number, { officeStock: number, warehouseQty: number, warehouseBreakdown: any[] }> = {};
+    
+    productIds.forEach(id => stockMap[id] = { officeStock: 0, warehouseQty: 0, warehouseBreakdown: [] });
 
     dbProducts.forEach(p => { stockMap[p.id].officeStock = p.currentStock || 0; });
-    hubStocks.forEach(h => { stockMap[h.productId].warehouseQty += h.quantity; });
+    
+    hubStocks.forEach(h => { 
+      stockMap[h.productId].warehouseQty += h.quantity;
+      if (h.quantity > 0) {
+        stockMap[h.productId].warehouseBreakdown.push({
+          name: whMap.get(String(h.warehouseId)) || `Depot ${h.warehouseId}`,
+          quantity: h.quantity
+        });
+      }
+    });
 
     return stockMap;
   }
