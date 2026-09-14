@@ -205,17 +205,7 @@ model WarehouseTransfer {
   company       String
 }
 
-model Supplier {
-  id       String  @id @default(uuid())
-  company  String
-  name     String
-  contact  String?
-  phone    String?
-  email    String?
-  balance  Float   @default(0) 
-  isActive Boolean @default(true)
-  pos      PurchaseOrder[] // <-- Add this relationship back
-}
+
 
 model Company {
   id        String   @id @default(uuid())
@@ -234,30 +224,4 @@ model Customer {
   creditLimit Float    @default(0)
   balance     Float    @default(0) // Tracks Outstanding Receivables
   createdAt   DateTime @default(now())
-}
-
-
-model PurchaseOrder {
-  id          String              @id @default(uuid())
-  company     String
-  poNumber    String
-  supplierId  String
-  supplier    Supplier            @relation(fields: [supplierId], references: [id])
-  date        DateTime            @default(now())
-  status      String              @default("PENDING") // PENDING, APPROVED, RECEIVED, CANCELLED
-  totalAmount Float               @default(0)
-  items       PurchaseOrderItem[]
-  user        String
-}
-
-model PurchaseOrderItem {
-  id          String        @id @default(uuid())
-  poId        String
-  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  productId   Int
-  sku         String
-  productName String
-  quantity    Int
-  unitPrice   Float
-  total       Float
 }
