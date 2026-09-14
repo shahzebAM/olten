@@ -11,7 +11,7 @@ export class OrderSlipsController {
   async searchProducts(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
 
-    // 1. Find matching products efficiently (limit to top 15 results)
+    // 1. Find matching products efficiently (limit to top 15 results, include currentStock)
     const products = await prisma.product.findMany({
       where: {
         company,
@@ -22,7 +22,7 @@ export class OrderSlipsController {
         ]
       },
       take: 15,
-      select: { id: true, sku: true, name: true, category: true, sellingPrice: true }
+      select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true }
     });
 
     if (products.length === 0) return [];
@@ -33,10 +33,14 @@ export class OrderSlipsController {
       where: { company, productId: { in: productIds } }
     });
 
-    // 3. Map stock totals back to the products
+    // 3. Map both stock totals back to the products
     return products.map(p => {
       const warehouseQty = hubStocks.filter(h => h.productId === p.id).reduce((sum, h) => sum + h.quantity, 0);
-      return { ...p, warehouseQty };
+      return { 
+        ...p, 
+        officeStock: p.currentStock || 0,
+        warehouseQty 
+      };
     });
   }
 
@@ -46,13 +50,16 @@ export class OrderSlipsController {
     const { company, productIds } = data;
     if (!company || !productIds || productIds.length === 0) return {};
 
-    const hubStocks = await prisma.warehouseStock.findMany({
-      where: { company, productId: { in: productIds } }
-    });
+    const [dbProducts, hubStocks] = await Promise.all([
+      prisma.product.findMany({ where: { company, id: { in: productIds } } }),
+      prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } })
+    ]);
 
-    const stockMap: Record<number, number> = {};
-    productIds.forEach(id => stockMap[id] = 0);
-    hubStocks.forEach(h => { stockMap[h.productId] += h.quantity; });
+    const stockMap: Record<number, { officeStock: number, warehouseQty: number }> = {};
+    productIds.forEach(id => stockMap[id] = { officeStock: 0, warehouseQty: 0 });
+
+    dbProducts.forEach(p => { stockMap[p.id].officeStock = p.currentStock || 0; });
+    hubStocks.forEach(h => { stockMap[h.productId].warehouseQty += h.quantity; });
 
     return stockMap;
   }
@@ -75,8 +82,8 @@ export class OrderSlipsController {
       const dbProducts = await tx.product.findMany({ where: { id: { in: productIds }, company } });
       const dbStocks = await tx.warehouseStock.findMany({ where: { productId: { in: productIds }, company } });
 
-let calculatedSubtotal = 0;
-const cleanItems: any[] = [];
+      let calculatedSubtotal = 0;
+      const cleanItems: any[] = [];
 
       for (const item of items) {
         const requestedQty = Number(item.requestedQty);
@@ -87,8 +94,6 @@ const cleanItems: any[] = [];
         const product = dbProducts.find(p => p.id === Number(item.productId));
         if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
 
-        // Ensure we record actual values from the DB to prevent spoofing
-        const actualWarehouseQty = dbStocks.filter(s => s.productId === product.id).reduce((acc, curr) => acc + curr.quantity, 0);
         const unitPrice = Number(product.sellingPrice); 
         const lineTotal = requestedQty * unitPrice;
         
