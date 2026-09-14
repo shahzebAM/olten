@@ -332,7 +332,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            <div className="overflow-x-auto w-full pb-32 -mb-32">
+            <div className="overflow-x-auto w-full min-h-[220px] pb-4">
               <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
                 <thead className="bg-white border-b border-slate-200">
                   <tr>
