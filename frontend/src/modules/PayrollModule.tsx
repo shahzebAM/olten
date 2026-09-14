@@ -32,7 +32,7 @@ const format12Hour = (time24: string) => {
 
 const formatMoney = (val: number) => {
   if (!val || val === 0) return '-';
-  return Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 const formatDecToHM = (decimalHours: number) => {
@@ -279,12 +279,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
+  // Custom Date Range for Payroll Computation
   const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
 
   const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
 
+  // Modals & Status
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
@@ -299,6 +301,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
+  // Attendance & Shifts
   const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [tempShiftEnd, setTempShiftEnd] = useState('17:00');
   const [shiftStart, setShiftStart] = useState('08:00');
@@ -802,7 +805,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     finally { setIsSaving(false); }
   };
 
-  // FIX: Unconditional 1-hour unpaid break deduction for ANY shifted work
   const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
     if (!tInStr || !tOutStr || !tInStr.includes(':')) return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
     const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
@@ -819,7 +821,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     let totalGrossHours = Math.max(0, tOut - tIn);
     
-    // Always deduct 1 hour unpaid break, even if they worked a short shift
     if (totalGrossHours > 0) {
       totalGrossHours = Math.max(0, totalGrossHours - 1);
     }
@@ -920,7 +921,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     if (!activeEmployee) return null;
     const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
-    // FIX: Precise minutes calculation
     let totalMinsWorked = 0; let otMins = 0; let regMins = 0;
 
     empLogs.forEach(log => {
@@ -940,14 +940,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
-    // FIX: STRICT FINANCIAL ROUNDING (Prevents cent-drift against Excel)
-    const ratePerDay = days > 0 ? Number((basicSalary / days).toFixed(2)) : 0;
-    const ratePerHour = Number((ratePerDay / 8).toFixed(2));
+    // FIX: Match Excel's daily fractional calculation sequence.
+    const ratePerDay = days > 0 ? Math.round((basicSalary / days) * 100) / 100 : 0;
+    const ratePerHour = Math.round((ratePerDay / 8) * 100) / 100;
     
     const requiredMins = days * 8 * 60;
     const undertimeMins = Math.max(0, requiredMins - regMins);
     
-    // FIX: Match Excel's intermediate fractional rounding behavior
+    // Truncate/Round the intermediate hours to match standard Excel column formats
     const undertimeHours = Math.round((undertimeMins / 60) * 100) / 100;
     const otHours = Math.round((otMins / 60) * 100) / 100;
 
@@ -955,7 +955,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const otRate = Math.round((ratePerHour * 1.25) * 100) / 100;
     const otPay = Math.round((otHours * otRate) * 100) / 100;
     
-    const grossPay = Number((basicSalary - undertimeDeduction + otPay).toFixed(2));
+    // Final Gross Pay is firmly rounded to 2 decimals
+    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
@@ -965,20 +966,20 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     let companyLoanDed = parseFloat(payrollData.companyLoan) || 0;
     if (activeEmployee && companyLoanDed > (activeEmployee.loanBalance || 0)) { companyLoanDed = activeEmployee.loanBalance || 0; }
 
-    const taxableIncome = Number((grossPay - sssDed - pagIbigDed - philhealthDed).toFixed(2));
+    const taxableIncome = Math.round((grossPay - sssDed - pagIbigDed - philhealthDed) * 100) / 100;
     let autoTax = 0;
 
     if (payrollData.isDeclared && taxableIncome > 0) {
       const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
-      autoTax = Number((taxResult.tax).toFixed(2));
+      autoTax = Math.round(taxResult.tax * 100) / 100;
     }
 
-    const totalDeductions = Number((cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed).toFixed(2));
-    const netPay = Number((grossPay - totalDeductions).toFixed(2));
+    const totalDeductions = Math.round((cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed) * 100) / 100;
+    const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
 
     return { 
       totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
@@ -1218,6 +1219,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 <div className="relative w-full">
                   <div className="px-4 py-2.5 border rounded-lg text-sm bg-white flex items-center justify-between border-slate-300 text-slate-800 shadow-sm pointer-events-none">
                     <span>{formatMDY(editLogForm.date)}</span>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                   </div>
                   <input type="date" value={editLogForm.date} onChange={(e) => setEditLogForm({...editLogForm, date: e.target.value})} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                 </div>
@@ -1435,109 +1437,6 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                     </div>
                   );
                 })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* COMPUTE PAYROLL MODAL */}
-      {isPayrollModalOpen && activeEmployee && computed && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
-              <div>
-                <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
-                <p className="text-[10px] sm:text-xs text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
-              </div>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
-            </div>
-            <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
-              <div className="space-y-3">
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
-                </div>
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
-                  <div className="flex flex-col w-full">
-                    <InputField compact type="number" step="0.01" label="Cash Advance" value={payrollData.cashAdvance} onChange={(e: any) => setPayrollData({...payrollData, cashAdvance: e.target.value})} />
-                    {(activeEmployee?.cashAdvanceBalance || 0) > 0 && (
-                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.cashAdvanceBalance || 0) - (parseFloat(payrollData.cashAdvance) || 0)))}</span>
-                    )}
-                  </div>
-                  <div className="flex flex-col w-full">
-                    <InputField compact type="number" step="0.01" label="Company Loan" value={payrollData.companyLoan} onChange={(e: any) => setPayrollData({...payrollData, companyLoan: e.target.value})} />
-                    {(activeEmployee?.loanBalance || 0) > 0 && (
-                      <span className="text-[9px] font-bold text-amber-600 mt-0.5 ml-1 leading-tight tracking-tight">Rem: ₱{formatMoney(Math.max(0, (activeEmployee!.loanBalance || 0) - (parseFloat(payrollData.companyLoan) || 0)))}</span>
-                    )}
-                  </div>
-                  <InputField compact type="number" step="0.01" label="SSS" value={payrollData.sss} onChange={(e: any) => setPayrollData({...payrollData, sss: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG" value={payrollData.pagIbig} onChange={(e: any) => setPayrollData({...payrollData, pagIbig: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="PhilHealth" value={payrollData.philhealth} onChange={(e: any) => setPayrollData({...payrollData, philhealth: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG MP" value={payrollData.pagIbigLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Housing" value={payrollData.pagIbigHousingLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigHousingLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Provident" value={payrollData.sssProvident} onChange={(e: any) => setPayrollData({...payrollData, sssProvident: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Salary" value={payrollData.sssSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, sssSalaryLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="SSS Calamity" value={payrollData.sssCalamityLoan} onChange={(e: any) => setPayrollData({...payrollData, sssCalamityLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Salary" value={payrollData.pagIbigSalaryLoan} onChange={(e: any) => setPayrollData({...payrollData, pagIbigSalaryLoan: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Pag-IBIG Calamity" value={payrollData.pagIbigCalamity} onChange={(e: any) => setPayrollData({...payrollData, pagIbigCalamity: e.target.value})} />
-                  <div className="flex flex-col justify-end w-full h-full sm:col-span-2">
-                    <label className={`flex items-center gap-2 p-1.5 border rounded-lg cursor-pointer transition-colors shadow-sm h-[42px] ${payrollData.isDeclared ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
-                      <input type="checkbox" checked={payrollData.isDeclared} onChange={(e) => setPayrollData({...payrollData, isDeclared: e.target.checked})} className="w-3.5 h-3.5 ml-1 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 shrink-0"/>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-slate-800 leading-none mt-0.5">Declared Salary</span>
-                        {payrollData.isDeclared ? (
-                          <span className="text-[9px] font-mono font-bold text-rose-600 mt-1">-₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})} Tax</span>
-                        ) : (
-                          <span className="text-[9px] text-slate-500 mt-1">Apply BIR Tax</span>
-                        )}
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col h-full">
-                <h3 className="font-bold text-slate-800 border-b pb-1.5 mb-2.5 text-[11px] uppercase tracking-wider">Calculation Breakdown</h3>
-                <div className="space-y-1 text-xs flex-1">
-                  <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
-                  {computed.otHrs > 0 && (
-                    <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
-                      <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {computed.undertimeDeduction > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded text-[11px]">
-                      <span>Lates/Undertime Deduction:</span> 
-                      <span className="font-mono">- ₱{computed.undertimeDeduction.toFixed(2)}</span>
-                    </div>
-                  )}
-                  <hr className="my-1.5 border-slate-200" />
-                  <div className="flex justify-between font-bold text-slate-800 text-sm"><span>Gross Pay:</span> <span className="font-mono">₱{computed.grossPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-                  {computed.autoTax > 0 && (
-                    <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-100 text-[11px]">
-                      <span>Withholding Tax (Auto):</span> 
-                      <span className="font-mono">- ₱{computed.autoTax.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-rose-600 font-semibold text-[11px]"><span>Total Deductions:</span> <span className="font-mono">- ₱{computed.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-                </div>
-
-                <div className="mt-3 p-3 bg-emerald-950 text-white rounded-xl shadow-inner text-center overflow-hidden shrink-0">
-                  <p className="text-emerald-200 text-[10px] font-semibold uppercase tracking-widest mb-0.5">Final Net Pay</p>
-                  <p className="text-3xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
-                </div>
-
-                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
-                  {isSaving ? "Saving..." : "Close & Save"}
-                </button>
               </div>
             </div>
           </div>
