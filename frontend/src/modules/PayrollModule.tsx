@@ -830,21 +830,38 @@ const handleImportAttendance = async (event: any) => {
     if (tIn < sIn && (sIn - tIn) >= 12) { tIn += 24; tOut += 24; } 
     else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
 
-    let totalGrossHours = Math.max(0, tOut - tIn);
-    if (totalGrossHours >= 5) totalGrossHours -= 1; 
+let totalGrossHours = Math.max(0, tOut - tIn);
 
-    const maxRegularHours = 8;
-    let regHrs = Math.min(totalGrossHours, maxRegularHours);
-    let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
+// Always deduct 1-hour unpaid break if employee worked any amount of time
+if (totalGrossHours > 0) {
+  totalGrossHours = Math.max(0, totalGrossHours - 1);
+}
 
-    let earlyOt = 0; let lateOt = 0;
-    if (totalOt > 0) {
-      if (tIn < sIn) { earlyOt = Math.min(totalOt, sIn - tIn); lateOt = totalOt - earlyOt; } 
-      else { lateOt = totalOt; }
-    }
+const maxRegularHours = 8;
 
-    return { reg: regHrs, ot: totalOt, earlyOt: earlyOt, lateOt: lateOt, total: regHrs + totalOt };
-  };
+let regHrs = Math.min(totalGrossHours, maxRegularHours);
+let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
+
+let earlyOt = 0;
+let lateOt = 0;
+
+if (totalOt > 0) {
+  if (tIn < sIn) {
+    earlyOt = Math.min(totalOt, sIn - tIn);
+    lateOt = totalOt - earlyOt;
+  } else {
+    lateOt = totalOt;
+  }
+}
+
+return {
+  reg: regHrs,
+  ot: totalOt,
+  earlyOt: earlyOt,
+  lateOt: lateOt,
+  total: regHrs + totalOt
+};
+};
 
   const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
     setDailyTimeLogs((prev) => {
