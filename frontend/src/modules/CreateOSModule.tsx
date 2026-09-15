@@ -328,8 +328,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           </div>
 
           {/* TABLE AREA (Scrollable internal body) */}
-          <div className="flex-1 overflow-auto bg-slate-50/30 relative">
-            <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px]">
+          <div className="flex-1 overflow-auto bg-slate-50/30 relative flex flex-col">
+            <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] h-full flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
                   <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-full">
@@ -471,18 +471,16 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <td className="border border-slate-300 bg-slate-50/50"></td>
                 </tr>
 
-                {/* Empty Filler Rows to maintain spreadsheet look */}
-                {Array.from({ length: Math.max(0, 10 - draftItems.length) }).map((_, i) => (
-                  <tr key={`empty-${i}`} className="bg-slate-50/10">
-                    <td className="border border-slate-300 h-[48px]"></td>
-                    <td className="border border-slate-300"></td>
-                    <td className="border border-slate-300"></td>
-                    <td className="border border-slate-300"></td>
-                    <td className="border border-slate-300"></td>
-                    <td className="border border-slate-300"></td>
-                    <td className="border border-slate-300"></td>
-                  </tr>
-                ))}
+                {/* Empty Filler Row (Expands to fill height) */}
+                <tr className="bg-slate-50/10 h-full">
+                  <td className="border border-slate-300 h-full"></td>
+                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300"></td>
+                </tr>
               </tbody>
             </table>
           </div>
