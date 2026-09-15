@@ -196,13 +196,6 @@ export default function CompanyModule({
                 <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">View, print, and manage generated order slips.</p>
               </div>
             </button>
-            <button onClick={() => onSelectModule('shortages')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-              <div>
-                <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center mb-4 font-black text-xl">!</div>
-                <h2 className="text-xl sm:text-2xl font-black text-amber-950">Shortages</h2>
-                <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Track physical stock shortages and fulfillment by O.S.</p>
-              </div>
-            </button>
           </>
         )}
 

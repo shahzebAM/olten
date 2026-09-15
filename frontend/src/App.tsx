@@ -20,7 +20,7 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   
   // Updated to include the new split module route names
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'shortages'>('none');
+  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
@@ -166,7 +166,7 @@ export default function App() {
     if (activeModule !== 'none' && activeModule !== 'users') {
       // Map the active UI view to its underlying database permission key
       const requiredPermission = 
-        (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os' || activeModule === 'shortages') ? 'sales' :
+        (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os') ? 'sales' :
         (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
         (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' : 
         activeModule;
@@ -246,6 +246,10 @@ export default function App() {
 
 
  
+  if (activeModule === 'sales_orders') return (
+    <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />
+  );
+
   if (activeModule === 'users') return (
     <UserControlModule 
       adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} 
