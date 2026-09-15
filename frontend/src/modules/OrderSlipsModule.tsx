@@ -9,7 +9,6 @@ interface OrderSlip {
   company: string;
   customerId: string;
   customer: Customer;
-  date: string;
   status: string;
   subtotal: number;
   vatApplied: boolean;
@@ -26,10 +25,12 @@ interface OrderSlipsModuleProps {
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
+  // Optional: If you want a button to switch to the Create page
+  onCreateNew?: () => void; 
 }
 
-export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: OrderSlipsModuleProps) {
-  const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase());
+export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
+  const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
   const [orderSlips, setOrderSlips] = useState<OrderSlip[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -69,7 +70,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     return () => clearTimeout(handler);
   }, [search]);
 
-  // --- FETCH LEDGER ---
+  // --- FETCH LEDGER (Server-Side Pagination & Filters) ---
   const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -104,13 +105,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
     const handler = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(editProductSearch)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${encodeURIComponent(selectedCompany)}&q=${encodeURIComponent(editProductSearch)}`);
         if (res.ok) setEditSearchResults(await res.json());
       } catch (e) { console.warn(e); }
     }, 400);
     return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
 
+  // --- QUICK DATE LOGIC ---
   const applyQuickDate = (type: 'today' | 'week' | 'month' | 'clear') => {
     const now = new Date();
     if (type === 'clear') { setStartDate(''); setEndDate(''); return; }
@@ -208,8 +210,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
   };
 
+  // --- CANCELLATION & DELETION ---
   const handleCancelOs = async (id: string) => {
-    if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
     if (!window.confirm("Void this Order Slip? It will remain in history as Cancelled.")) return;
 
     try {
@@ -250,29 +252,41 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
+      
+      {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
 
-      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10 print:hidden">
-        <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Order Slips</span></h2></div>
-        <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Back to Gateway</button>
+      {/* Global Header */}
+      <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
+        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Order Slips Ledger</span></h2></div>
+        <div className="flex gap-3">
+          {onCreateNew && (
+            <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
+              + Create New O.S.
+            </button>
+          )}
+          <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
+            Back to Gateway
+          </button>
+        </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-4 sm:p-8 print:hidden">
-        <div className="max-w-[1400px] mx-auto space-y-6">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 print:hidden flex flex-col">
+        <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6 flex-1 flex flex-col">
 
-          {/* FILTERS */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col lg:flex-row gap-4 items-end">
+          {/* FILTERS SECTION */}
+          <div className="bg-white border border-slate-300 rounded-2xl p-5 shadow-sm flex flex-col lg:flex-row gap-4 items-end shrink-0">
             <div className="w-full lg:w-72">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Global Search</label>
-              <input type="text" placeholder="O.S. Number, Customer..." value={search} onChange={e => setSearch(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="text" placeholder="O.S. Number, Customer..." value={search} onChange={e => setSearch(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all" />
             </div>
             <div className="w-full lg:w-48">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Status</label>
-              <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Status Filter</label>
+              <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer">
                 <option value="All">All Statuses</option>
                 <option value="Generated">Generated</option>
                 <option value="Shipped">Shipped</option>
@@ -283,69 +297,70 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
             <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3 items-end">
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">From Date</label>
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none" />
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
               </div>
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">To Date</label>
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none" />
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
               </div>
             </div>
             <div className="flex flex-wrap gap-2 lg:ml-auto">
-              <button onClick={() => applyQuickDate('today')} className="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200">Today</button>
-              <button onClick={() => applyQuickDate('week')} className="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200">This Week</button>
-              <button onClick={() => applyQuickDate('month')} className="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200">This Month</button>
-              <button onClick={() => applyQuickDate('clear')} className="px-3 py-2 bg-rose-50 text-rose-600 text-xs font-bold rounded-lg hover:bg-rose-100">Clear</button>
+              <button onClick={() => applyQuickDate('today')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">Today</button>
+              <button onClick={() => applyQuickDate('week')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Week</button>
+              <button onClick={() => applyQuickDate('month')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Month</button>
+              <button onClick={() => applyQuickDate('clear')} className="px-3 py-2 bg-rose-50 text-rose-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-rose-100 transition-colors">Clear</button>
             </div>
           </div>
 
           {/* LEDGER TABLE */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden relative">
+          <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
             {isLoading && (
-              <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex items-center justify-center">
-                <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm">Syncing Ledger...</div>
+              <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex items-center justify-center">
+                <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm bg-white px-6 py-3 rounded-full shadow-lg border border-indigo-100">Syncing Ledger...</div>
               </div>
             )}
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-sm whitespace-nowrap min-w-[1300px]">
-                <thead className="bg-slate-50 border-b border-slate-200">
+            <div className="flex-1 overflow-auto w-full">
+              <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
+                <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
                   <tr>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">O.S. Number</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Date</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Customer</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center">Items</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Grand Total</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center">Status</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Created By</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Actions</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Number</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Grand Total</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Status</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Created By</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 bg-white">
                   {orderSlips.length === 0 && !isLoading ? (
-                    <tr><td colSpan={8} className="py-16 text-center text-slate-400 font-medium">No Order Slips found.</td></tr>
+                    <tr><td colSpan={8} className="py-20 text-center text-slate-400 font-medium">No Order Slips match your filters.</td></tr>
                   ) : (
                     orderSlips.map(os => (
                       <tr key={os.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-4 px-6 font-mono text-sm font-black text-indigo-700">{os.osNumber}</td>
-                        <td className="py-4 px-6 font-medium text-slate-600">{new Date(os.createdAt).toLocaleDateString()}</td>
-                        <td className="py-4 px-6">
-                          <div className="font-bold text-slate-900">{os.customer?.name || 'Unknown'}</div>
+                        <td className="py-3.5 px-6 font-mono text-sm font-black text-indigo-700">{os.osNumber}</td>
+                        <td className="py-3.5 px-6 font-medium text-slate-600">{new Date(os.createdAt).toLocaleDateString()}</td>
+                        <td className="py-3.5 px-6">
+                          <div className="font-bold text-slate-900 truncate max-w-[250px]">{os.customer?.name || 'Unknown'}</div>
                           <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{os.customerId.slice(0, 8)}</div>
                         </td>
-                        <td className="py-4 px-6 text-center font-black text-slate-700">{os.items?.length || 0}</td>
-                        <td className="py-4 px-6 text-right font-black text-slate-900">₱{Number(os.grandTotal).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits:2})}</td>
-                        <td className="py-4 px-6 text-center">
-                          <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-wider rounded-md 
+                        <td className="py-3.5 px-6 text-center font-black text-slate-700">{os.items?.length || 0}</td>
+                        <td className="py-3.5 px-6 text-right font-black text-slate-900 font-mono">₱{Number(os.grandTotal).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits:2})}</td>
+                        <td className="py-3.5 px-6 text-center">
+                          <span className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md 
                             ${os.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' : 
-                              os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 
+                              os.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                             {os.status}
                           </span>
                         </td>
-                        <td className="py-4 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
-                        <td className="py-4 px-6 text-right space-x-2">
-                          <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors">View</button>
-                          <button onClick={() => openEditModal(os)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors">Edit</button>
+                        <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
+                        <td className="py-3.5 px-6 text-right space-x-2">
+                          <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
+                          <button onClick={() => openEditModal(os)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-[9px] font-black uppercase hover:bg-indigo-100 transition-colors shadow-sm">Edit</button>
                           {isAuthorizedAdmin && (
-                            <button onClick={() => handleHardDeleteOs(os.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-md text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors">Delete</button>
+                            <button onClick={() => handleHardDeleteOs(os.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-md text-[9px] font-black uppercase hover:bg-rose-100 transition-colors shadow-sm">Del</button>
                           )}
                         </td>
                       </tr>
@@ -355,12 +370,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </table>
             </div>
             
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest">
-              <div>Showing {orderSlips.length} of {totalRecords} records</div>
+            {/* PAGINATION */}
+            <div className="p-4 border-t border-slate-300 bg-slate-100 flex flex-col sm:flex-row items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest shrink-0">
+              <div className="mb-3 sm:mb-0">Showing {orderSlips.length} of {totalRecords} records</div>
               <div className="flex gap-2">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50">Prev</button>
-                <span className="px-3 py-1.5 bg-white border border-slate-200 rounded">{page} / {totalPages}</span>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50">Next</button>
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Prev</button>
+                <div className="px-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-indigo-600">Pg {page} / {totalPages}</div>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Next</button>
               </div>
             </div>
           </div>
@@ -372,7 +388,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center p-4 sm:p-8 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-auto flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
             
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
               <div>
                 <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Edit Order Slip: {editOs.osNumber}</h3>
                 <p className="text-xs font-bold text-slate-500 tracking-widest mt-1 uppercase">Customer: {editOs.customer?.name}</p>
@@ -383,7 +399,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
             <div className="flex flex-col lg:flex-row h-[600px] max-h-[70vh]">
               
               {/* Product Edit Table */}
-              <div className="flex-1 overflow-y-auto p-6 bg-white border-r border-slate-100 relative">
+              <div className="flex-1 overflow-y-auto p-6 bg-white border-r border-slate-200 relative">
                 <div className="mb-4 relative">
                   <input 
                     type="text" 
@@ -392,7 +408,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     onChange={e => { setEditProductSearch(e.target.value); setShowEditSearch(true); }}
                     onFocus={() => setShowEditSearch(true)}
                     onBlur={() => setTimeout(() => setShowEditSearch(false), 200)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all"
                   />
                   {showEditSearch && editProductSearch.trim().length >= 2 && (
                     <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
@@ -413,7 +429,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   )}
                 </div>
 
-                <table className="w-full text-left text-sm whitespace-nowrap">
+                <table className="w-full text-left text-sm whitespace-nowrap border-collapse">
                   <thead className="bg-slate-50 border-y border-slate-200">
                     <tr>
                       <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px]">SKU / Product</th>
@@ -426,20 +442,20 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <tbody className="divide-y divide-slate-100">
                     {editItems.map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-50">
-                        <td className="py-3 px-4">
+                        <td className="py-3 px-4 border border-slate-100">
                           <div className="font-bold text-slate-900 truncate max-w-[200px]">{item.productName}</div>
                           <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                         </td>
-                        <td className="py-2 px-4">
+                        <td className="py-2 px-4 border border-slate-100">
                           <input 
                             type="number" min="1" value={item.requestedQty} 
                             onChange={e => handleEditUpdateQty(idx, e.target.value)} 
                             className="w-full px-2 py-1.5 text-center font-black text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
                           />
                         </td>
-                        <td className="py-3 px-4 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
-                        <td className="py-3 px-4 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
-                        <td className="py-3 px-4 text-center">
+                        <td className="py-3 px-4 text-right font-bold text-slate-700 border border-slate-100 font-mono">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                        <td className="py-3 px-4 text-right font-black text-slate-900 border border-slate-100 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                        <td className="py-3 px-4 text-center border border-slate-100">
                           <button onClick={() => handleEditRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black">✕</button>
                         </td>
                       </tr>
@@ -456,16 +472,18 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     <select 
                       value={editStatus} 
                       onChange={e => setEditStatus(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer"
                     >
                       <option value="Generated">Generated</option>
+                      <option value="Partially Verified">Partially Verified</option>
+                      <option value="Verified">Verified</option>
                       <option value="Shipped">Shipped</option>
                       <option value="Completed">Completed</option>
                       <option value="Cancelled">Cancelled</option>
                     </select>
                   </div>
                   
-                  <label className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-4 rounded-xl">
+                  <label className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
                     <input type="checkbox" checked={editVatApplied} onChange={e => setEditVatApplied(e.target.checked)} className="w-5 h-5 rounded text-indigo-500 border-slate-300 focus:ring-indigo-500" />
                     <span className="font-bold text-slate-700 text-xs tracking-wide uppercase">Apply 12% VAT</span>
                   </label>
@@ -474,15 +492,15 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 <div className="mt-8 space-y-4">
                   <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-widest">
                     <span>Subtotal</span>
-                    <span className="text-slate-900">₱{editSubtotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
+                    <span className="text-slate-900 font-mono">₱{editSubtotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
                   </div>
                   <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-200 pb-4">
                     <span>VAT</span>
-                    <span className="text-slate-900">₱{editVatTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
+                    <span className="text-slate-900 font-mono">₱{editVatTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
                   </div>
                   <div className="flex justify-between items-end">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Grand Total</span>
-                    <span className="text-2xl font-black text-indigo-700">₱{editGrandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
+                    <span className="text-2xl font-black text-indigo-700 font-mono">₱{editGrandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
                   </div>
 
                   <button onClick={handleEditSave} disabled={editItems.length === 0} className="w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
@@ -498,7 +516,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       {/* VIEW / PRINT MODAL */}
       {viewOs && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none">
+          
+          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
+          <style type="text/css" media="print">
+            {`@page { size: auto; margin: 0; }`}
+          </style>
+
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col">
             
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
@@ -506,15 +530,22 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 <p className="text-xs font-mono uppercase text-slate-500 tracking-widest mt-1">ID: {viewOs.id}</p>
               </div>
               <div className="flex gap-3">
-                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700">Print O.S.</button>
-                <button onClick={() => setViewOs(null)} className="px-4 py-2.5 bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-300">Close</button>
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
+                <button onClick={() => setViewOs(null)} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close</button>
               </div>
             </div>
 
-            <div className="p-8 print:p-0 bg-white">
-              <div className="flex justify-between items-start mb-12 border-b-2 border-slate-900 pb-8">
+            {/* PRINT CONTAINER (Adds margins back inside the document to compensate for @page margin: 0) */}
+            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
+              
+              {/* PRINT ONLY HEADER */}
+              <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
+                {selectedCompany}
+              </h2>
+
+              <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
                 <div>
-                  <h1 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">{selectedCompany}</h1>
+                  <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
                   <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Order Slip</p>
                 </div>
                 <div className="text-right">
@@ -524,57 +555,57 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 </div>
               </div>
 
-              <div className="mb-10">
+              <div className="mb-8">
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
                 <div className="font-black text-lg text-slate-900">{viewOs.customer?.name || 'Unknown Customer'}</div>
                 <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {viewOs.customerId.slice(0,8)}</div>
               </div>
 
-              <table className="w-full text-left text-sm mb-12">
-                <thead className="border-b-2 border-slate-900">
+              <table className="w-full text-left text-sm mb-12 border-collapse">
+                <thead className="border-y-2 border-slate-900 bg-slate-50/50">
                   <tr>
-                    <th className="py-3 px-2 font-black text-slate-900 uppercase text-xs w-32">SKU</th>
-                    <th className="py-3 px-2 font-black text-slate-900 uppercase text-xs">Description</th>
-                    <th className="py-3 px-2 font-black text-slate-900 uppercase text-xs text-center w-24">Qty</th>
-                    <th className="py-3 px-2 font-black text-slate-900 uppercase text-xs text-right w-32">Unit Price</th>
-                    <th className="py-3 px-2 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-200">
                   {viewOs.items.map((item, idx) => (
                     <tr key={idx}>
-                      <td className="py-3 px-2 font-mono text-xs">{item.sku}</td>
-                      <td className="py-3 px-2 font-bold">{item.productName}</td>
-                      <td className="py-3 px-2 text-center font-black">{item.requestedQty}</td>
-                      <td className="py-3 px-2 text-right">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
-                      <td className="py-3 px-2 text-right font-black">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700">{item.sku}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">{item.productName}</td>
+                      <td className="py-3 px-3 text-center font-black border-r border-slate-200 text-indigo-700">{item.requestedQty}</td>
+                      <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                      <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
               <div className="flex justify-end border-t-2 border-slate-900 pt-6">
-                <div className="w-64 space-y-3">
+                <div className="w-72 space-y-3">
                   <div className="flex justify-between text-sm font-bold text-slate-600">
                     <span>Subtotal:</span>
-                    <span>₱{Number(viewOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                    <span className="font-mono">₱{Number(viewOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3">
                     <span>VAT (12%):</span>
-                    <span>₱{Number(viewOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                    <span className="font-mono">₱{Number(viewOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
                   </div>
-                  <div className="flex justify-between text-xl font-black text-slate-900">
+                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1">
                     <span>Total:</span>
-                    <span>₱{Number(viewOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                    <span className="font-mono text-indigo-700">₱{Number(viewOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-6 border-t border-slate-100 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Prepared by: {viewOs.createdBy}</span>
-              {viewOs.status !== 'Cancelled' && isAuthorizedAdmin && (
-                <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-rose-50 text-rose-700 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-100">Void / Cancel O.S.</button>
+            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {viewOs.createdBy}</span>
+              {viewOs.status !== 'Cancelled' && (
+                <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">Void / Cancel O.S.</button>
               )}
             </div>
           </div>
