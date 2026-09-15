@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
@@ -22,6 +22,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
+  
+  // NEW: Editable OS Number
+  const [osNumber, setOsNumber] = useState<string>('');
 
   // --- WORKFLOW STATES ---
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -39,6 +42,34 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatRate = 0.12;
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
+
+  // --- FETCH LATEST OS NUMBER FOR AUTO-INCREMENT ---
+  const fetchNextOsNumber = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=1`);
+      const data = await res.json();
+      if (data.data && data.data.length > 0) {
+        const lastOs = data.data[0].osNumber; // e.g. 'OS-000005' or 'INV-999'
+        const match = lastOs.match(/(\d+)$/); // Finds the ending numbers
+        if (match) {
+          const nextNum = parseInt(match[0], 10) + 1;
+          const prefix = lastOs.substring(0, match.index);
+          const padding = match[0].length;
+          setOsNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
+        } else {
+          setOsNumber('OS-000001');
+        }
+      } else {
+        setOsNumber('OS-000001');
+      }
+    } catch (e) {
+      setOsNumber('OS-000001');
+    }
+  }, [selectedCompany, API_BASE_URL]);
+
+  useEffect(() => {
+    fetchNextOsNumber();
+  }, [fetchNextOsNumber]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
@@ -226,14 +257,16 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
-  const isFormValid = selectedCustomer && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
+  // Form validity now requires a custom OS Number
+  const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
   const handleSubmit = async () => {
-    if (!isFormValid) return showToast("Complete customer selection, valid item quantities, and prices.", "error");
+    if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
     
     setIsProcessing(true);
     try {
       const payload = {
+        osNumber: osNumber.trim(), // Sent to backend
         company: selectedCompany,
         customerId: selectedCustomer.id,
         isVatApplied,
@@ -254,13 +287,20 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("Failed to create Order Slip.");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Failed to create Order Slip.");
+      }
 
       showToast("Order Slip generated successfully.", "success");
       setDraftItems([]);
       setSelectedCustomer(null);
       setCustomerSearch('');
       setIsVatApplied(false);
+      
+      // Fetch the next available number automatically!
+      fetchNextOsNumber();
+      
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
     } finally {
@@ -269,7 +309,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   return (
-    // 1. Parent container is locked to screen height with hidden overflow
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
@@ -277,57 +316,70 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       )}
 
-      {/* Header takes natural height and never shrinks/grows */}
+      {/* Header */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">Back to Gateway</button>
       </header>
 
-      {/* 2. Main content area becomes a flex container that fills the rest of the screen without scrolling the body */}
       <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden">
-        
-       {/* Spreadsheet Wrapper Container */}
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
-          {/* CUSTOMER ROW (Top row of the grid) */}
-          <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-center min-h-[56px]">
-            {!selectedCustomer ? (
-              <div className="w-full relative">
-                <input 
-                  type="text" 
-                  placeholder="search customer..." 
-                  value={customerSearch}
-                  onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); }}
-                  onFocus={() => setShowCustomerDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
-                  className="w-full text-center py-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:uppercase placeholder:tracking-widest focus:bg-indigo-50/30 transition-colors"
-                />
-                {showCustomerDropdown && (
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
-                    {filteredCustomers.length === 0 ? (
-                      <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div>
-                    ) : (
-                      filteredCustomers.map(c => (
-                        <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group">
-                          <div>
-                            <span className="font-bold text-slate-900 group-hover:text-indigo-700 block">{c.name}</span>
+          {/* CUSTOMER & OS NUMBER ROW */}
+          <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
+            
+            {/* Customer Section */}
+            <div className="flex-1 relative flex items-center border-r border-slate-300">
+              {!selectedCustomer ? (
+                <div className="w-full relative">
+                  <input 
+                    type="text" 
+                    placeholder="search customer..." 
+                    value={customerSearch}
+                    onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); }}
+                    onFocus={() => setShowCustomerDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                    className="w-full text-center py-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:uppercase placeholder:tracking-widest focus:bg-indigo-50/30 transition-colors"
+                  />
+                  {showCustomerDropdown && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
+                      {filteredCustomers.length === 0 ? (
+                        <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div>
+                      ) : (
+                        filteredCustomers.map(c => (
+                          <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group">
+                            <div>
+                              <span className="font-bold text-slate-900 group-hover:text-indigo-700 block">{c.name}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
                           </div>
-                          <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }}>
-                <span className="text-lg font-black text-indigo-900 tracking-tight">{selectedCustomer.name}</span>
-                <span className="absolute right-6 text-xs font-bold text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">✕ Remove</span>
-              </div>
-            )}
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }}>
+                  <span className="text-lg font-black text-indigo-900 tracking-tight">{selectedCustomer.name}</span>
+                  <span className="absolute right-6 text-xs font-bold text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">✕ Remove</span>
+                </div>
+              )}
+            </div>
+
+            {/* Editable OS Number Section */}
+            <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 border-l border-white shadow-inner">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">O.S. Number</span>
+              <input 
+                type="text" 
+                value={osNumber}
+                onChange={e => setOsNumber(e.target.value.toUpperCase())}
+                className="w-full bg-transparent font-mono font-black text-indigo-700 text-sm sm:text-base outline-none placeholder:text-slate-300 focus:text-indigo-500 transition-colors"
+                placeholder="OS-000000"
+              />
+            </div>
           </div>
 
-          {/* TABLE AREA (Scrollable internal body) */}
+          {/* TABLE AREA */}
           <div className="flex-1 overflow-auto bg-slate-50/30 relative flex flex-col">
             <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
@@ -349,7 +401,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </thead>
               <tbody className="bg-white">
                 
-                {/* EXISTING DRAFT ITEMS */}
                 {draftItems.map((item, idx) => {
                   const reqQty = Number(item.requestedQty) || 0;
                   const effectiveWhseQty = item.selectedWarehouseName 
@@ -369,7 +420,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         {item.officeStock}
                       </td>
                       
-                      {/* Warehouse Selector Cell */}
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
                           <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -403,7 +453,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         {totalAvailable > 0 && reqQty > totalAvailable && <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - totalAvailable}</span>}
                       </td>
 
-                      {/* EDITABLE UNIT PRICE */}
                       <td className="border border-slate-300 p-0 relative bg-white">
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₱</div>
                         <input 
@@ -420,7 +469,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   );
                 })}
 
-                {/* ADD NEW PRODUCT ROW (Acts as the active search bar) */}
                 <tr className="bg-white group">
                   <td className="border border-slate-300 bg-slate-50/50 h-[48px]"></td>
                   <td className="border border-slate-300 relative p-0 h-[48px] w-full">
@@ -475,7 +523,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <td className="border border-slate-300 bg-slate-50/50"></td>
                 </tr>
 
-                {/* Empty Filler Row (Expands to fill height) */}
                 <tr className="bg-slate-50/10 h-full">
                   <td className="border border-slate-300 h-full"></td>
                   <td className="border border-slate-300"></td>
@@ -490,7 +537,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </table>
           </div>
 
-          {/* FOOTER ROW (Bottom grey bar matching Figma) */}
+          {/* FOOTER ROW */}
           <div className="bg-[#E2E8F0] border-t border-slate-300 p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-center shrink-0 z-30">
             <div className="flex items-center gap-6 w-full sm:w-auto">
               <label className="flex items-center gap-2 cursor-pointer group">
