@@ -914,7 +914,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setIsPayrollModalOpen(true);
   };
 
-const calculatePayroll = () => {
+  const calculatePayroll = () => {
     if (!activeEmployee) return null;
     
     // 1. Group records by unique date to ignore duplicate database entries
@@ -1297,12 +1297,14 @@ const calculatePayroll = () => {
                   const ratePerDay = days > 0 ? baseSalary / days : 0;
                   const ratePerHour = ratePerDay / 8;
                   const requiredHrs = days * 8;
-                  const otHours = Math.max(0, rec.totalHours - requiredHrs);
-                  const otPay = otHours * (ratePerHour * 1.25); 
+                  const diffHrs = rec.totalHours - requiredHrs;
                   
                   let undertimeDeduction = 0;
-                  if (rec.totalHours < requiredHrs) { 
-                      undertimeDeduction = (requiredHrs - rec.totalHours) * ratePerHour; 
+                  let otPay = 0;
+                  if (diffHrs < 0) { 
+                      undertimeDeduction = Math.abs(diffHrs) * ratePerHour; 
+                  } else if (diffHrs > 0) {
+                      otPay = diffHrs * ratePerHour * 1.25;
                   }
                   
                   const regularPay = baseSalary - undertimeDeduction;
@@ -1322,8 +1324,8 @@ const calculatePayroll = () => {
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">TOTAL HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(rec.totalHours)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REQUIRED NO.OF HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(requiredHrs)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">REGULAR PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{formatMoney(regularPay)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{otHours > 0 ? formatDecToHM(otHours) : '-'}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{otHours > 0 ? formatMoney(ratePerHour * 1.25) : '-'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatDecToHM(diffHrs) : '-'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatMoney(ratePerHour * 1.25) : '-'}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">OT PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{otPay > 0 ? formatMoney(otPay) : '-'}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">HOLIDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SUNDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
@@ -1443,7 +1445,7 @@ const calculatePayroll = () => {
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span> 
+                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
@@ -1877,29 +1879,42 @@ const calculatePayroll = () => {
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
                         ) : (
                           filteredActiveEmployees.map((emp) => {
-                            const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
+                            const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
                             
                             // Visual dedup in row rendering
                             const uniqueLogsMap = new Map();
-                            empLogs.forEach(log => {
+                            rawEmpLogs.forEach(log => {
                               const dateStr = log.date.split('T')[0];
-                              if (!uniqueLogsMap.has(dateStr)) {
-                                uniqueLogsMap.set(dateStr, log);
+                              let logHrs = 0;
+                              if (!log.timeIn || !log.timeIn.includes(':')) { 
+                                  logHrs = log.hours || 0; 
+                              } else { 
+                                  const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); 
+                                  logHrs = shiftCalc.total; 
+                              }
+                              
+                              const existing = uniqueLogsMap.get(dateStr);
+                              if (!existing || logHrs > existing.calculatedHours) {
+                                uniqueLogsMap.set(dateStr, { ...log, calculatedHours: logHrs });
                               }
                             });
+                            
                             const uniqueEmpLogs = Array.from(uniqueLogsMap.values());
 
-                            let totalLogged = 0; let totalOtLogged = 0;
+                            let totalLogged = 0; 
                             uniqueEmpLogs.forEach((log: any) => {
-                                if (!log.timeIn || !log.timeIn.includes(':')) { totalLogged += log.hours; } 
-                                else { const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); totalLogged += shiftCalc.total; totalOtLogged += shiftCalc.ot; }
+                                totalLogged += log.calculatedHours;
                             });
+                            
+                            // Approximate OT for table display assuming standard 14 days (112 hours)
+                            const tableOtLogged = Math.max(0, totalLogged - 112);
+
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
                                 <td className="py-4 px-6 font-mono text-slate-500">{emp.employeeId || `#${emp.id}`}</td>
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp.firstName} {emp.lastName}</td>
                                 <td className="py-4 px-6 font-mono text-slate-600">{formatDecToHM(totalLogged)}</td>
-                                <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{totalOtLogged > 0 ? formatDecToHM(totalOtLogged) : '--'}</td>
+                                <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{tableOtLogged > 0 ? formatDecToHM(tableOtLogged) : '--'}</td>
                                 <td className="py-4 px-6 text-right">
                                   <button onClick={() => openPayrollModal(emp)} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase rounded hover:bg-emerald-700 shadow-sm transition-colors">Compute Salary</button>
                                 </td>
