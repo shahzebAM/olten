@@ -1456,10 +1456,10 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   
-                  {computed.manualAdjustmentAmt !== 0 && (
-                    <div className={`flex justify-between font-medium ${computed.manualAdjustmentAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.manualAdjustmentAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
+                 {computed.govHolidayAmt !== 0 && (
+                    <div className={`flex justify-between font-medium ${computed.govHolidayAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.govHolidayAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
                       <span>Govt Holiday / Adjustment:</span> 
-                      <span className="font-mono">{computed.manualAdjustmentAmt > 0 ? '+' : '-'} ₱{Math.abs(computed.manualAdjustmentAmt).toFixed(2)}</span>
+                      <span className="font-mono">{computed.govHolidayAmt > 0 ? '+' : '-'} ₱{Math.abs(computed.govHolidayAmt).toFixed(2)}</span>
                     </div>
                   )}
 
