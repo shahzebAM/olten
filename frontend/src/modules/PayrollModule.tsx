@@ -1621,7 +1621,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
             {/* DIRECTORY LIST TAB */}
             {activeTab === 'list' && (
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print-hidden">
                 <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
                   <input type="text" placeholder="Search directory..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-4 focus:border-blue-600 outline-none shadow-sm" />
                 </div>
@@ -1955,7 +1955,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8 print-hidden">
                   <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <h2 className="text-lg font-bold text-slate-800">Saved Payroll History</h2>
                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
