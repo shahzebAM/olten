@@ -230,7 +230,8 @@ export default function App() {
       loginUsername={loginUsername} 
       API_BASE_URL={API_BASE_URL} 
       initialCustomerId={targetCustomerId} 
-      onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }} 
+      onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }}
+      onViewLedger={() => setActiveModule('sales_orders')}
     />
   );
 
@@ -247,7 +248,8 @@ export default function App() {
 
  
   if (activeModule === 'sales_orders') return (
-    <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />
+    <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />
+    
   );
 
   if (activeModule === 'users') return (

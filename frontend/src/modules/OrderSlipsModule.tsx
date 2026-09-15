@@ -260,13 +260,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         </div>
       )}
 
-      {/* Global Header */}
+     {/* Global Header */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Order Slips Ledger</span></h2></div>
         <div className="flex gap-3">
           {onCreateNew && (
             <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
-              + Create New O.S.
+              Back to OS Gen
             </button>
           )}
           <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
