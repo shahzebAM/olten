@@ -81,8 +81,10 @@ export class OrderSlipsController {
   }
 
   @Post()
+@Post()
   async createOrderSlip(@Body() data: any) {
-    const { company, customerId, items, isVatApplied, vatRate = 0.12, user } = data;
+    // 1. ADDED osNumber extraction here
+    const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber } = data;
 
     if (!company || !customerId || !items || items.length === 0) {
       throw new BadRequestException('Missing required fields: company, customerId, or items.');
@@ -91,6 +93,28 @@ export class OrderSlipsController {
     return await this.prisma.$transaction(async (tx) => {
       const customer = await tx.customer.findUnique({ where: { id: customerId } });
       if (!customer) throw new NotFoundException('Customer record not found.');
+
+      // 2. NEW CUSTOM OS NUMBER LOGIC
+      let osNumber = customOsNumber?.trim();
+      
+      if (osNumber) {
+        // Prevent duplicate OS Numbers
+        const existing = await tx.orderSlip.findFirst({ where: { company, osNumber } });
+        if (existing) throw new BadRequestException(`Order Slip number ${osNumber} is already in use!`);
+      } else {
+        // Fallback auto-generator if frontend sends nothing
+        const lastOs = await tx.orderSlip.findFirst({
+          where: { company },
+          orderBy: { osNumber: 'desc' }
+        });
+
+        let nextNum = 1;
+        if (lastOs && lastOs.osNumber.startsWith('OS-')) {
+          const lastNum = parseInt(lastOs.osNumber.replace('OS-', ''), 10);
+          if (!isNaN(lastNum)) nextNum = lastNum + 1;
+        }
+        osNumber = `OS-${String(nextNum).padStart(6, '0')}`;
+      }
 
       const productIds = items.map((i: any) => Number(i.productId));
       const dbProducts = await tx.product.findMany({ where: { id: { in: productIds }, company } });
@@ -107,7 +131,8 @@ export class OrderSlipsController {
         const product = dbProducts.find(p => p.id === Number(item.productId));
         if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
 
-        const unitPrice = Number(product.sellingPrice); 
+        // Trust the custom unit price passed from the frontend
+        const unitPrice = Number(item.unitPrice) || Number(product.sellingPrice); 
         const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
 
         calculatedSubtotal += lineTotal;
@@ -121,25 +146,13 @@ export class OrderSlipsController {
         });
       }
 
-      const lastOs = await tx.orderSlip.findFirst({
-        where: { company },
-        orderBy: { osNumber: 'desc' }
-      });
-
-      let nextNum = 1;
-      if (lastOs && lastOs.osNumber.startsWith('OS-')) {
-        const lastNum = parseInt(lastOs.osNumber.replace('OS-', ''), 10);
-        if (!isNaN(lastNum)) nextNum = lastNum + 1;
-      }
-      const osNumber = `OS-${String(nextNum).padStart(6, '0')}`;
-
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
       const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
       const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
       return await tx.orderSlip.create({
         data: {
-          osNumber,
+          osNumber, // Uses the dynamically determined number
           company,
           customerId,
           status: 'Generated', 
