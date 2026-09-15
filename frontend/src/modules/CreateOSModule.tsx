@@ -329,20 +329,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
           {/* TABLE AREA (Scrollable internal body) */}
           <div className="flex-1 overflow-auto bg-slate-50/30 relative flex flex-col">
-            <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] h-full flex-1">
+            <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-full">
-                    SKU / PRODUCT
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-full">
+                    PRODUCT DESCRIPTION
                     <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="ml-3 text-indigo-500 hover:text-indigo-700 disabled:opacity-30">
                       {isRefreshingStock ? '↻...' : '↻ SYNC'}
                     </button>
                   </th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">Off Qty</th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">Whse Qty</th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">Requested</th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">Unit Price</th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">Line Total</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">OFF QTY</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">WHSE QTY</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">REQUESTED</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">UNIT PRICE</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">LINE TOTAL</th>
                   <th className="border border-slate-300 py-3 px-3 w-10 text-center"></th>
                 </tr>
               </thead>
@@ -358,9 +359,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
-                      <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full">
-                        <span className="font-bold text-slate-900">{item.productName}</span>
-                        <span className="text-[10px] font-mono text-slate-400 ml-2 font-normal">{item.sku}</span>
+                      <td className="border border-slate-300 py-2.5 px-4 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
+                      <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full font-bold text-slate-900">
+                        {item.productName}
                       </td>
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {item.officeStock}
@@ -419,6 +420,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                 {/* ADD NEW PRODUCT ROW (Acts as the active search bar) */}
                 <tr className="bg-white group">
+                  <td className="border border-slate-300 bg-slate-50/50 h-[48px]"></td>
                   <td className="border border-slate-300 relative p-0 h-[48px] w-full">
                     <div className="absolute inset-0 flex items-center">
                       <input 
@@ -474,6 +476,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 {/* Empty Filler Row (Expands to fill height) */}
                 <tr className="bg-slate-50/10 h-full">
                   <td className="border border-slate-300 h-full"></td>
+                  <td className="border border-slate-300"></td>
                   <td className="border border-slate-300"></td>
                   <td className="border border-slate-300"></td>
                   <td className="border border-slate-300"></td>
