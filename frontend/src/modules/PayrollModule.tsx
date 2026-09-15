@@ -914,42 +914,48 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     setIsPayrollModalOpen(true);
   };
 
-  const calculatePayroll = () => {
+const calculatePayroll = () => {
     if (!activeEmployee) return null;
     
-    // 1. Fetch raw logs and deduplicate by date
+    // 1. Group records by unique date to ignore duplicate database entries
     const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     const uniqueLogsMap = new Map();
+    
     rawEmpLogs.forEach(log => {
       const dateStr = log.date.split('T')[0];
-      if (!uniqueLogsMap.has(dateStr)) {
-        uniqueLogsMap.set(dateStr, log);
+      let logHrs = 0;
+      if (!log.timeIn || !log.timeIn.includes(':')) { 
+          logHrs = log.hours || 0; 
+      } else {
+          const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+          logHrs = shiftCalc.total;
+      }
+      
+      // If a duplicate exists, keep the one with the higher working hours
+      const existing = uniqueLogsMap.get(dateStr);
+      if (!existing || logHrs > existing.calculatedHours) {
+        uniqueLogsMap.set(dateStr, { ...log, calculatedHours: logHrs });
       }
     });
+
     const empLogs = Array.from(uniqueLogsMap.values());
     
-    // 2. Calculate Actual Logged Hours
+    // 2. Sum valid logged hours
     let totalHoursWorked = 0;
-
     empLogs.forEach((log: any) => {
-        if (!log.timeIn || !log.timeIn.includes(':')) { 
-            totalHoursWorked += log.hours; 
-        } else {
-            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-            totalHoursWorked += shiftCalc.total;
-        }
+        totalHoursWorked += log.calculatedHours;
     });
 
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
     
-    // Hourly Rates
+    // 3. Hourly Rates
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
     const requiredHrs = days * 8;
     
-    // 3. Compare Required vs Actual
+    // 4. Compare Required vs Actual for strict mathematical difference
     const diffHrs = totalHoursWorked - requiredHrs;
     
     let otHrs = 0;
@@ -961,11 +967,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         undertimeHrs = Math.abs(diffHrs);
     }
 
-    // 4. Mathematical computation using exact floating point
+    // 5. Calculate Deductions & Pay (Exact unrounded time multipliers)
     const undertimeDeduction = Math.round((undertimeHrs * ratePerHour) * 100) / 100;
     const otPay = Math.round((otHrs * ratePerHour * 1.25) * 100) / 100;
     
-    // 5. Gross Pay
+    // 6. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
