@@ -1132,7 +1132,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
       {/* FOOLPROOF SINGLE-PAGE PRINT CSS */}
       <style>{`
         @media print {
-          @page { size: auto; margin: 10mm; }
+          @page { size: auto; margin: 0; }
           html, body, #root { height: 100% !important; max-height: 100vh !important; overflow: hidden !important; background: white !important; margin: 0 !important; padding: 0 !important; }
           ::-webkit-scrollbar { display: none; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -1289,7 +1289,10 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             </div>
 
             <div className="overflow-y-auto p-4 sm:p-10 bg-gray-50 flex justify-center items-start print-modal-content">
-              <div id="payslip-print-area" className="bg-white w-full max-w-4xl font-sans text-black">
+              <div id="payslip-print-area" className="bg-white w-full max-w-4xl font-sans text-black print:pt-12 print:px-8 print:pb-8">
+  <h2 className="hidden print:block text-center text-xl font-black uppercase mb-6 tracking-widest text-slate-900">
+    {selectedCompany} TRADING CORP.
+  </h2>
                 {(() => {
                   const rec = selectedPayslip.record;
                   const emp = selectedPayslip.emp;
