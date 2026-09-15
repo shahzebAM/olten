@@ -1558,7 +1558,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </header>
 
         {/* SCROLLABLE MAIN CONTENT */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible">
+        <main className={`flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible ${selectedPayslip ? 'print-hidden' : ''}`}>
           <div className="max-w-[1400px] mx-auto space-y-6 sm:space-y-8">
 
             {/* DASHBOARD TAB */}
