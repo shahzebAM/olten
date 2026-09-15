@@ -1,59 +1,29 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-
-// Note: Ensure OrderSlipProcessingService, SalesPrismaService, ProcessOrderSlipInput, 
-// and lockOrderSlip are imported at the top of your actual file.
+import { PrismaClient, Prisma } from '@prisma/client';
 
 @Controller('sales/order-slips')
 export class OrderSlipsController {
-  constructor(private readonly processing: OrderSlipProcessingService, private readonly prisma: SalesPrismaService) {}
-
-  @Get(':id/review')
-  reviewOrderSlip(@Param('id') id: string, @Query('company') company: string) {
-    return this.processing.review(id, company);
-  }
-
-  @Post(':id/process')
-  processOrderSlip(@Param('id') id: string, @Body() data: ProcessOrderSlipInput) {
-    return this.processing.process(id, data);
-  }
-
-  // --- PHASE 7: SHORTAGE MANAGEMENT ENDPOINTS ---
-  @Get('system/shortages')
-  async getShortages(@Query('company') company: string) {
-    if (!company) throw new BadRequestException('Company required.');
-    return await this.prisma.shortage.findMany({
-      where: { company },
-      include: { customer: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' }
-    });
-  }
-
-  @Patch('system/shortages/:id')
-  async updateShortageStatus(@Param('id') id: string, @Body() data: any) {
-    const { status, user } = data;
-    return await this.prisma.shortage.update({
-      where: { id },
-      data: { status, updatedBy: user }
-    });
-  }
+  private readonly prisma = new PrismaClient();
 
   @Get('search-products')
   async searchProducts(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
 
-    const products = await this.prisma.product.findMany({
-      where: {
-        company,
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { sku: { contains: q, mode: 'insensitive' } },
-          { category: { contains: q, mode: 'insensitive' } }
-        ]
-      },
-      take: 15,
+    // Force lower case search string to combat database collation issues
+    const searchString = q.toLowerCase();
+
+    // 1. First fetch products for the company
+    const allCompanyProducts = await this.prisma.product.findMany({
+      where: { company },
       select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true }
     });
+
+    // 2. Perform the case-insensitive search in memory (100% reliable regardless of DB type)
+    const products = allCompanyProducts.filter(p =>
+      (p.name && p.name.toLowerCase().includes(searchString)) ||
+      (p.sku && p.sku.toLowerCase().includes(searchString)) ||
+      (p.category && p.category.toLowerCase().includes(searchString))
+    ).slice(0, 15); // limit to 15 results
 
     if (products.length === 0) return [];
 
@@ -68,7 +38,7 @@ export class OrderSlipsController {
     return products.map(p => {
       const productStocks = hubStocks.filter(h => h.productId === p.id);
       const warehouseQty = productStocks.reduce((sum, h) => sum + h.quantity, 0);
-      
+
       const warehouseBreakdown = productStocks
         .filter(h => h.quantity > 0)
         .map(h => ({
@@ -93,10 +63,10 @@ export class OrderSlipsController {
 
     const whMap = new Map(allWarehouses.map(w => [String(w.id), w.name]));
     const stockMap: Record<number, { officeStock: number, warehouseQty: number, warehouseBreakdown: any[] }> = {};
-    
+
     productIds.forEach(id => stockMap[id] = { officeStock: 0, warehouseQty: 0, warehouseBreakdown: [] });
     dbProducts.forEach(p => { stockMap[p.id].officeStock = p.currentStock || 0; });
-    
+
     hubStocks.forEach(h => { 
       stockMap[h.productId].warehouseQty += h.quantity;
       if (h.quantity > 0) {
@@ -133,13 +103,13 @@ export class OrderSlipsController {
         if (!item.productId || !requestedQty || requestedQty <= 0) {
           throw new BadRequestException(`Invalid quantity for SKU: ${item.sku}`);
         }
-        
+
         const product = dbProducts.find(p => p.id === Number(item.productId));
         if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
 
         const unitPrice = Number(product.sellingPrice); 
         const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
-        
+
         calculatedSubtotal += lineTotal;
         cleanItems.push({
           productId: product.id,
@@ -251,93 +221,16 @@ export class OrderSlipsController {
     return os;
   }
 
-  // --- PHASE 7: PHYSICAL VERIFICATION TRANSACTION ---
-  @Post(':id/verify')
-  async verifyOrderSlip(@Param('id') id: string, @Body() data: any) {
-    const { user, verifications } = data; 
-    
-    return await this.prisma.$transaction(async (tx) => {
-      // Respecting the custom lock structure from your codebase
-      if (typeof lockOrderSlip === 'function') await lockOrderSlip(tx, id);
-
-      const os = await tx.orderSlip.findUnique({ where: { id }, include: { items: true, customer: true } });
-      if (!os) throw new NotFoundException('Order Slip not found.');
-      if (os.status === 'Cancelled') throw new BadRequestException('Cannot verify a cancelled Order Slip.');
-
-      let hasShortage = false;
-
-      for (const v of verifications) {
-        const item = os.items.find(i => i.id === v.itemId);
-        if (!item) continue;
-
-        const requested = item.requestedQty;
-        const confirmed = Math.max(0, Number(v.confirmedQty) || 0);
-        const shortage = Math.max(0, requested - confirmed);
-
-        await tx.orderSlipItem.update({
-          where: { id: item.id },
-          data: { confirmedQty: confirmed, shortageQty: shortage }
-        });
-
-        if (shortage > 0) {
-          hasShortage = true;
-          await tx.shortage.create({
-            data: {
-              company: os.company,
-              orderSlipId: os.id,
-              orderSlipItemId: item.id,
-              customerId: os.customerId,
-              osNumber: os.osNumber,
-              sku: item.sku,
-              productName: item.productName,
-              requestedQty: requested,
-              confirmedQty: confirmed,
-              shortageQty: shortage,
-              status: 'Open',
-              createdBy: user
-            }
-          });
-        }
-      }
-
-      const newStatus = hasShortage ? 'Partially Verified' : 'Verified';
-      return await tx.orderSlip.update({
-        where: { id },
-        data: { status: newStatus, updatedBy: user },
-        include: { items: true, customer: true }
-      });
-    });
-  }
-
   // --- ADVANCED EDIT ACTION (Modify Status, Items, and VAT) ---
   @Patch(':id')
   async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
     const { status, user, items, isVatApplied, vatRate = 0.12 } = data;
+    const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Order Slip not found.');
+    if (existing.status === 'Cancelled') throw new BadRequestException('Cannot modify a cancelled Order Slip.');
+
     return await this.prisma.$transaction(async (tx) => {
-      await lockOrderSlip(tx, id);
-      const existing = await tx.orderSlip.findUnique({ where: { id } });
-      if (!existing) throw new NotFoundException('Order Slip not found.');
-      if (existing.status === 'Cancelled') throw new BadRequestException('Cannot modify a cancelled Order Slip.');
-      if (existing.processedAt && (items !== undefined || isVatApplied !== undefined)) {
-        throw new BadRequestException('Processed quantities and totals are locked to preserve physical verification and shortage records.');
-      }
-      
-      const allowedStatuses = existing.processedAt
-        ? ['Processed', 'Shipped', 'Completed', 'Cancelled']
-        : ['Draft', 'Generated', 'Cancelled', ...(['Shipped', 'Completed'].includes(existing.status) ? [existing.status] : [])];
-      
-      if (status && !allowedStatuses.includes(status)) {
-        throw new BadRequestException('Use Process O.S. to physically verify this order before advancing its status.');
-      }
-
-      if (status === 'Cancelled') {
-        await tx.shortage.updateMany({
-          where: { orderSlipId: id, status: { notIn: ['Fulfilled', 'Cancelled'] } },
-          data: { status: 'Cancelled', updatedBy: user },
-        });
-      }
-
-      // Deep Update
+      // If items are passed, we perform a deep update
       if (items && Array.isArray(items)) {
         await tx.orderSlipItem.deleteMany({ where: { orderSlipId: id } });
 
@@ -388,7 +281,7 @@ export class OrderSlipsController {
         });
       }
 
-      // Status Update
+      // If no items passed, just update status
       return await tx.orderSlip.update({
         where: { id },
         data: { status, updatedBy: user },
@@ -399,28 +292,21 @@ export class OrderSlipsController {
 
   @Delete(':id/cancel')
   async cancelOrderSlip(@Param('id') id: string, @Body('user') user: string) {
-    return this.prisma.$transaction(async tx => {
-      await lockOrderSlip(tx, id);
-      const existing = await tx.orderSlip.findUnique({ where: { id } });
-      if (!existing) throw new NotFoundException('Order Slip not found.');
-      await tx.shortage.updateMany({
-        where: { orderSlipId: id, status: { notIn: ['Fulfilled', 'Cancelled'] } },
-        data: { status: 'Cancelled', updatedBy: user },
-      });
-      return tx.orderSlip.update({ where: { id }, data: { status: 'Cancelled', updatedBy: user } });
+    const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Order Slip not found.');
+
+    return await this.prisma.orderSlip.update({
+      where: { id },
+      data: { status: 'Cancelled', updatedBy: user }
     });
   }
 
   @Delete(':id')
   async hardDeleteOrderSlip(@Param('id') id: string) {
-    return this.prisma.$transaction(async tx => {
-      await lockOrderSlip(tx, id);
-      const existing = await tx.orderSlip.findUnique({ where: { id } });
-      if (!existing) throw new NotFoundException('Order Slip not found.');
-      if (existing.processedAt || await tx.shortage.count({ where: { orderSlipId: id } })) {
-        throw new BadRequestException('A verified O.S. must be kept as the source of its physical quantities and shortages. Cancel it instead.');
-      }
-      return tx.orderSlip.delete({ where: { id } });
-    });
+    const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Order Slip not found.');
+
+    await this.prisma.orderSlipItem.deleteMany({ where: { orderSlipId: id } });
+    return await this.prisma.orderSlip.delete({ where: { id } });
   }
 }

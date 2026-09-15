@@ -19,7 +19,7 @@ import { OrderSlipsController } from './sales/order-slips.controller';
     MasterInventoryController,
     CompaniesController,
     SettingsController,
-        SalesController,
+    SalesController,
     OrderSlipsController
   ],
   providers: [AppService],

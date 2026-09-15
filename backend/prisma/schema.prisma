@@ -236,9 +236,7 @@ model OrderSlip {
   customer    Customer       @relation(fields: [customerId], references: [id])
   
   date        DateTime       @default(now())
-  status      String         @default("Generated") 
-  processedAt DateTime?
-  processedBy String?
+  status      String         @default("Draft")
   
   subtotal    Decimal        @db.Decimal(12, 2)
   vatApplied  Boolean        @default(false)
@@ -269,30 +267,6 @@ model OrderSlipItem {
   productName  String    
   
   requestedQty Int
-  confirmedQty Int?      
-  shortageQty  Int?      
   unitPrice    Decimal   @db.Decimal(12, 2)
   lineTotal    Decimal   @db.Decimal(12, 2)
-}
-
-model Shortage {
-  id              String   @id @default(uuid())
-  company         String
-  orderSlipId     String
-  orderSlipItemId String   @unique
-  customerId      String
-  osNumber        String
-  sku             String
-  productName     String
-  requestedQty    Int
-  confirmedQty    Int
-  shortageQty     Int
-  status          String   @default("Open") 
-  createdBy       String?
-  updatedBy       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([orderSlipId])
-  @@index([status, createdAt])
 }
