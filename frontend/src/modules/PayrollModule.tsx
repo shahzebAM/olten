@@ -1992,10 +1992,25 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown Employee'}</td>
                                 <td className="py-4 px-6 text-sm text-slate-600">{formatDecToHM(pr.totalHours)} / {pr.daysWorked} days</td>
                                 <td className="py-4 px-6 font-mono font-bold text-emerald-700">₱{pr.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                                <td className="py-4 px-6 text-right space-x-4">
-                                  {emp && <button onClick={() => setSelectedPayslip({ record: pr, emp })} className="text-blue-600 hover:underline text-xs font-bold uppercase">Generate Payslip</button>}
-                                  <button onClick={() => deletePayroll(pr.id)} className="text-red-500 hover:underline text-xs font-bold uppercase">Delete</button>
-                                </td>
+                                <td className="py-4 px-6">
+  <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
+    {emp && (
+      <>
+        <button onClick={() => setSelectedPayslip({ record: pr, emp })} className="text-blue-600 hover:text-blue-800 transition-colors text-xs font-bold uppercase whitespace-nowrap">
+          Generate Payslip
+        </button>
+        
+        <a href={`mailto:?subject=Payslip%20for%20${emp.firstName}%20${emp.lastName}%20-%20${formatMDY(pr.createdAt)}&body=Hi%20${emp.firstName},%0D%0A%0D%0APlease%20find%20your%20payslip%20for%20the%20cutoff%20attached.%0D%0A%0D%0AThank%20you.`} 
+           className="text-amber-600 hover:text-amber-800 transition-colors text-xs font-bold uppercase whitespace-nowrap">
+          Email
+        </a>
+      </>
+    )}
+    <button onClick={() => deletePayroll(pr.id)} className="text-rose-500 hover:text-rose-700 transition-colors text-xs font-bold uppercase whitespace-nowrap">
+      Delete
+    </button>
+  </div>
+</td>
                               </tr>
                             )
                           })
