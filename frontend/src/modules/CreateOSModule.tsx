@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
 interface WarehouseBreakdown { name: string; quantity: number; }
 interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
-interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
+interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number | ''; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
 
 interface CreateOSModuleProps {
   selectedCompany: string;
@@ -32,6 +32,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [productSearch, setProductSearch] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const searchDropdownRef = useRef<HTMLDivElement>(null);
 
   const [isVatApplied, setIsVatApplied] = useState(false);
   const vatRate = 0.12;
@@ -58,6 +60,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   useEffect(() => {
     if (productSearch.trim().length < 2) {
       setProductSearchResults([]);
+      setHighlightedIndex(-1);
       return;
     }
 
@@ -68,6 +71,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         if (res.ok) {
           const data = await res.json();
           setProductSearchResults(data);
+          setHighlightedIndex(-1); // Reset highlight on new search
         }
       } catch (e) {
         console.warn("Product search failed.");
@@ -78,6 +82,16 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
+
+  // Handle auto-scroll for keyboard navigation
+  useEffect(() => {
+    if (highlightedIndex >= 0 && searchDropdownRef.current) {
+      const activeElement = searchDropdownRef.current.children[highlightedIndex] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [highlightedIndex]);
 
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.toLowerCase();
@@ -117,6 +131,27 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setProductSearch('');
     setShowProductDropdown(false);
     setProductSearchResults([]);
+    setHighlightedIndex(-1);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (!showProductDropdown || productSearchResults.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex(prev => (prev < productSearchResults.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (highlightedIndex >= 0 && highlightedIndex < productSearchResults.length) {
+        handleAddProduct(productSearchResults[highlightedIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      setShowProductDropdown(false);
+      setHighlightedIndex(-1);
+    }
   };
 
   const handleUpdateQty = (index: number, val: string) => {
@@ -126,8 +161,23 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       updated[index].lineTotal = 0;
     } else {
       const qty = parseInt(val, 10);
+      const price = Number(updated[index].unitPrice) || 0;
       updated[index].requestedQty = qty;
-      updated[index].lineTotal = qty * updated[index].unitPrice;
+      updated[index].lineTotal = qty * price;
+    }
+    setDraftItems(updated);
+  };
+
+  const handleUpdateUnitPrice = (index: number, val: string) => {
+    const updated = [...draftItems];
+    if (val === '') {
+      updated[index].unitPrice = '';
+      updated[index].lineTotal = 0;
+    } else {
+      const price = parseFloat(val);
+      const qty = Number(updated[index].requestedQty) || 0;
+      updated[index].unitPrice = price;
+      updated[index].lineTotal = qty * price;
     }
     setDraftItems(updated);
   };
@@ -176,10 +226,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
-  const isFormValid = selectedCustomer && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0);
+  const isFormValid = selectedCustomer && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
   const handleSubmit = async () => {
-    if (!isFormValid) return showToast("Complete customer selection and item quantities.", "error");
+    if (!isFormValid) return showToast("Complete customer selection, valid item quantities, and prices.", "error");
     
     setIsProcessing(true);
     try {
@@ -194,7 +244,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           sku: i.sku,
           productName: i.productName,
           requestedQty: Number(i.requestedQty),
-          unitPrice: i.unitPrice
+          unitPrice: Number(i.unitPrice)
         }))
       };
 
@@ -219,6 +269,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   return (
+    // 1. Parent container is locked to screen height with hidden overflow
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
@@ -232,7 +283,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">Back to Gateway</button>
       </header>
 
-      {/* Main Container - Locks scrolling to the inside of the grid */}
+      {/* 2. Main content area becomes a flex container that fills the rest of the screen without scrolling the body */}
       <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden">
         
         {/* Spreadsheet Wrapper Container */}
@@ -281,8 +332,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px]">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px]">
-                    Product
+                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-full">
+                    SKU / PRODUCT
                     <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="ml-3 text-indigo-500 hover:text-indigo-700 disabled:opacity-30">
                       {isRefreshingStock ? '↻...' : '↻ SYNC'}
                     </button>
@@ -290,7 +341,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">Off Qty</th>
                   <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">Whse Qty</th>
                   <th className="border border-slate-300 py-3 px-4 font-bold text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">Requested</th>
-                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Unit Price</th>
+                  <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">Unit Price</th>
                   <th className="border border-slate-300 py-3 px-4 font-bold text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">Line Total</th>
                   <th className="border border-slate-300 py-3 px-3 w-10 text-center"></th>
                 </tr>
@@ -307,8 +358,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
-                      <td className="border border-slate-300 py-2.5 px-4 font-bold text-slate-900 truncate max-w-[300px]">
-                        {item.productName} <span className="text-[10px] font-mono text-slate-400 ml-2 font-normal">{item.sku}</span>
+                      <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full">
+                        <span className="font-bold text-slate-900">{item.productName}</span>
+                        <span className="text-[10px] font-mono text-slate-400 ml-2 font-normal">{item.sku}</span>
                       </td>
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {item.officeStock}
@@ -347,10 +399,19 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         />
                         {totalAvailable > 0 && reqQty > totalAvailable && <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - totalAvailable}</span>}
                       </td>
-                      <td className="border border-slate-300 py-2.5 px-4 text-right font-medium text-slate-700 font-mono">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+
+                      {/* EDITABLE UNIT PRICE */}
+                      <td className="border border-slate-300 p-0 relative bg-white">
+                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₱</div>
+                        <input 
+                          type="number" step="0.01" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} 
+                          className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
+                        />
+                      </td>
+
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                       <td className="border border-slate-300 py-2.5 px-3 text-center">
-                        <button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black">✕</button>
+                        <button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors bg-slate-50 hover:bg-rose-50 p-1.5 rounded-md">✕</button>
                       </td>
                     </tr>
                   );
@@ -358,8 +419,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                 {/* ADD NEW PRODUCT ROW (Acts as the active search bar) */}
                 <tr className="bg-white group">
-                  <td className="border border-slate-300 relative p-0 h-[48px]">
-                    <div className="absolute inset-0 flex items-center px-4">
+                  <td className="border border-slate-300 relative p-0 h-[48px] w-full">
+                    <div className="absolute inset-0 flex items-center">
                       <input 
                         type="text" 
                         placeholder={draftItems.length === 0 ? "Search to add first product..." : "Add another product..."}
@@ -367,20 +428,24 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         onChange={e => { setProductSearch(e.target.value); setShowProductDropdown(true); }}
                         onFocus={() => setShowProductDropdown(true)}
                         onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
+                        onKeyDown={handleSearchKeyDown}
                         disabled={!selectedCustomer}
-                        className="w-full h-full bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30"
+                        className="w-full h-full px-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30 focus:bg-indigo-50/30 transition-colors"
                       />
-                      {/* SVG Dropdown Arrow matching Figma */}
-                      <svg className="w-4 h-4 text-slate-400 shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                     </div>
 
                     {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
-                      <div className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
+                      <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
                         {productSearchResults.length === 0 ? (
                           <div className="p-4 text-slate-500 text-sm font-medium text-center">No products match.</div>
                         ) : (
-                          productSearchResults.map(p => (
-                            <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} className="px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 cursor-pointer flex justify-between items-center">
+                          productSearchResults.map((p, i) => (
+                            <div 
+                              key={p.id} 
+                              onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} 
+                              onMouseEnter={() => setHighlightedIndex(i)}
+                              className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
+                            >
                               <div>
                                 <span className="font-bold text-slate-900">{p.name}</span>
                                 <span className="text-[10px] font-mono text-slate-400 ml-3">{p.sku}</span>
@@ -425,9 +490,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           {/* FOOTER ROW (Bottom grey bar matching Figma) */}
           <div className="bg-[#E2E8F0] border-t border-slate-300 p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-center shrink-0 z-30">
             <div className="flex items-center gap-6 w-full sm:w-auto">
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2 cursor-pointer group">
                 <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-4 h-4 rounded text-indigo-600 border-slate-400 focus:ring-indigo-500 cursor-pointer" />
-                <span className="font-bold text-slate-700 text-xs tracking-widest uppercase">Apply VAT</span>
+                <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors text-xs tracking-widest uppercase">Apply VAT</span>
               </label>
               <div className="text-xs font-bold text-slate-600 uppercase tracking-widest border-l border-slate-400 pl-6">
                 VAT: <span className="font-mono ml-1">₱{vatAmount.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
