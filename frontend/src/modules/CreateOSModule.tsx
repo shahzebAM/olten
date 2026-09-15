@@ -219,6 +219,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   return (
+    // 1. Parent container is locked to screen height with hidden overflow
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
@@ -226,16 +227,19 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       )}
 
-      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
+      {/* Header takes natural height and never shrinks/grows */}
+      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-20">
         <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
-        <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Back to Gateway</button>
+        <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">Back to Gateway</button>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-4 sm:p-8">
-        <div className="max-w-7xl mx-auto space-y-6">
+      {/* 2. Main content area becomes a flex container that fills the rest of the screen without scrolling the body */}
+      <main className="flex-1 flex flex-col p-4 sm:p-6 overflow-hidden">
+        <div className="max-w-[1400px] w-full mx-auto flex flex-col flex-1 overflow-hidden space-y-4">
 
-          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Step 1: Select Customer</h3>
+          {/* STEP 1: CUSTOMER SELECTION (Fixed Height / Shrink-0) */}
+          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 shrink-0 z-10">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 pl-1">Step 1: Select Customer</h3>
             
             {!selectedCustomer ? (
               <div className="relative">
@@ -246,7 +250,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); }}
                   onFocus={() => setShowCustomerDropdown(true)}
                   onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
-                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all"
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50 transition-all placeholder:text-slate-400"
                 />
                 {showCustomerDropdown && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-30">
@@ -267,41 +271,42 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 )}
               </div>
             ) : (
-              <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 p-5 rounded-xl">
-                <div>
-                  <h4 className="text-lg font-black text-indigo-900">{selectedCustomer.name}</h4>
-                  <div className="text-xs font-medium text-indigo-700 mt-1">{selectedCustomer.company} • {selectedCustomer.contact || 'No Direct Contact'} • {selectedCustomer.phone || 'No Phone'}</div>
-                  <div className="text-xs text-indigo-500 mt-1 max-w-md truncate">{selectedCustomer.address || 'No Address Provided'}</div>
-                </div>
-                <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-bold text-[10px] uppercase tracking-widest rounded-lg transition-colors">Change Customer</button>
+              <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 px-5 py-4 rounded-xl">
+                <h4 className="text-xl font-black text-indigo-900">{selectedCustomer.name}</h4>
+                <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-bold text-[10px] uppercase tracking-widest rounded-lg transition-colors shadow-sm">Change Customer</button>
               </div>
             )}
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
-            <div className="p-6 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          {/* STEP 2: PRODUCTS TABLE (Flex-1 / Grows to fill space / Internal Scrolling) */}
+          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden">
+            
+            {/* Header + Minimal Search Bar */}
+            <div className="p-4 border-b border-slate-200 bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0 z-10">
               <div className="flex items-center gap-4">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Step 2: Add Products</h3>
-                <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="px-3 py-1.5 bg-slate-200 text-slate-600 hover:bg-slate-300 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-md transition-colors">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 pl-1">Step 2: Add Products</h3>
+                <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="px-3 py-1.5 bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 disabled:opacity-50 text-[9px] font-black uppercase tracking-widest rounded-md transition-colors shadow-sm">
                   {isRefreshingStock ? 'Refreshing...' : 'Refresh Stock'}
                 </button>
               </div>
               
-              <div className="relative w-full sm:w-96">
-                <input 
-                  type="text" 
-                  placeholder="Search SKU, Product Name, Category..." 
-                  value={productSearch}
-                  onChange={e => { setProductSearch(e.target.value); setShowProductDropdown(true); }}
-                  onFocus={() => setShowProductDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
-                  disabled={!selectedCustomer}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 hover:border-indigo-400 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50 disabled:bg-slate-100 transition-all"
-                />
-                
-                {isSearchingProducts && (
-                  <div className="absolute right-4 top-3"><div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
-                )}
+              <div className="relative w-full sm:w-[400px]">
+                <div className="relative flex items-center">
+                  <svg className="absolute left-3 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <input 
+                    type="text" 
+                    placeholder="Search SKU, Product Name, Category..." 
+                    value={productSearch}
+                    onChange={e => { setProductSearch(e.target.value); setShowProductDropdown(true); }}
+                    onFocus={() => setShowProductDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
+                    disabled={!selectedCustomer}
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 disabled:opacity-50 disabled:bg-slate-100 transition-all placeholder:text-slate-400"
+                  />
+                  {isSearchingProducts && (
+                    <div className="absolute right-3"><div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
+                  )}
+                </div>
 
                 {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
                   <div className="absolute top-full right-0 mt-2 w-full sm:w-[500px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-72 overflow-y-auto z-40">
@@ -332,23 +337,28 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            <div className="overflow-x-auto w-full min-h-[220px] pb-4">
+            {/* 3. The Table Container handles the scrolling internally while headers stay sticky */}
+            <div className="flex-1 overflow-auto w-full relative bg-slate-50/30">
               <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
-                <thead className="bg-white border-b border-slate-200">
+                <thead className="bg-white sticky top-0 z-20 shadow-sm shadow-slate-200/50">
                   <tr>
-                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
-                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Description</th>
-                    <th className="py-4 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20">Off Qty</th>
-                    <th className="py-4 px-3 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-28 border-r border-slate-200">Whse Qty</th>
-                    <th className="py-4 px-5 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-36 bg-indigo-50/50">Requested</th>
-                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-28">Unit Price</th>
-                    <th className="py-4 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32">Line Total</th>
-                    <th className="w-12 text-center"></th>
+                    <th className="py-3 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32 border-b border-slate-200">SKU</th>
+                    <th className="py-3 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Product Description</th>
+                    <th className="py-3 px-3 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-20 border-b border-slate-200">Off Qty</th>
+                    <th className="py-3 px-3 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-28 border-r border-b border-slate-200">Whse Qty</th>
+                    <th className="py-3 px-5 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-36 bg-indigo-50/50 border-b border-indigo-100">Requested</th>
+                    <th className="py-3 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-28 border-b border-slate-200">Unit Price</th>
+                    <th className="py-3 px-5 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-32 border-b border-slate-200">Line Total</th>
+                    <th className="w-12 text-center border-b border-slate-200"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {draftItems.length === 0 ? (
-                    <tr><td colSpan={8} className="py-12 text-center text-slate-400 font-medium">Search and select a product to begin building the order.</td></tr>
+                    <tr>
+                      <td colSpan={8} className="py-24 text-center text-slate-400 font-medium">
+                        Search and select a product to begin building the order.
+                      </td>
+                    </tr>
                   ) : (
                     draftItems.map((item, idx) => {
                       const reqQty = Number(item.requestedQty) || 0;
@@ -361,14 +371,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       const totalAvailable = item.officeStock + effectiveWhseQty;
 
                       return (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <tr key={idx} className="hover:bg-indigo-50/20 transition-colors bg-white">
                           <td className="py-3 px-5 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
                           <td className="py-3 px-5 font-bold text-slate-900">{item.productName}</td>
                           <td className={`py-3 px-3 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                           
                           {/* WAREHOUSE DROPDOWN SELECTOR */}
-                          <td className={`py-3 px-3 text-center border-r border-slate-200 relative group`}>
-                            <div className="inline-flex flex-col items-center justify-center cursor-pointer p-1.5 rounded-lg hover:bg-slate-200 transition-colors">
+                          <td className={`py-3 px-3 text-center border-r border-slate-100 relative group`}>
+                            <div className="inline-flex flex-col items-center justify-center cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
                               <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                 {effectiveWhseQty}
                               </span>
@@ -378,7 +388,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                             </div>
                             
                             {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
-                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-2 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-56 bg-slate-900 text-white rounded-xl shadow-2xl p-2 z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-700 pb-1.5 px-2 text-left">Select Location</div>
                                 <div className="space-y-1 max-h-40 overflow-y-auto">
                                   {/* Default 'All Warehouses' Option */}
@@ -411,7 +421,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-2 px-4 bg-indigo-50/30">
                             <input 
                               type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
-                              className="w-full px-2 py-1.5 text-center font-black text-lg text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
+                              className="w-full px-2 py-1.5 text-center font-black text-lg text-indigo-700 bg-white border border-indigo-200 rounded-lg outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 shadow-sm transition-all" 
                             />
                             <div className="mt-1 text-center">
                               {totalAvailable === 0 && <span className="text-rose-600 font-bold text-[9px] uppercase tracking-widest">Out of Stock</span>}
@@ -421,7 +431,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           </td>
                           <td className="py-3 px-5 text-right font-bold text-slate-700">₱{item.unitPrice.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                           <td className="py-3 px-5 text-right font-black text-slate-900">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                          <td className="py-3 px-5 text-center"><button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors">✕</button></td>
+                          <td className="py-3 px-5 text-center"><button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors bg-slate-50 hover:bg-rose-50 p-1.5 rounded-md">✕</button></td>
                         </tr>
                       );
                     })
@@ -431,10 +441,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
           </section>
 
-          <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col md:flex-row items-center justify-between p-6 gap-6 relative z-10">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-5 h-5 rounded text-indigo-500 bg-slate-800 border-slate-700 focus:ring-indigo-500" />
-              <span className="font-bold text-slate-300 text-sm tracking-wide uppercase">Apply 12% VAT</span>
+          {/* STEP 3: FOOTER CHECKOUT (Fixed Height / Shrink-0) */}
+          <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col md:flex-row items-center justify-between p-6 gap-6 shrink-0 z-30">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-5 h-5 rounded text-indigo-500 bg-slate-800 border-slate-700 focus:ring-indigo-500 cursor-pointer" />
+              <span className="font-bold text-slate-300 group-hover:text-white transition-colors text-sm tracking-wide uppercase">Apply 12% VAT</span>
             </label>
 
             <div className="flex flex-wrap items-center gap-8 md:gap-12 w-full md:w-auto justify-end">
