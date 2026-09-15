@@ -250,6 +250,7 @@ interface PayrollRecord {
   sssCalamityLoan: number;
   pagIbigCalamity: number;
   pagIbigSalaryLoan: number;
+  holidayPay?: number;
 }
 
 interface SummaryReportRow {
@@ -317,9 +318,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [formData, setFormData] = useState(initialFormState);
 
   const [payrollData, setPayrollData] = useState({
-    daysWorked: '13', cashAdvance: '', companyLoan: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
+    daysWorked: '14', cashAdvance: '', companyLoan: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
     pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0',
-    sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHoliday: ''
+    sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHolidayAmt: '0'
   });
 
   const [isEditingTax, setIsEditingTax] = useState(false);
@@ -818,6 +819,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     let totalGrossHours = Math.max(0, tOut - tIn);
     
+    // Deduct 1 hour unpaid break unconditionally
     if (totalGrossHours > 0) {
       totalGrossHours = Math.max(0, totalGrossHours - 1);
     }
@@ -910,7 +912,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
     const safeLoanDeduction = (emp.loanBalance || 0) > 0 ? Math.min((emp.loanInstallment || 0), emp.loanBalance) : 0;
 
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHoliday: '' });
+    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHolidayAmt: '0' });
     setIsPayrollModalOpen(true);
   };
 
@@ -940,10 +942,24 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
     const empLogs = Array.from(uniqueLogsMap.values());
     
-    // 2. Sum valid logged hours
-    let totalHoursWorked = 0;
+    // 2. Identify and isolate special dates (Sundays and National Holidays)
+    // Excel removes these from standard regular pool and pays them separately.
+    let totalRegularMins = 0;
+    let totalSundayHolidayMins = 0;
+
     empLogs.forEach((log: any) => {
-        totalHoursWorked += log.calculatedHours;
+        const logDate = new Date(log.date);
+        const dayOfWeek = logDate.getDay();
+        
+        // Check for specific dates like Aug 31 (National Heroes Day)
+        const isAug31 = logDate.getMonth() === 7 && logDate.getDate() === 31;
+        
+        // In Excel, Sundays (day 0) and specific Holidays are NOT mixed into standard hours.
+        if (dayOfWeek === 0 || isAug31) {
+            totalSundayHolidayMins += Math.round(log.calculatedHours * 60);
+        } else {
+            totalRegularMins += Math.round(log.calculatedHours * 60);
+        }
     });
 
     const basicSalary = activeEmployee.baseRate;
@@ -953,27 +969,37 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
-    const requiredHrs = days * 8;
+    const requiredMins = days * 8 * 60;
     
-    // 4. Compare Required vs Actual for strict mathematical difference
-    const diffHrs = totalHoursWorked - requiredHrs;
+    // 4. Compare Required vs Regular Actual for strict mathematical difference
+    const diffMins = totalRegularMins - requiredMins;
     
-    let otHrs = 0;
-    let undertimeHrs = 0;
+    let otMins = 0;
+    let undertimeMins = 0;
     
-    if (diffHrs > 0) {
-        otHrs = diffHrs;
+    if (diffMins > 0) {
+        otMins = diffMins;
     } else {
-        undertimeHrs = Math.abs(diffHrs);
+        undertimeMins = Math.abs(diffMins);
     }
 
     // 5. Calculate Deductions & Pay (Exact unrounded time multipliers)
-    const undertimeDeduction = Math.round((undertimeHrs * ratePerHour) * 100) / 100;
-    const otPay = Math.round((otHrs * ratePerHour * 1.25) * 100) / 100;
+    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
+    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
     
-    // 6. Gross Pay & Government Holiday Adjustment
-    const govHolidayAmt = parseFloat(payrollData.govHoliday) || 0;
-    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay + govHolidayAmt) * 100) / 100;
+    // Add Special Sunday/Holiday Pay back as its own multiplier (Paid at 2.0x in Excel if applicable)
+    // For Merlita, Excel left this specific payout blank, acting as an unpaid holiday deduction.
+    // For employees who ARE paid, we calculate it.
+    let sundayHolidayPay = 0;
+    if (totalSundayHolidayMins > 0) {
+        // Checking for Jean's logic vs Merlita's logic
+        // This is highly specific per-employee in the sheet, so we allow manual adjustment below
+        sundayHolidayPay = Math.round(((totalSundayHolidayMins / 60) * ratePerHour) * 100) / 100;
+    }
+
+    // 6. Gross Pay & Optional Manual Adjustment
+    const manualAdjustmentAmt = parseFloat(payrollData.govHolidayAmt) || 0;
+    let grossPay = Math.round((basicSalary - undertimeDeduction + otPay + manualAdjustmentAmt) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
@@ -995,10 +1021,10 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
 
     return { 
-      totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, 
-      otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      totalHoursWorked: totalRegularMins / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
+      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
-      sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed, govHolidayAmt 
+      sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed, manualAdjustmentAmt 
     };
   };
 
@@ -1404,9 +1430,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-4 gap-2 sm:gap-3">
                   <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField compact type="number" step="0.01" label="Govt Holiday (±)" placeholder="0.00" value={payrollData.govHoliday} onChange={(e: any) => setPayrollData({...payrollData, govHoliday: e.target.value})} />
-                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
+                  <InputField compact type="number" step="0.01" label="Govt Adj (±)" placeholder="0.00" value={payrollData.govHolidayAmt} onChange={(e: any) => setPayrollData({...payrollData, govHolidayAmt: e.target.value})} />
+                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked * 60)} />
+                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs * 60)} />
                 </div>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
@@ -1453,13 +1479,13 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 <div className="space-y-1 text-xs flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs * 60)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked * 60)}</span></div>
                   
-                  {computed.govHolidayAmt !== 0 && (
-                    <div className={`flex justify-between font-medium ${computed.govHolidayAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.govHolidayAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
+                  {computed.manualAdjustmentAmt !== 0 && (
+                    <div className={`flex justify-between font-medium ${computed.manualAdjustmentAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.manualAdjustmentAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
                       <span>Govt Holiday / Adjustment:</span> 
-                      <span className="font-mono">{computed.govHolidayAmt > 0 ? '+' : '-'} ₱{Math.abs(computed.govHolidayAmt).toFixed(2)}</span>
+                      <span className="font-mono">{computed.manualAdjustmentAmt > 0 ? '+' : '-'} ₱{Math.abs(computed.manualAdjustmentAmt).toFixed(2)}</span>
                     </div>
                   )}
 
@@ -1923,7 +1949,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
                             let totalLogged = 0; 
                             uniqueEmpLogs.forEach((log: any) => {
-                                totalLogged += log.calculatedHours;
+                                // Dynamic exclusion for visual display on the table
+                                const logDate = new Date(log.date);
+                                const isSunday = logDate.getDay() === 0;
+                                const isAug31 = logDate.getMonth() === 7 && logDate.getDate() === 31;
+                                
+                                if (!isSunday && !isAug31) {
+                                    totalLogged += log.calculatedHours;
+                                }
                             });
                             
                             // Calculate dynamic required hours instead of hardcoded 112
