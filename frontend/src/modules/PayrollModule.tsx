@@ -916,28 +916,27 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
 
   const calculatePayroll = () => {
     if (!activeEmployee) return null;
-    const empLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     
-    // 1. Calculate Aggregate Total Minutes Worked Across All Days
-    let totalMinsWorked = 0;
+    // 1. Fetch raw logs and deduplicate by date
+    const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
+    const uniqueLogsMap = new Map();
+    rawEmpLogs.forEach(log => {
+      const dateStr = log.date.split('T')[0];
+      if (!uniqueLogsMap.has(dateStr)) {
+        uniqueLogsMap.set(dateStr, log);
+      }
+    });
+    const empLogs = Array.from(uniqueLogsMap.values());
+    
+    // 2. Calculate Actual Logged Hours
+    let totalHoursWorked = 0;
 
-    empLogs.forEach(log => {
+    empLogs.forEach((log: any) => {
         if (!log.timeIn || !log.timeIn.includes(':')) { 
-            totalMinsWorked += Math.round(log.hours * 60); 
-        } 
-        else {
-            const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
-            let tIn = timeToFloat(log.timeIn);
-            let tOut = timeToFloat(log.timeOut);
-            
-            if (tOut < tIn) tOut += 24; 
-            let grossHrs = tOut - tIn;
-            
-            // Deduct 1-hour unpaid break unconditionally for any shifted work
-            if (grossHrs > 0) {
-              grossHrs = Math.max(0, grossHrs - 1);
-            }
-            totalMinsWorked += Math.round(grossHrs * 60);
+            totalHoursWorked += log.hours; 
+        } else {
+            const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+            totalHoursWorked += shiftCalc.total;
         }
     });
 
@@ -948,25 +947,25 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const ratePerDay = days > 0 ? basicSalary / days : 0;
     const ratePerHour = ratePerDay / 8;
     
-    const requiredMins = days * 8 * 60;
+    const requiredHrs = days * 8;
     
-    // 2. Excel logic offsets lates with OT directly via aggregate difference
-    const diffMins = totalMinsWorked - requiredMins;
+    // 3. Compare Required vs Actual
+    const diffHrs = totalHoursWorked - requiredHrs;
     
-    let otMins = 0;
-    let undertimeMins = 0;
+    let otHrs = 0;
+    let undertimeHrs = 0;
     
-    if (diffMins > 0) {
-        otMins = diffMins;
+    if (diffHrs > 0) {
+        otHrs = diffHrs;
     } else {
-        undertimeMins = Math.abs(diffMins);
+        undertimeHrs = Math.abs(diffHrs);
     }
 
-    // 3. Exact unrounded time multipliers to prevent decimal truncation gaps
-    const undertimeDeduction = Math.round(((undertimeMins / 60) * ratePerHour) * 100) / 100;
-    const otPay = Math.round(((otMins / 60) * ratePerHour * 1.25) * 100) / 100;
+    // 4. Mathematical computation using exact floating point
+    const undertimeDeduction = Math.round((undertimeHrs * ratePerHour) * 100) / 100;
+    const otPay = Math.round((otHrs * ratePerHour * 1.25) * 100) / 100;
     
-    // 4. Gross Pay
+    // 5. Gross Pay
     const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
@@ -989,8 +988,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
 
     return { 
-      totalHoursWorked: totalMinsWorked / 60, ratePerDay, ratePerHour, requiredHrs: requiredMins / 60, 
-      otHrs: otMins / 60, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
+      totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, 
+      otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
     };
@@ -1386,8 +1385,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-3 gap-2 sm:gap-3">
                   <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
-                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked * 60)} />
-                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs * 60)} />
+                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
+                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
                 </div>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
@@ -1434,11 +1433,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                 <div className="space-y-1 text-xs flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs * 60)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked * 60)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({computed.otHrs.toFixed(2)} Excel @ 125%):</span> 
+                      <span>Total Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
@@ -1873,8 +1872,19 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                         ) : (
                           filteredActiveEmployees.map((emp) => {
                             const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
-                            let totalLogged = 0; let totalOtLogged = 0;
+                            
+                            // Visual dedup in row rendering
+                            const uniqueLogsMap = new Map();
                             empLogs.forEach(log => {
+                              const dateStr = log.date.split('T')[0];
+                              if (!uniqueLogsMap.has(dateStr)) {
+                                uniqueLogsMap.set(dateStr, log);
+                              }
+                            });
+                            const uniqueEmpLogs = Array.from(uniqueLogsMap.values());
+
+                            let totalLogged = 0; let totalOtLogged = 0;
+                            uniqueEmpLogs.forEach((log: any) => {
                                 if (!log.timeIn || !log.timeIn.includes(':')) { totalLogged += log.hours; } 
                                 else { const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); totalLogged += shiftCalc.total; totalOtLogged += shiftCalc.ot; }
                             });
