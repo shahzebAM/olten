@@ -11,10 +11,11 @@ interface CreateOSModuleProps {
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
+  onViewLedger?: () => void; // NEW PROP for the O.S. Records button
   initialCustomerId?: string | null;
 }
 
-export default function CreateOSModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, initialCustomerId }: CreateOSModuleProps) {
+export default function CreateOSModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onViewLedger, initialCustomerId }: CreateOSModuleProps) {
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
@@ -23,7 +24,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
   
-  // NEW: Editable OS Number
+  // Editable OS Number
   const [osNumber, setOsNumber] = useState<string>('');
 
   // --- WORKFLOW STATES ---
@@ -49,8 +50,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=1`);
       const data = await res.json();
       if (data.data && data.data.length > 0) {
-        const lastOs = data.data[0].osNumber; // e.g. 'OS-000005' or 'INV-999'
-        const match = lastOs.match(/(\d+)$/); // Finds the ending numbers
+        const lastOs = data.data[0].osNumber; 
+        const match = lastOs.match(/(\d+)$/); 
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
           const prefix = lastOs.substring(0, match.index);
@@ -102,7 +103,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         if (res.ok) {
           const data = await res.json();
           setProductSearchResults(data);
-          setHighlightedIndex(-1); // Reset highlight on new search
+          setHighlightedIndex(-1); 
         }
       } catch (e) {
         console.warn("Product search failed.");
@@ -257,7 +258,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
-  // Form validity now requires a custom OS Number
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
   const handleSubmit = async () => {
@@ -266,7 +266,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       const payload = {
-        osNumber: osNumber.trim(), // Sent to backend
+        osNumber: osNumber.trim(), 
         company: selectedCompany,
         customerId: selectedCustomer.id,
         isVatApplied,
@@ -298,7 +298,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setCustomerSearch('');
       setIsVatApplied(false);
       
-      // Fetch the next available number automatically!
       fetchNextOsNumber();
       
     } catch (e: any) {
@@ -316,19 +315,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       )}
 
-      {/* Header */}
+      {/* HEADER WITH NEW BUTTON */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
-        <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">Back to Gateway</button>
+        <div className="flex gap-3">
+          {onViewLedger && (
+            <button onClick={onViewLedger} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
+              O.S. Records
+            </button>
+          )}
+          <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
+            Back to Gateway
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden">
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
-          {/* CUSTOMER & OS NUMBER ROW */}
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
             
-            {/* Customer Section */}
             <div className="flex-1 relative flex items-center border-r border-slate-300">
               {!selectedCustomer ? (
                 <div className="w-full relative">
@@ -366,7 +372,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               )}
             </div>
 
-            {/* Editable OS Number Section */}
             <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 border-l border-white shadow-inner">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">O.S. Number</span>
               <input 
@@ -379,7 +384,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
           </div>
 
-          {/* TABLE AREA */}
           <div className="flex-1 overflow-auto bg-slate-50/30 relative flex flex-col">
             <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
@@ -537,7 +541,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </table>
           </div>
 
-          {/* FOOTER ROW */}
           <div className="bg-[#E2E8F0] border-t border-slate-300 p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-center shrink-0 z-30">
             <div className="flex items-center gap-6 w-full sm:w-auto">
               <label className="flex items-center gap-2 cursor-pointer group">
