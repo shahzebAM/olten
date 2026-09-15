@@ -286,8 +286,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       {/* 2. Main content area becomes a flex container that fills the rest of the screen without scrolling the body */}
       <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden">
         
-        {/* Spreadsheet Wrapper Container */}
-        <div className="flex-1 flex flex-col w-full max-w-6xl mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
+       {/* Spreadsheet Wrapper Container */}
+        <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           {/* CUSTOMER ROW (Top row of the grid) */}
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-center min-h-[56px]">
