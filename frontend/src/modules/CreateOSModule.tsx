@@ -332,7 +332,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
-                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-32">SKU</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-40">SKU</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-full">
                     PRODUCT DESCRIPTION
                     <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="ml-3 text-indigo-500 hover:text-indigo-700 disabled:opacity-30">
@@ -359,7 +359,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
-                      <td className="border border-slate-300 py-2.5 px-4 font-mono text-xs font-bold text-slate-500">{item.sku}</td>
+                      <td className="border border-slate-300 py-2.5 px-4 font-mono text-sm font-bold text-slate-900 uppercase">
+                        {item.sku}
+                      </td>
                       <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full font-bold text-slate-900">
                         {item.productName}
                       </td>
