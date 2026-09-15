@@ -1129,48 +1129,19 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden print:h-auto print:block selection:bg-blue-100">
       
-{/* FOOLPROOF SINGLE-PAGE PRINT CSS */}
+      {/* FOOLPROOF SINGLE-PAGE PRINT CSS */}
       <style>{`
         @media print {
-          /* 1. Remove browser default URL and Date headers/footers */
-          @page { margin: 0; size: auto; }
-          
-          /* 2. Force exact colors and remove dark backgrounds from body */
-          html, body {
-            background-color: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          /* 3. Hide absolutely EVERYTHING on the screen by default */
-          body * {
-            visibility: hidden !important;
-          }
-
-          /* 4. Un-hide ONLY the payslip container and all its children */
-          #payslip-print-area, #payslip-print-area * {
-            visibility: visible !important;
-          }
-
-          /* 5. Force the payslip to the absolute top-left of the printed paper */
-          #payslip-print-area {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100vw !important;
-            padding: 15mm !important; /* Adds nice physical paper margins */
-            margin: 0 !important;
-            box-shadow: none !important;
-            border: none !important;
-            background: white !important;
-          }
-
-          /* Ensure action buttons don't print */
-          .no-print, .no-print * {
-            display: none !important;
-          }
+          @page { size: auto; margin: 10mm; }
+          html, body, #root { height: 100% !important; max-height: 100vh !important; overflow: hidden !important; background: white !important; margin: 0 !important; padding: 0 !important; }
+          ::-webkit-scrollbar { display: none; }
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          .print-hidden { display: none !important; height: 0 !important; width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; position: absolute !important; }
+          .print-modal-release { position: absolute !important; left: 0 !important; top: 0 !important; background: transparent !important; padding: 0 !important; display: block !important; z-index: 1 !important; height: auto !important; width: 100% !important; }
+          .print-modal-box { box-shadow: none !important; max-width: none !important; max-height: none !important; border: none !important; border-radius: 0 !important; display: block !important; overflow: visible !important; width: 100% !important; padding: 0 !important; margin: 0 !important; }
+          .print-modal-content { padding: 0 !important; background: transparent !important; display: block !important; overflow: visible !important; width: 100% !important; }
+          #payslip-print-area, #report-print-area { page-break-inside: avoid !important; break-inside: avoid !important; page-break-after: avoid !important; break-after: avoid !important; width: 100% !important; border: none !important; padding: 0 !important; margin: 0 !important; }
+          .no-print { display: none !important; }
         }
       `}</style>
 
