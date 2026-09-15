@@ -1445,7 +1445,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span> 
+                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
@@ -1906,9 +1906,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                                 totalLogged += log.calculatedHours;
                             });
                             
-                            // Calculate dynamic required hours instead of hardcoded 112
-                            const currentDays = parseFloat(payrollData.daysWorked) || 14;
-                            const tableOtLogged = Math.max(0, totalLogged - (currentDays * 8));
+                            // Approximate OT for table display assuming standard 14 days (112 hours)
+                            const tableOtLogged = Math.max(0, totalLogged - 112);
 
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
