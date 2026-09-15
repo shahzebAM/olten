@@ -319,7 +319,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [payrollData, setPayrollData] = useState({
     daysWorked: '13', cashAdvance: '', companyLoan: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
     pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0',
-    sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0'
+    sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHoliday: ''
   });
 
   const [isEditingTax, setIsEditingTax] = useState(false);
@@ -910,7 +910,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
     const safeLoanDeduction = (emp.loanBalance || 0) > 0 ? Math.min((emp.loanInstallment || 0), emp.loanBalance) : 0;
 
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0' });
+    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHoliday: '' });
     setIsPayrollModalOpen(true);
   };
 
@@ -971,8 +971,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const undertimeDeduction = Math.round((undertimeHrs * ratePerHour) * 100) / 100;
     const otPay = Math.round((otHrs * ratePerHour * 1.25) * 100) / 100;
     
-    // 6. Gross Pay
-    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay) * 100) / 100;
+    // 6. Gross Pay & Government Holiday Adjustment
+    const govHolidayAmt = parseFloat(payrollData.govHoliday) || 0;
+    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay + govHolidayAmt) * 100) / 100;
     
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
@@ -997,7 +998,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
       totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, 
       otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
-      sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed 
+      sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed, govHolidayAmt 
     };
   };
 
@@ -1308,7 +1309,13 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   }
                   
                   const regularPay = baseSalary - undertimeDeduction;
-                  const totalEarnings = regularPay + otPay; 
+                  const standardEarnings = regularPay + otPay; 
+                  
+                  // Dynamically extract any manual government holiday adjustments
+                  // by comparing the calculated standard earning vs what was actually saved
+                  const manualAdjustment = rec.grossPay - standardEarnings;
+                  const totalEarnings = rec.grossPay; 
+                  
                   const totalDeductionsCalc = rec.cashAdvance + (rec.companyLoan || 0) + rec.sssDeduction + rec.pagIbigDeduct + rec.philhealthDeduct + rec.tax;
 
                   return (
@@ -1327,7 +1334,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatDecToHM(diffHrs) : '-'}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatMoney(ratePerHour * 1.25) : '-'}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">OT PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{otPay > 0 ? formatMoney(otPay) : '-'}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">HOLIDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
+                        {Math.abs(manualAdjustment) > 0.01 ? (
+                           <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">GOVT HOLIDAY / ADJ</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{manualAdjustment > 0 ? '+' : ''}{formatMoney(manualAdjustment)}</td></tr>
+                        ) : (
+                           <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">HOLIDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
+                        )}
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SUNDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
                         <tr><td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Earnings:</td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalEarnings)}</td></tr>
                       {(() => {
@@ -1391,8 +1402,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
               <div className="space-y-3">
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div className="grid grid-cols-4 gap-2 sm:gap-3">
                   <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
+                  <InputField compact type="number" step="0.01" label="Govt Holiday (±)" placeholder="0.00" value={payrollData.govHoliday} onChange={(e: any) => setPayrollData({...payrollData, govHoliday: e.target.value})} />
                   <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
                   <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
                 </div>
@@ -1443,9 +1455,17 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
+                  
+                  {computed.govHolidayAmt !== 0 && (
+                    <div className={`flex justify-between font-medium ${computed.govHolidayAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.govHolidayAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
+                      <span>Govt Holiday / Adjustment:</span> 
+                      <span className="font-mono">{computed.govHolidayAmt > 0 ? '+' : '-'} ₱{Math.abs(computed.govHolidayAmt).toFixed(2)}</span>
+                    </div>
+                  )}
+
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({formatDecToHM(computed.otHrs)} @ 125%):</span> 
+                      <span>Total Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span> 
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
@@ -1906,8 +1926,9 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                                 totalLogged += log.calculatedHours;
                             });
                             
-                            // Approximate OT for table display assuming standard 14 days (112 hours)
-                            const tableOtLogged = Math.max(0, totalLogged - 112);
+                            // Calculate dynamic required hours instead of hardcoded 112
+                            const currentDays = parseFloat(payrollData.daysWorked) || 14;
+                            const tableOtLogged = Math.max(0, totalLogged - (currentDays * 8));
 
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
