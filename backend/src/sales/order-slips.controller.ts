@@ -80,10 +80,28 @@ export class OrderSlipsController {
     return stockMap;
   }
 
+  // --- PHASE 7: FETCH PENDING SHORTAGES ---
+  @Get('shortages/all')
+  async getShortages(@Query('company') company: string) {
+     if (!company) throw new BadRequestException("Company is required");
+     return await this.prisma.shortage.findMany({
+       where: { company },
+       include: { orderSlip: { include: { customer: true } } },
+       orderBy: { createdAt: 'desc' }
+     });
+  }
+
+  // --- PHASE 7: UPDATE SHORTAGE STATUS ---
+  @Patch('shortages/:id/status')
+  async updateShortageStatus(@Param('id') id: string, @Body() body: any) {
+     return await this.prisma.shortage.update({
+       where: { id },
+       data: { status: body.status }
+     });
+  }
+
   @Post()
-@Post()
   async createOrderSlip(@Body() data: any) {
-    // 1. ADDED osNumber extraction here
     const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber } = data;
 
     if (!company || !customerId || !items || items.length === 0) {
@@ -94,15 +112,12 @@ export class OrderSlipsController {
       const customer = await tx.customer.findUnique({ where: { id: customerId } });
       if (!customer) throw new NotFoundException('Customer record not found.');
 
-      // 2. NEW CUSTOM OS NUMBER LOGIC
       let osNumber = customOsNumber?.trim();
       
       if (osNumber) {
-        // Prevent duplicate OS Numbers
         const existing = await tx.orderSlip.findFirst({ where: { company, osNumber } });
         if (existing) throw new BadRequestException(`Order Slip number ${osNumber} is already in use!`);
       } else {
-        // Fallback auto-generator if frontend sends nothing
         const lastOs = await tx.orderSlip.findFirst({
           where: { company },
           orderBy: { osNumber: 'desc' }
@@ -131,7 +146,6 @@ export class OrderSlipsController {
         const product = dbProducts.find(p => p.id === Number(item.productId));
         if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
 
-        // Trust the custom unit price passed from the frontend
         const unitPrice = Number(item.unitPrice) || Number(product.sellingPrice); 
         const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
 
@@ -152,7 +166,7 @@ export class OrderSlipsController {
 
       return await tx.orderSlip.create({
         data: {
-          osNumber, // Uses the dynamically determined number
+          osNumber,
           company,
           customerId,
           status: 'Generated', 
@@ -234,6 +248,66 @@ export class OrderSlipsController {
     return os;
   }
 
+  // --- PHASE 7: PROCESS ORDER SLIP (Physical Validation) ---
+  @Patch(':id/process')
+  async processOrderSlip(@Param('id') id: string, @Body() body: any) {
+    const { items, user } = body; 
+    return await this.prisma.$transaction(async (tx) => {
+      const os = await tx.orderSlip.findUnique({ where: { id }, include: { items: true } });
+      if (!os) throw new NotFoundException('Order Slip not found');
+
+      let hasShortage = false;
+
+      for (const input of items) {
+        const osItem = os.items.find((i: any) => i.id === input.id);
+        if (!osItem) continue;
+
+        const requestedQty = osItem.requestedQty;
+        const physicalQty = Number(input.physicalQty) || 0;
+        const shortageQty = Math.max(0, requestedQty - physicalQty);
+
+        if (shortageQty > 0) hasShortage = true;
+
+        // 1. Update OS Item with physical verification data
+        await tx.orderSlipItem.update({
+          where: { id: osItem.id },
+          data: { confirmedQty: physicalQty, shortageQty }
+        });
+
+        // 2. Create Shortage Record if missing stock
+        if (shortageQty > 0) {
+          await tx.shortage.create({
+            data: {
+              orderSlipId: os.id,
+              orderSlipItemId: osItem.id,
+              company: os.company,
+              customerId: os.customerId,
+              osNumber: os.osNumber,
+              sku: osItem.sku,
+              productName: osItem.productName,
+              requestedQty: requestedQty,
+              confirmedQty: physicalQty,
+              shortageQty: shortageQty,
+              status: 'Open',
+              createdBy: user
+            }
+          });
+        }
+      }
+
+      // 3. Update overall OS Status
+      await tx.orderSlip.update({
+        where: { id },
+        data: { 
+          status: hasShortage ? 'Partially Verified' : 'Verified',
+          processedAt: new Date()
+        }
+      });
+
+      return { success: true };
+    });
+  }
+
   // --- ADVANCED EDIT ACTION (Modify Status, Items, and VAT) ---
   @Patch(':id')
   async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
@@ -243,7 +317,6 @@ export class OrderSlipsController {
     if (existing.status === 'Cancelled') throw new BadRequestException('Cannot modify a cancelled Order Slip.');
 
     return await this.prisma.$transaction(async (tx) => {
-      // If items are passed, we perform a deep update
       if (items && Array.isArray(items)) {
         await tx.orderSlipItem.deleteMany({ where: { orderSlipId: id } });
 
@@ -294,7 +367,6 @@ export class OrderSlipsController {
         });
       }
 
-      // If no items passed, just update status
       return await tx.orderSlip.update({
         where: { id },
         data: { status, updatedBy: user },
@@ -312,82 +384,6 @@ export class OrderSlipsController {
       where: { id },
       data: { status: 'Cancelled', updatedBy: user }
     });
-  }
-
-  // Process Order Slip & Calculate Shortages
-  @Patch(':id/process')
-  async processOrderSlip(@Param('id') id: string, @Body() body: any) {
-    const { items, user } = body; 
-    return await this.prisma.$transaction(async (tx) => {
-      const os = await tx.orderSlip.findUnique({ where: { id }, include: { items: true } });
-      if (!os) throw new NotFoundException('Order Slip not found');
-
-      let hasShortage = false;
-
-      for (const input of items) {
-        const osItem = os.items.find((i: any) => i.id === input.id);
-        if (!osItem) continue;
-
-        const requestedQty = osItem.requestedQty;
-        const physicalQty = Number(input.physicalQty) || 0;
-        const shortageQty = Math.max(0, requestedQty - physicalQty); // Never negative
-
-        if (shortageQty > 0) hasShortage = true;
-
-        // 1. Update OS Item
-        await tx.orderSlipItem.update({
-          where: { id: osItem.id },
-          data: { physicalQty, shortageQty }
-        });
-
-        // 2. Create Shortage Record if applicable
-        if (shortageQty > 0) {
-          await tx.shortage.create({
-            data: {
-              orderSlipId: os.id,
-              orderSlipItemId: osItem.id,
-              company: os.company,
-              customerId: os.customerId,  // <-- ADDED THIS
-              osNumber: os.osNumber,
-              sku: osItem.sku,
-              productName: osItem.productName,
-              requestedQty: requestedQty,
-              confirmedQty: physicalQty,
-              shortageQty: shortageQty,
-              status: 'Open'
-            }
-          });
-        }
-      }
-
-      // 3. Update overall OS Status
-      await tx.orderSlip.update({
-        where: { id },
-        data: { status: hasShortage ? 'Partially Verified' : 'Verified' }
-      });
-
-      return { success: true };
-    });
-  }
-
-  // Fetch Shortages
-  @Get('shortages/all')
-  async getShortages(@Query('company') company: string) {
-     if (!company) throw new BadRequestException("Company is required");
-     return await this.prisma.shortage.findMany({
-       where: { company },
-       include: { orderSlip: { include: { customer: true } } },
-       orderBy: { createdAt: 'desc' }
-     });
-  }
-
-  // Update Shortage Status
-  @Patch('shortages/:id/status')
-  async updateShortageStatus(@Param('id') id: string, @Body() body: any) {
-     return await this.prisma.shortage.update({
-       where: { id },
-       data: { status: body.status }
-     });
   }
 
   @Delete(':id')
