@@ -171,11 +171,11 @@ model InventoryMovement {
 }
 
 model Warehouse {
-  id       Int      @id @default(autoincrement())
-  company  String   
-  name     String   
-  address  String   @default("Not Specified") 
-  status   String   @default("Active") 
+  id        Int      @id @default(autoincrement())
+  company   String   
+  name      String   
+  address   String   @default("Not Specified") 
+  status    String   @default("Active") 
   createdAt DateTime @default(now())
 
   inventoryMovements InventoryMovement[] 
@@ -225,6 +225,7 @@ model Customer {
   createdAt   DateTime @default(now())
 
   orderSlips  OrderSlip[]
+  shortages   Shortage[]
 }
 
 model OrderSlip {
@@ -246,10 +247,12 @@ model OrderSlip {
   
   createdBy   String
   updatedBy   String?
+  processedAt DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   
   items       OrderSlipItem[]
+  shortages   Shortage[]
 
   @@index([company])
 }
@@ -264,9 +267,39 @@ model OrderSlipItem {
   product      Product   @relation(fields: [productId], references: [id])
   
   sku          String
-  productName  String    
+  productName  String  
   
   requestedQty Int
+  confirmedQty Int?
+  shortageQty  Int?
   unitPrice    Decimal   @db.Decimal(12, 2)
   lineTotal    Decimal   @db.Decimal(12, 2)
+
+  shortages    Shortage[]
+}
+
+model Shortage {
+  id              String        @id @default(uuid())
+  orderSlipId     String
+  orderSlipItemId String
+  company         String
+  customerId      String
+  osNumber        String
+  sku             String
+  productName     String
+  requestedQty    Int
+  confirmedQty    Int
+  shortageQty     Int
+  status          String        @default("Open")
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  orderSlip       OrderSlip     @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
+  orderSlipItem   OrderSlipItem @relation(fields: [orderSlipItemId], references: [id], onDelete: Cascade)
+  customer        Customer      @relation(fields: [customerId], references: [id])
+
+  @@index([company])
+  @@index([orderSlipId])
 }
