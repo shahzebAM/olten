@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface OrderSlipItem { id: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; }
+interface OrderSlipItem { id: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; physicalQty?: number; shortageQty?: number; warehouseQty?: number; }
 interface Customer { id: string; name: string; }
 interface OrderSlip {
   id: string;
@@ -20,19 +20,34 @@ interface OrderSlip {
   items: OrderSlipItem[];
 }
 
+interface ShortageRecord {
+  id: string;
+  orderSlipId: string;
+  sku: string;
+  productName: string;
+  requestedQty: number;
+  confirmedQty: number;
+  shortageQty: number;
+  status: string;
+  createdAt: string;
+  orderSlip: { osNumber: string; customer: Customer; };
+}
+
 interface OrderSlipsModuleProps {
   selectedCompany: string;
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
-  // Optional: If you want a button to switch to the Create page
   onCreateNew?: () => void; 
 }
 
 export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
+  const [activeMainTab, setActiveMainTab] = useState<'ledger' | 'shortages'>('ledger');
+
   const [orderSlips, setOrderSlips] = useState<OrderSlip[]>([]);
+  const [shortages, setShortages] = useState<ShortageRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -49,6 +64,10 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const limit = 15;
 
   const [viewOs, setViewOs] = useState<OrderSlip | null>(null);
+
+  // --- PROCESSING STATES (PHASE 7) ---
+  const [processOs, setProcessOs] = useState<OrderSlip | null>(null);
+  const [processItems, setProcessItems] = useState<any[]>([]);
 
   // --- ADVANCED EDIT STATES ---
   const [editOs, setEditOs] = useState<OrderSlip | null>(null);
@@ -70,7 +89,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     return () => clearTimeout(handler);
   }, [search]);
 
-  // --- FETCH LEDGER (Server-Side Pagination & Filters) ---
+  // --- FETCH LEDGER ---
   const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -95,9 +114,24 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
   }, [selectedCompany, page, limit, debouncedSearch, statusFilter, startDate, endDate, API_BASE_URL]);
 
-  useEffect(() => { fetchOrderSlips(); }, [fetchOrderSlips]);
+  // --- FETCH SHORTAGES ---
+  const fetchShortages = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setShortages(data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch shortages");
+    }
+  }, [selectedCompany, API_BASE_URL]);
 
-  // --- EDIT PRODUCT SEARCH DEBOUNCE ---
+  useEffect(() => { 
+    if (activeMainTab === 'ledger') fetchOrderSlips(); 
+    if (activeMainTab === 'shortages') fetchShortages();
+  }, [fetchOrderSlips, fetchShortages, activeMainTab]);
+
   useEffect(() => {
     if (editProductSearch.trim().length < 2) {
       setEditSearchResults([]);
@@ -112,7 +146,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
 
-  // --- QUICK DATE LOGIC ---
   const applyQuickDate = (type: 'today' | 'week' | 'month' | 'clear') => {
     const now = new Date();
     if (type === 'clear') { setStartDate(''); setEndDate(''); return; }
@@ -134,12 +167,87 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setPage(1);
   };
 
+  // --- PROCESSING WORKFLOW (PHASE 7) ---
+  const openProcessModal = (os: OrderSlip) => {
+    setProcessOs(os);
+    setProcessItems(os.items.map(i => ({
+      ...i,
+      physicalQty: i.physicalQty !== undefined && i.physicalQty !== null ? i.physicalQty : i.requestedQty,
+      shortageQty: i.shortageQty || 0
+    })));
+  };
+
+  const handleProcessUpdateQty = (index: number, val: string) => {
+    const updated = [...processItems];
+    if (val === '') {
+      updated[index].physicalQty = '';
+      updated[index].shortageQty = updated[index].requestedQty; // If empty, assume full shortage
+    } else {
+      const phys = parseInt(val, 10);
+      const requested = updated[index].requestedQty;
+      updated[index].physicalQty = isNaN(phys) ? '' : phys;
+      updated[index].shortageQty = isNaN(phys) ? requested : Math.max(0, requested - phys);
+    }
+    setProcessItems(updated);
+  };
+
+  const handleProcessSubmit = async () => {
+    if (!processOs) return;
+    
+    // Prevent submission if fields are blank/NaN
+    const isValid = processItems.every(i => typeof i.physicalQty === 'number' && !isNaN(i.physicalQty) && i.physicalQty >= 0);
+    if (!isValid) return showToast("Enter a valid physical quantity for all items.", "error");
+
+    setIsLoading(true);
+    try {
+      const payload = {
+        user: loginUsername,
+        items: processItems.map(i => ({
+          id: i.id,
+          physicalQty: Number(i.physicalQty)
+        }))
+      };
+
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${processOs.id}/process`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error();
+      
+      showToast("Order Slip processed successfully.", "success");
+      setProcessOs(null);
+      fetchOrderSlips();
+      fetchShortages();
+    } catch (e) {
+      showToast("Failed to process Order Slip.", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleShortageStatusChange = async (shortageId: string, newStatus: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/shortages/${shortageId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (res.ok) {
+        showToast("Shortage status updated.", "success");
+        fetchShortages();
+      }
+    } catch (e) {
+      showToast("Failed to update shortage status.", "error");
+    }
+  };
+
   // --- EDIT WORKFLOW ACTIONS ---
   const openEditModal = (os: OrderSlip) => {
     setEditOs(os);
     setEditStatus(os.status);
     setEditVatApplied(os.vatApplied);
-    // Deep copy items so we don't mutate original state directly
     setEditItems(os.items.map(i => ({ ...i })));
   };
 
@@ -167,8 +275,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       updated[index].lineTotal = 0;
     } else {
       const qty = parseInt(val, 10);
-      updated[index].requestedQty = qty;
-      updated[index].lineTotal = Math.round((qty * updated[index].unitPrice) * 100) / 100;
+      updated[index].requestedQty = isNaN(qty) ? '' : qty;
+      updated[index].lineTotal = isNaN(qty) ? 0 : Math.round((qty * updated[index].unitPrice) * 100) / 100;
     }
     setEditItems(updated);
   };
@@ -177,21 +285,32 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setEditItems(editItems.filter((_, i) => i !== index));
   };
 
+  const editSubtotal = Math.round(editItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
+  const editVatTotal = editVatApplied ? Math.round((editSubtotal * 0.12) * 100) / 100 : 0;
+  const editGrandTotal = Math.round((editSubtotal + editVatTotal) * 100) / 100;
+
+  const isEditFormValid = editOs && editItems.length > 0 && editItems.every(i => typeof i.requestedQty === 'number' && !isNaN(i.requestedQty) && i.requestedQty > 0);
+
   const handleEditSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editOs) return;
+    if (!isEditFormValid) return showToast("Please ensure all items have a valid quantity.", "error");
     
     try {
       const payload = {
         status: editStatus,
         user: loginUsername,
         isVatApplied: editVatApplied,
+        subtotal: Number(editSubtotal) || 0,
+        vatAmount: Number(editVatTotal) || 0,
+        grandTotal: Number(editGrandTotal) || 0,
         items: editItems.map(i => ({
           productId: i.productId,
           sku: i.sku,
           productName: i.productName,
           requestedQty: Number(i.requestedQty) || 0,
-          unitPrice: i.unitPrice
+          unitPrice: Number(i.unitPrice) || 0,
+          lineTotal: Number(i.lineTotal) || 0
         }))
       };
 
@@ -210,7 +329,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
   };
 
-  // --- CANCELLATION & DELETION ---
   const handleCancelOs = async (id: string) => {
     if (!window.confirm("Void this Order Slip? It will remain in history as Cancelled.")) return;
 
@@ -245,24 +363,18 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const handlePrint = () => window.print();
 
-  // Edit Calculations
-  const editSubtotal = Math.round(editItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
-  const editVatTotal = editVatApplied ? Math.round((editSubtotal * 0.12) * 100) / 100 : 0;
-  const editGrandTotal = Math.round((editSubtotal + editVatTotal) * 100) / 100;
-
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       
-      {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
 
-     {/* Global Header */}
+      {/* GLOBAL HEADER */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
-        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Order Slips Ledger</span></h2></div>
+        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| O.S. Management</span></h2></div>
         <div className="flex gap-3">
           {onCreateNew && (
             <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
@@ -275,113 +387,270 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         </div>
       </header>
 
+      {/* TOP TAB NAVIGATOR */}
+      <div className="bg-white border-b border-slate-200 px-6 sm:px-8 shrink-0 print:hidden">
+        <div className="flex gap-6 max-w-7xl mx-auto">
+          <button 
+            onClick={() => setActiveMainTab('ledger')} 
+            className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'ledger' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+          >
+            O.S. Ledger
+          </button>
+          <button 
+            onClick={() => setActiveMainTab('shortages')} 
+            className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'shortages' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+          >
+            Pending Shortages
+          </button>
+        </div>
+      </div>
+
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 print:hidden flex flex-col">
         <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6 flex-1 flex flex-col">
 
-          {/* FILTERS SECTION */}
-          <div className="bg-white border border-slate-300 rounded-2xl p-5 shadow-sm flex flex-col lg:flex-row gap-4 items-end shrink-0">
-            <div className="w-full lg:w-72">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Global Search</label>
-              <input type="text" placeholder="O.S. Number, Customer..." value={search} onChange={e => setSearch(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all" />
-            </div>
-            <div className="w-full lg:w-48">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Status Filter</label>
-              <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer">
-                <option value="All">All Statuses</option>
-                <option value="Generated">Generated</option>
-                <option value="Shipped">Shipped</option>
-                <option value="Completed">Completed</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
-            <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3 items-end">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">From Date</label>
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
+          {/* ===================== LEDGER TAB ===================== */}
+          {activeMainTab === 'ledger' && (
+            <>
+              {/* FILTERS SECTION */}
+              <div className="bg-white border border-slate-300 rounded-2xl p-5 shadow-sm flex flex-col lg:flex-row gap-4 items-end shrink-0">
+                <div className="w-full lg:w-72">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Global Search</label>
+                  <input type="text" placeholder="O.S. Number, Customer..." value={search} onChange={e => setSearch(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all" />
+                </div>
+                <div className="w-full lg:w-48">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Status Filter</label>
+                  <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer">
+                    <option value="All">All Statuses</option>
+                    <option value="Generated">Generated</option>
+                    <option value="Partially Verified">Partially Verified</option>
+                    <option value="Verified">Verified</option>
+                    <option value="Shipped">Shipped</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3 items-end">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">From Date</label>
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">To Date</label>
+                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 lg:ml-auto">
+                  <button onClick={() => applyQuickDate('today')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">Today</button>
+                  <button onClick={() => applyQuickDate('week')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Week</button>
+                  <button onClick={() => applyQuickDate('month')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Month</button>
+                  <button onClick={() => applyQuickDate('clear')} className="px-3 py-2 bg-rose-50 text-rose-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-rose-100 transition-colors">Clear</button>
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">To Date</label>
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400" />
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 lg:ml-auto">
-              <button onClick={() => applyQuickDate('today')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">Today</button>
-              <button onClick={() => applyQuickDate('week')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Week</button>
-              <button onClick={() => applyQuickDate('month')} className="px-3 py-2 bg-slate-100 text-slate-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-slate-200 transition-colors">This Month</button>
-              <button onClick={() => applyQuickDate('clear')} className="px-3 py-2 bg-rose-50 text-rose-600 text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-rose-100 transition-colors">Clear</button>
-            </div>
-          </div>
 
-          {/* LEDGER TABLE */}
-          <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
-            {isLoading && (
-              <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex items-center justify-center">
-                <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm bg-white px-6 py-3 rounded-full shadow-lg border border-indigo-100">Syncing Ledger...</div>
+              {/* LEDGER TABLE */}
+              <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
+                {isLoading && (
+                  <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex items-center justify-center">
+                    <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm bg-white px-6 py-3 rounded-full shadow-lg border border-indigo-100">Syncing Ledger...</div>
+                  </div>
+                )}
+                <div className="flex-1 overflow-auto w-full">
+                  <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
+                    <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
+                      <tr>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Number</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Grand Total</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Status</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Created By</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {orderSlips.length === 0 && !isLoading ? (
+                        <tr><td colSpan={8} className="py-20 text-center text-slate-400 font-medium">No Order Slips match your filters.</td></tr>
+                      ) : (
+                        orderSlips.map(os => (
+                          <tr key={os.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-3.5 px-6 font-mono text-sm font-black text-indigo-700">{os.osNumber}</td>
+                            <td className="py-3.5 px-6 font-medium text-slate-600">{new Date(os.createdAt).toLocaleDateString()}</td>
+                            <td className="py-3.5 px-6">
+                              <div className="font-bold text-slate-900 truncate max-w-[250px]">{os.customer?.name || 'Unknown'}</div>
+                              <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{os.customerId.slice(0, 8)}</div>
+                            </td>
+                            <td className="py-3.5 px-6 text-center font-black text-slate-700">{os.items?.length || 0}</td>
+                            <td className="py-3.5 px-6 text-right font-black text-slate-900 font-mono">₱{Number(os.grandTotal).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits:2})}</td>
+                            <td className="py-3.5 px-6 text-center">
+                              <span className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md 
+                                ${os.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' : 
+                                  os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 
+                                  os.status === 'Partially Verified' ? 'bg-amber-100 text-amber-700' : 
+                                  os.status === 'Verified' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
+                                {os.status}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
+                            <td className="py-3.5 px-6 text-right space-x-2">
+                              {os.status !== 'Cancelled' && (
+                                <button onClick={() => openProcessModal(os)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Process</button>
+                              )}
+                              <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
+                              <button onClick={() => openEditModal(os)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-[9px] font-black uppercase hover:bg-indigo-100 transition-colors shadow-sm">Edit</button>
+                              {isAuthorizedAdmin && (
+                                <button onClick={() => handleHardDeleteOs(os.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-md text-[9px] font-black uppercase hover:bg-rose-100 transition-colors shadow-sm">Del</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                
+                {/* PAGINATION */}
+                <div className="p-4 border-t border-slate-300 bg-slate-100 flex flex-col sm:flex-row items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest shrink-0">
+                  <div className="mb-3 sm:mb-0">Showing {orderSlips.length} of {totalRecords} records</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Prev</button>
+                    <div className="px-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-indigo-600">Pg {page} / {totalPages}</div>
+                    <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Next</button>
+                  </div>
+                </div>
               </div>
-            )}
-            <div className="flex-1 overflow-auto w-full">
-              <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
-                <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
+            </>
+          )}
+
+          {/* ===================== SHORTAGES TAB ===================== */}
+          {activeMainTab === 'shortages' && (
+            <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
+              <div className="flex-1 overflow-auto w-full">
+                <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
+                  <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
+                    <tr>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Ref</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date Logged</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">SKU / Product</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Req Qty</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Conf Qty</th>
+                      <th className="py-4 px-6 font-black text-rose-600 uppercase tracking-widest text-[10px] text-center border-b border-slate-200 bg-rose-50/50">Shortage</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {shortages.length === 0 ? (
+                      <tr><td colSpan={8} className="py-20 text-center text-slate-400 font-medium">No pending shortages found.</td></tr>
+                    ) : (
+                      shortages.map(shortage => (
+                        <tr key={shortage.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-6 font-mono text-sm font-black text-indigo-700">{shortage.orderSlip?.osNumber || 'Unknown'}</td>
+                          <td className="py-3 px-6 font-medium text-slate-600">{new Date(shortage.createdAt).toLocaleDateString()}</td>
+                          <td className="py-3 px-6 font-bold text-slate-900 truncate max-w-[200px]">{shortage.orderSlip?.customer?.name || 'Unknown'}</td>
+                          <td className="py-3 px-6">
+                            <div className="font-bold text-slate-900 truncate max-w-[200px]">{shortage.productName}</div>
+                            <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{shortage.sku}</div>
+                          </td>
+                          <td className="py-3 px-6 text-center font-bold text-slate-700">{shortage.requestedQty}</td>
+                          <td className="py-3 px-6 text-center font-bold text-emerald-600">{shortage.confirmedQty}</td>
+                          <td className="py-3 px-6 text-center font-black text-rose-600 bg-rose-50/30 text-lg">{shortage.shortageQty}</td>
+                          <td className="py-3 px-6">
+                            <select 
+                              value={shortage.status} 
+                              onChange={(e) => handleShortageStatusChange(shortage.id, e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                            >
+                              <option value="Open">Open</option>
+                              <option value="Pending Purchase">Pending Purchase</option>
+                              <option value="Ordered">Ordered</option>
+                              <option value="Partially Fulfilled">Partially Fulfilled</option>
+                              <option value="Fulfilled">Fulfilled</option>
+                              <option value="Cancelled">Cancelled</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* ===================== PHASE 7: PROCESSING MODAL ===================== */}
+      {processOs && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex justify-center items-center p-4 sm:p-8">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 max-h-full">
+            
+            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Physical Verification: {processOs.osNumber}</h3>
+                <p className="text-xs font-bold text-slate-500 tracking-widest mt-1 uppercase">Verify Actual Stock vs Requested Qty</p>
+              </div>
+              <button type="button" onClick={() => setProcessOs(null)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 bg-white relative">
+              <table className="w-full text-left text-sm whitespace-nowrap border-collapse">
+                <thead className="bg-slate-50 border-y border-slate-200">
                   <tr>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Number</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Grand Total</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Status</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Created By</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Actions</th>
+                    <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px]">SKU / Product</th>
+                    <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-28">Whse Qty</th>
+                    <th className="py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-28 bg-indigo-50/50">Requested</th>
+                    <th className="py-3 px-4 font-black text-emerald-600 uppercase tracking-widest text-[10px] text-center w-36 bg-emerald-50/50">Physical Confirmed</th>
+                    <th className="py-3 px-4 font-black text-rose-600 uppercase tracking-widest text-[10px] text-center w-28 bg-rose-50/50">Shortage</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {orderSlips.length === 0 && !isLoading ? (
-                    <tr><td colSpan={8} className="py-20 text-center text-slate-400 font-medium">No Order Slips match your filters.</td></tr>
-                  ) : (
-                    orderSlips.map(os => (
-                      <tr key={os.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3.5 px-6 font-mono text-sm font-black text-indigo-700">{os.osNumber}</td>
-                        <td className="py-3.5 px-6 font-medium text-slate-600">{new Date(os.createdAt).toLocaleDateString()}</td>
-                        <td className="py-3.5 px-6">
-                          <div className="font-bold text-slate-900 truncate max-w-[250px]">{os.customer?.name || 'Unknown'}</div>
-                          <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{os.customerId.slice(0, 8)}</div>
-                        </td>
-                        <td className="py-3.5 px-6 text-center font-black text-slate-700">{os.items?.length || 0}</td>
-                        <td className="py-3.5 px-6 text-right font-black text-slate-900 font-mono">₱{Number(os.grandTotal).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits:2})}</td>
-                        <td className="py-3.5 px-6 text-center">
-                          <span className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md 
-                            ${os.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' : 
-                              os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 
-                              os.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {os.status}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
-                        <td className="py-3.5 px-6 text-right space-x-2">
-                          <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
-                          <button onClick={() => openEditModal(os)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-[9px] font-black uppercase hover:bg-indigo-100 transition-colors shadow-sm">Edit</button>
-                          {isAuthorizedAdmin && (
-                            <button onClick={() => handleHardDeleteOs(os.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-md text-[9px] font-black uppercase hover:bg-rose-100 transition-colors shadow-sm">Del</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                <tbody className="divide-y divide-slate-100">
+                  {processItems.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50">
+                      <td className="py-4 px-4 border border-slate-100">
+                        <div className="font-bold text-slate-900 truncate max-w-[300px]">{item.productName}</div>
+                        <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
+                      </td>
+                      <td className="py-4 px-4 border border-slate-100 text-center font-bold text-slate-500">
+                        {item.warehouseQty !== undefined ? item.warehouseQty : 'N/A'}
+                      </td>
+                      <td className="py-4 px-4 border border-slate-100 text-center font-black text-indigo-700 bg-indigo-50/20">
+                        {item.requestedQty}
+                      </td>
+                      <td className="py-2 px-4 border border-slate-100 bg-emerald-50/20 relative">
+                        <input 
+                          type="number" min="0" value={item.physicalQty} 
+                          onChange={e => handleProcessUpdateQty(idx, e.target.value)} 
+                          className={`w-full px-2 py-2.5 text-center font-black text-lg bg-white border-2 rounded outline-none shadow-sm transition-all
+                            ${item.shortageQty > 0 ? 'border-rose-400 text-rose-700 focus:border-rose-600' : 'border-emerald-300 text-emerald-700 focus:border-emerald-600'}
+                          `} 
+                        />
+                      </td>
+                      <td className={`py-4 px-4 text-center border border-slate-100 font-black text-lg ${item.shortageQty > 0 ? 'text-rose-600 bg-rose-50/40' : 'text-slate-300'}`}>
+                        {item.shortageQty}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-            
-            {/* PAGINATION */}
-            <div className="p-4 border-t border-slate-300 bg-slate-100 flex flex-col sm:flex-row items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest shrink-0">
-              <div className="mb-3 sm:mb-0">Showing {orderSlips.length} of {totalRecords} records</div>
-              <div className="flex gap-2">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Prev</button>
-                <div className="px-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-indigo-600">Pg {page} / {totalPages}</div>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors shadow-sm text-slate-700">Next</button>
-              </div>
+
+            <div className="p-6 border-t border-slate-200 bg-slate-50 shrink-0 flex justify-between items-center">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                Shortages will be automatically logged to the pending board.
+              </p>
+              <button 
+                onClick={handleProcessSubmit} 
+                disabled={isLoading} 
+                className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg"
+              >
+                {isLoading ? "Saving..." : "Confirm Physical Stock"}
+              </button>
             </div>
+
           </div>
         </div>
-      </main>
+      )}
 
       {/* FULL ADVANCED EDIT MODAL */}
       {editOs && (
@@ -503,7 +772,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     <span className="text-2xl font-black text-indigo-700 font-mono">₱{editGrandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2})}</span>
                   </div>
 
-                  <button onClick={handleEditSave} disabled={editItems.length === 0} className="w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
+                  <button onClick={handleEditSave} disabled={!isEditFormValid} className="w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">
                     Save Changes
                   </button>
                 </div>
@@ -517,7 +786,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       {viewOs && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
           
-          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
           <style type="text/css" media="print">
             {`@page { size: auto; margin: 0; }`}
           </style>
@@ -535,10 +803,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </div>
             </div>
 
-            {/* PRINT CONTAINER (Adds margins back inside the document to compensate for @page margin: 0) */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
               
-              {/* PRINT ONLY HEADER */}
               <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
                 {selectedCompany}
               </h2>
@@ -566,7 +832,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <tr>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Req Qty</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Conf Qty</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
                   </tr>
@@ -575,8 +842,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   {viewOs.items.map((item, idx) => (
                     <tr key={idx}>
                       <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700">{item.sku}</td>
-                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">{item.productName}</td>
-                      <td className="py-3 px-3 text-center font-black border-r border-slate-200 text-indigo-700">{item.requestedQty}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">
+                        {item.productName}
+                        {item.shortageQty && item.shortageQty > 0 ? (
+                          <span className="ml-2 px-1.5 py-0.5 bg-rose-100 text-rose-700 text-[9px] font-black uppercase rounded">Short {item.shortageQty}</span>
+                        ) : null}
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
+                      <td className="py-3 px-3 text-center font-black border-r border-slate-200 text-indigo-700">{item.physicalQty !== undefined && item.physicalQty !== null ? item.physicalQty : '-'}</td>
                       <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                       <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                     </tr>
