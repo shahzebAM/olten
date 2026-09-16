@@ -113,7 +113,7 @@ export class OrderSlipsController {
       if (!customer) throw new NotFoundException('Customer record not found.');
 
       let osNumber = customOsNumber?.trim();
-      
+
       if (osNumber) {
         const existing = await tx.orderSlip.findFirst({ where: { company, osNumber } });
         if (existing) throw new BadRequestException(`Order Slip number ${osNumber} is already in use!`);
@@ -164,7 +164,7 @@ export class OrderSlipsController {
       const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
       const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
-      return await tx.orderSlip.create({
+      const newOs = await tx.orderSlip.create({
         data: {
           osNumber,
           company,
@@ -180,8 +180,14 @@ export class OrderSlipsController {
             create: cleanItems
           }
         },
-        include: { items: true, customer: true }
+        // Include product stock so frontend warnings work immediately upon return
+        include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
       });
+
+      return {
+        ...newOs,
+        items: newOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 }))
+      };
     });
   }
 
@@ -227,7 +233,11 @@ export class OrderSlipsController {
     const [data, total] = await Promise.all([
       this.prisma.orderSlip.findMany({
         where: whereClause,
-        include: { customer: { select: { name: true, id: true } }, items: true },
+        include: { 
+          customer: { select: { name: true, id: true } }, 
+          // Inject the product current stock to support the frontend visual cues
+          items: { include: { product: { select: { currentStock: true } } } } 
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit
@@ -235,17 +245,33 @@ export class OrderSlipsController {
       this.prisma.orderSlip.count({ where: whereClause })
     ]);
 
-    return { data, total, page, totalPages: Math.ceil(total / limit) };
+    // Map the database response to match the frontend expectations perfectly
+    const formattedData = data.map((os: any) => ({
+      ...os,
+      items: os.items.map((i: any) => ({
+        ...i,
+        officeStock: i.product?.currentStock || 0
+      }))
+    }));
+
+    return { data: formattedData, total, page, totalPages: Math.ceil(total / limit) };
   }
 
   @Get(':id')
   async getOrderSlip(@Param('id') id: string) {
     const os = await this.prisma.orderSlip.findUnique({
       where: { id },
-      include: { items: true, customer: true }
+      include: { 
+        items: { include: { product: { select: { currentStock: true } } } }, 
+        customer: true 
+      }
     });
     if (!os) throw new NotFoundException('Order Slip not found.');
-    return os;
+    
+    return {
+      ...os,
+      items: os.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 }))
+    };
   }
 
   // --- PHASE 7: PROCESS ORDER SLIP (Physical Validation) ---
@@ -329,13 +355,13 @@ export class OrderSlipsController {
         for (const item of items) {
           const requestedQty = Number(item.requestedQty);
           if (!item.productId || !requestedQty || requestedQty <= 0) continue;
-          
+
           const product = dbProducts.find(p => p.id === Number(item.productId));
           if (!product) continue;
 
           const unitPrice = Number(product.sellingPrice); 
           const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
-          
+
           calculatedSubtotal += lineTotal;
           cleanItems.push({
             productId: product.id,
@@ -352,7 +378,7 @@ export class OrderSlipsController {
         const calculatedVat = applyVat ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
         const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
-        return await tx.orderSlip.update({
+        const updatedOs = await tx.orderSlip.update({
           where: { id },
           data: { 
             status: status || existing.status, 
@@ -363,15 +389,25 @@ export class OrderSlipsController {
             grandTotal: calculatedGrandTotal,
             items: { create: cleanItems }
           },
-          include: { items: true, customer: true }
+          include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
         });
+
+        return {
+          ...updatedOs,
+          items: updatedOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 }))
+        };
       }
 
-      return await tx.orderSlip.update({
+      const updatedStatusOs = await tx.orderSlip.update({
         where: { id },
         data: { status, updatedBy: user },
-        include: { items: true, customer: true }
+        include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
       });
+
+      return {
+        ...updatedStatusOs,
+        items: updatedStatusOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 }))
+      };
     });
   }
 
