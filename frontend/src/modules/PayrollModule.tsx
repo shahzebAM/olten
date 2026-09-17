@@ -1525,7 +1525,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
             </div>
 
             <div className="overflow-y-auto p-8 bg-white flex justify-center items-start print-modal-content">
-              <div id="report-print-area" className="w-full max-w-5xl font-sans text-black">
+              <div id="report-print-area" className="w-full max-w-5xl font-sans text-black print:p-12">
                 
                 <div className="hidden print:block mb-8 border-b-2 border-slate-900 pb-4">
                   <h1 className="text-2xl font-black uppercase text-slate-900">{selectedCompany} TRADING CORP.</h1>
