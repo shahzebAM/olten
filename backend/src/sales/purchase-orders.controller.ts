@@ -1,17 +1,42 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 @Controller('procurement/purchase-orders')
 export class PurchaseOrdersController {
   private readonly prisma = new PrismaClient();
 
+  // --- NEW: FETCH NEXT P.O. NUMBER ---
+  @Get('next-po-number')
+  async getNextPoNumber(@Query('company') company: string) {
+    const lastPo = await this.prisma.purchaseOrder.findFirst({
+      where: { company },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    let nextNum = 1;
+    if (lastPo && lastPo.poNumber.match(/(\d+)$/)) {
+      const match = lastPo.poNumber.match(/(\d+)$/);
+      if (match) {
+        nextNum = parseInt(match[0], 10) + 1;
+        const prefix = lastPo.poNumber.substring(0, match.index);
+        const padding = match[0].length;
+        return { poNumber: `${prefix}${String(nextNum).padStart(padding, '0')}` };
+      }
+    }
+    return { poNumber: 'PO-000001' };
+  }
+
   @Post()
   async createPurchaseOrder(@Body() data: any) {
-    const { company, items, isVatApplied, vatRate = 0.12, user, osReference } = data;
+    const { company, items, isVatApplied, vatRate = 0.12, user, osReference, poNumber } = data;
 
-    if (!company || !items || items.length === 0) {
+    if (!company || !items || items.length === 0 || !poNumber) {
       throw new BadRequestException('Missing required fields.');
     }
+
+    // Prevent duplicates
+    const existing = await this.prisma.purchaseOrder.findUnique({ where: { poNumber } });
+    if (existing) throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
 
     return await this.prisma.$transaction(async (tx) => {
       let calculatedSubtotal = 0;
@@ -27,19 +52,6 @@ export class PurchaseOrdersController {
           lineTotal
         };
       });
-
-      // Auto-increment PO Number
-      const lastPo = await tx.purchaseOrder.findFirst({
-        where: { company },
-        orderBy: { poNumber: 'desc' }
-      });
-
-      let nextNum = 1;
-      if (lastPo && lastPo.poNumber.startsWith('PO-')) {
-        const lastNum = parseInt(lastPo.poNumber.replace('PO-', ''), 10);
-        if (!isNaN(lastNum)) nextNum = lastNum + 1;
-      }
-      const poNumber = `PO-${String(nextNum).padStart(6, '0')}`;
 
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
       const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
@@ -104,7 +116,7 @@ export class PurchaseOrdersController {
               requestedQty: requested,
               confirmedQty: confirmed,
               shortageQty: shortage,
-              status: 'Pending Purchase', // Default for P.O. shortages
+              status: 'Pending Purchase',
               createdBy: user
             }
           });
