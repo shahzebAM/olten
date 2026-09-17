@@ -28,10 +28,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [allSlips, setAllSlips] = useState<any[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
   
-  // Editable OS Number
+  // Editable OS Number & Reference
   const [osNumber, setOsNumber] = useState<string>('');
+  const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
@@ -40,6 +42,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [customerHighlightedIndex, setCustomerHighlightedIndex] = useState(-1);
   const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [loadSlipSearch, setLoadSlipSearch] = useState('');
+  const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -53,15 +58,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- INTELLIGENT NUMBER FETCHERS ---
+  // --- INTELLIGENT NUMBER FETCHERS (Supports purely numeric IDs like 91123) ---
   const fetchNextOsNumber = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=100`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=200`);
       const data = await res.json();
       const slips = data.data || [];
-      const lastOs = slips.find((s: any) => s.osNumber && s.osNumber.toUpperCase().startsWith('OS-'));
       
-      if (lastOs) {
+      setAllSlips(slips); // Cache slips for the "Load Template" dropdown
+
+      const lastOs = slips.find((s: any) => s.status !== 'Finalized Order');
+      
+      if (lastOs && lastOs.osNumber) {
         const match = lastOs.osNumber.match(/(\d+)$/); 
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
@@ -81,12 +89,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchNextFoNumber = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=100`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=200`);
       const data = await res.json();
       const slips = data.data || [];
-      const lastFo = slips.find((s: any) => s.osNumber && s.osNumber.toUpperCase().startsWith('FO-'));
+      const lastFo = slips.find((s: any) => s.status === 'Finalized Order');
       
-      if (lastFo) {
+      if (lastFo && lastFo.osNumber) {
         const match = lastFo.osNumber.match(/(\d+)$/); 
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
@@ -151,34 +159,22 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
 
-  useEffect(() => {
-    if (highlightedIndex >= 0 && searchDropdownRef.current) {
-      const activeElement = searchDropdownRef.current.children[highlightedIndex] as HTMLElement;
-      if (activeElement) {
-        activeElement.scrollIntoView({ block: 'nearest' });
-      }
-    }
-  }, [highlightedIndex]);
-
-  useEffect(() => {
-    if (customerHighlightedIndex >= 0 && customerDropdownRef.current) {
-      const activeElement = customerDropdownRef.current.children[customerHighlightedIndex] as HTMLElement;
-      if (activeElement) {
-        activeElement.scrollIntoView({ block: 'nearest' });
-      }
-    }
-  }, [customerHighlightedIndex]);
-
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.toLowerCase();
     return customers.filter(c => 
       c.name.toLowerCase().includes(query) || 
       c.company.toLowerCase().includes(query) || 
-      c.id.toLowerCase().includes(query) ||
-      (c.phone && c.phone.toLowerCase().includes(query)) ||
-      (c.email && c.email.toLowerCase().includes(query))
+      c.id.toLowerCase().includes(query)
     );
   }, [customers, customerSearch]);
+
+  const filteredSlips = useMemo(() => {
+    const query = loadSlipSearch.toLowerCase();
+    return allSlips.filter(s => 
+      s.osNumber.toLowerCase().includes(query) || 
+      s.customer?.name.toLowerCase().includes(query)
+    );
+  }, [allSlips, loadSlipSearch]);
 
   const handleSelectCustomer = (c: Customer) => {
     setSelectedCustomer(c);
@@ -186,144 +182,101 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setShowCustomerDropdown(false);
   };
 
+  const handleLoadSlip = async (slip: any) => {
+    setReferenceOs(slip.osNumber);
+    if (slip.customer) {
+      setSelectedCustomer(slip.customer);
+      setCustomerSearch(slip.customer.name);
+    }
+    
+    const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
+      productId: i.productId, sku: i.sku, productName: i.productName,
+      requestedQty: i.requestedQty, unitPrice: i.unitPrice, lineTotal: i.lineTotal,
+      officeStock: 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null
+    }));
+    
+    setDraftItems(mappedItems);
+    setShowLoadSlipDropdown(false);
+    setLoadSlipSearch('');
+    
+    // Automatically trigger stock refresh for loaded items to guarantee live data
+    if (mappedItems.length > 0) {
+      const productIds = mappedItems.map(i => i.productId);
+      fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, productIds })
+      }).then(res => res.json()).then(stockMap => {
+        setDraftItems(prev => prev.map(item => ({
+          ...item,
+          officeStock: stockMap[item.productId]?.officeStock ?? 0,
+          warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0,
+          warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? []
+        })));
+      }).catch(() => {});
+    }
+    showToast(`Loaded ${slip.osNumber} successfully.`, "success");
+  };
+
   const handleCustomerKeyDown = (e: React.KeyboardEvent) => {
     if (!showCustomerDropdown || filteredCustomers.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setCustomerHighlightedIndex(prev => (prev < filteredCustomers.length - 1 ? prev + 1 : prev));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) {
-        handleSelectCustomer(filteredCustomers[customerHighlightedIndex]);
-      }
-    } else if (e.key === 'Escape') {
-      setShowCustomerDropdown(false);
-      setCustomerHighlightedIndex(-1);
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev < filteredCustomers.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) { handleSelectCustomer(filteredCustomers[customerHighlightedIndex]); } } 
+    else if (e.key === 'Escape') { setShowCustomerDropdown(false); setCustomerHighlightedIndex(-1); }
   };
 
   const handleAddProduct = (p: SearchedProduct) => {
-    if (draftItems.some(i => i.productId === p.id)) {
-      return showToast("Product already exists in the order.", "error");
-    }
-    
+    if (draftItems.some(i => i.productId === p.id)) { return showToast("Product already exists in the order.", "error"); }
     setDraftItems([...draftItems, { 
-      productId: p.id, 
-      sku: p.sku, 
-      productName: p.name, 
-      officeStock: p.officeStock,
-      warehouseQty: p.warehouseQty,
-      warehouseBreakdown: p.warehouseBreakdown || [],
-      selectedWarehouseName: null,
-      requestedQty: 1, 
-      unitPrice: p.sellingPrice || 0, 
-      lineTotal: p.sellingPrice || 0 
+      productId: p.id, sku: p.sku, productName: p.name, officeStock: p.officeStock, warehouseQty: p.warehouseQty,
+      warehouseBreakdown: p.warehouseBreakdown || [], selectedWarehouseName: null, requestedQty: 1, unitPrice: p.sellingPrice || 0, lineTotal: p.sellingPrice || 0 
     }]);
-    
-    setProductSearch('');
-    setShowProductDropdown(false);
-    setProductSearchResults([]);
-    setHighlightedIndex(-1);
+    setProductSearch(''); setShowProductDropdown(false); setProductSearchResults([]); setHighlightedIndex(-1);
 
     setTimeout(() => {
       const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement;
-      if (input) {
-        input.focus();
-        input.select();
-      }
+      if (input) { input.focus(); input.select(); }
     }, 50);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (!showProductDropdown || productSearchResults.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlightedIndex(prev => (prev < productSearchResults.length - 1 ? prev + 1 : prev));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (highlightedIndex >= 0 && highlightedIndex < productSearchResults.length) {
-        handleAddProduct(productSearchResults[highlightedIndex]);
-      }
-    } else if (e.key === 'Escape') {
-      setShowProductDropdown(false);
-      setHighlightedIndex(-1);
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightedIndex(prev => (prev < productSearchResults.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (highlightedIndex >= 0 && highlightedIndex < productSearchResults.length) { handleAddProduct(productSearchResults[highlightedIndex]); } } 
+    else if (e.key === 'Escape') { setShowProductDropdown(false); setHighlightedIndex(-1); }
   };
 
   const handleUpdateQty = (index: number, val: string) => {
     const updated = [...draftItems];
-    if (val === '') {
-      updated[index].requestedQty = '';
-      updated[index].lineTotal = 0;
-    } else {
-      const qty = parseInt(val, 10);
-      const price = Number(updated[index].unitPrice) || 0;
-      updated[index].requestedQty = qty;
-      updated[index].lineTotal = qty * price;
-    }
+    if (val === '') { updated[index].requestedQty = ''; updated[index].lineTotal = 0; } 
+    else { const qty = parseInt(val, 10); const price = Number(updated[index].unitPrice) || 0; updated[index].requestedQty = qty; updated[index].lineTotal = qty * price; }
     setDraftItems(updated);
   };
 
   const handleUpdateUnitPrice = (index: number, val: string) => {
     const updated = [...draftItems];
-    if (val === '') {
-      updated[index].unitPrice = '';
-      updated[index].lineTotal = 0;
-    } else {
-      const price = parseFloat(val);
-      const qty = Number(updated[index].requestedQty) || 0;
-      updated[index].unitPrice = price;
-      updated[index].lineTotal = qty * price;
-    }
+    if (val === '') { updated[index].unitPrice = ''; updated[index].lineTotal = 0; } 
+    else { const price = parseFloat(val); const qty = Number(updated[index].requestedQty) || 0; updated[index].unitPrice = price; updated[index].lineTotal = qty * price; }
     setDraftItems(updated);
   };
 
-  const handleSelectWarehouse = (index: number, warehouseName: string | null) => {
-    const updated = [...draftItems];
-    updated[index].selectedWarehouseName = warehouseName;
-    setDraftItems(updated);
-  };
-
-  const handleRemoveItem = (index: number) => {
-    setDraftItems(draftItems.filter((_, i) => i !== index));
-  };
+  const handleSelectWarehouse = (index: number, warehouseName: string | null) => { const updated = [...draftItems]; updated[index].selectedWarehouseName = warehouseName; setDraftItems(updated); };
+  const handleRemoveItem = (index: number) => { setDraftItems(draftItems.filter((_, i) => i !== index)); };
 
   const handleRefreshStock = async () => {
     if (draftItems.length === 0) return;
     setIsRefreshingStock(true);
-    
     try {
       const productIds = draftItems.map(i => i.productId);
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, productIds })
-      });
-      
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds }) });
       if (!res.ok) throw new Error();
       const stockMap = await res.json();
-      
       setDraftItems(prev => prev.map(item => ({
-        ...item,
-        officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock,
-        warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty,
-        warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown
+        ...item, officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock, warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown
       })));
-      
       showToast("Live stock validated with backend.", "success");
-    } catch (e) {
-      showToast("Failed to refresh stock.", "error");
-    } finally {
-      setIsRefreshingStock(false);
-    }
+    } catch (e) { showToast("Failed to refresh stock.", "error"); } finally { setIsRefreshingStock(false); }
   };
 
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
@@ -334,53 +287,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
-    
     setIsProcessing(true);
     try {
       const payload = {
         osNumber: osNumber.trim(), 
-        company: selectedCompany,
-        customerId: selectedCustomer.id,
-        isVatApplied,
-        vatRate,
-        user: loginUsername,
-        items: draftItems.map(i => ({
-          productId: i.productId,
-          sku: i.sku,
-          productName: i.productName,
-          requestedQty: Number(i.requestedQty),
-          unitPrice: Number(i.unitPrice)
-        }))
+        company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, user: loginUsername,
+        referenceOs: referenceOs || null,
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
-
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || "Failed to create Order Slip.");
-      }
-
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to create Order Slip."); }
       const newlyCreatedOs = await res.json();
-      showToast("Order Slip generated successfully.", "success");
       
+      showToast("Order Slip generated successfully.", "success");
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
-      
-      // Auto-propose Final Order Number on modal open
       fetchNextFoNumber();
-
-    } catch (e: any) {
-      showToast(e.message || "Network error. Please try again.", "error");
-    } finally {
-      setIsProcessing(false);
-    }
+    } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- GENERATE FINAL ORDER DIRECTLY INTO O.S. LEDGER WITH STOCK DEDUCTION ---
+  // --- GENERATE FINAL ORDER & DEDUCT STOCK ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -389,66 +315,35 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         osNumber: finalOrderNumber.trim(), 
+        referenceOs: finalizedOs.osNumber, 
         company: selectedCompany,
         customerId: finalizedOs.customerId,
         isVatApplied: finalizedOs.vatApplied,
         vatRate: finalizedOs.vatRate,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({
-          productId: i.productId,
-          sku: i.sku,
-          productName: i.productName,
-          requestedQty: i.requestedQty,
-          unitPrice: i.unitPrice 
-        }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: i.requestedQty, unitPrice: i.unitPrice }))
       };
 
-      // 1. Create a duplicate record in the O.S. Ledger
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || "Failed to generate Final Order.");
-      }
-      
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to generate Final Order."); }
       const newFo = await res.json();
 
-      // 2. Force status update to "Finalized Order"
-      await fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
-      });
+      await fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) });
       
-      // 3. Automatically Deduct Office Stock for all items
+      // DEDUCT OFFICE STOCK
       await Promise.all(finalizedOs.items.map((item: any) => 
         fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStockAdjustment: -item.requestedQty }) // Adjust payload to match your backend logic
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: -item.requestedQty }) 
         }).catch(() => console.warn(`Silent Stock Adjustment Fail for ${item.sku}`))
       ));
       
-      showToast("Final Order successfully generated & Stock Deducted!", "success");
+      showToast("Final Order logged & Stock Deducted!", "success");
       setFinalOrderGenerated(true); 
-    } catch (e: any) {
-      showToast(e.message || "Failed to generate Final Order.", "error");
-    } finally {
-      setIsGeneratingFinalOrder(false);
-    }
+    } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null);
-    setFinalOrderGenerated(false);
-    setDraftItems([]);
-    setSelectedCustomer(null);
-    setCustomerSearch('');
-    setIsVatApplied(false);
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null);
     fetchNextOsNumber();
   };
 
@@ -466,16 +361,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
-         <button 
-            onClick={() => {
-              if (onViewLedger) {
-                onViewLedger();
-              } else if (setActiveTab) {
-                setActiveTab('os-ledger');
-              }
-            }} 
-            className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative"
-          >
+         <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
             O.S. Records
           </button>
           <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
@@ -488,18 +374,46 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
+            
+            {/* NEW: LOAD TEMPLATE DROPDOWN */}
+            <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
+              <input 
+                type="text" 
+                placeholder="Search OS/FO..." 
+                value={loadSlipSearch}
+                onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); }}
+                onFocus={() => setShowLoadSlipDropdown(true)}
+                onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
+                className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
+              />
+              {showLoadSlipDropdown && filteredSlips.length > 0 && (
+                <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                  {filteredSlips.map((slip) => (
+                    <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
+                      <div>
+                        <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
+                        <span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span>
+                      </div>
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex-1 relative flex items-center border-r border-slate-300">
               {!selectedCustomer ? (
                 <div className="w-full relative">
                   <input 
                     type="text" 
-                    placeholder="search customer..." 
+                    placeholder="Search customer..." 
                     value={customerSearch}
                     onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); setCustomerHighlightedIndex(-1); }}
                     onFocus={() => setShowCustomerDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
                     onKeyDown={handleCustomerKeyDown}
-                    className="w-full text-center py-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:uppercase placeholder:tracking-widest focus:bg-indigo-50/30 transition-colors"
+                    className="w-full text-center py-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:uppercase placeholder:tracking-widest focus:bg-indigo-50/30 transition-colors uppercase"
                   />
                   {showCustomerDropdown && (
                     <div ref={customerDropdownRef} className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
@@ -514,7 +428,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                             className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
                           >
                             <div>
-                              <span className="font-bold text-slate-900 block">{c.name}</span>
+                              <span className="font-bold text-slate-900 block uppercase">{c.name}</span>
                             </div>
                             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
                           </div>
@@ -524,20 +438,23 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }}>
-                  <span className="text-lg font-black text-indigo-900 tracking-tight">{selectedCustomer.name}</span>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); }}>
+                  <div className="flex flex-col items-center">
+                    <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
+                    {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
+                  </div>
                   <span className="absolute right-6 text-xs font-bold text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">✕ Remove</span>
                 </div>
               )}
             </div>
 
-            <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 border-l border-white shadow-inner">
+            <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">O.S. Number</span>
               <input 
                 type="text" 
                 value={osNumber}
                 onChange={e => setOsNumber(e.target.value.toUpperCase())}
-                className="w-full bg-transparent font-mono font-black text-indigo-700 text-sm sm:text-base outline-none placeholder:text-slate-300 focus:text-indigo-500 transition-colors"
+                className="w-full bg-transparent font-mono font-black text-indigo-700 text-sm sm:text-base outline-none placeholder:text-slate-300 focus:text-indigo-500 transition-colors uppercase"
                 placeholder="OS-000000"
               />
             </div>
@@ -565,9 +482,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <tbody className="bg-white">
                 {draftItems.map((item, idx) => {
                   const reqQty = Number(item.requestedQty) || 0;
-                  const effectiveWhseQty = item.selectedWarehouseName 
-                    ? (item.warehouseBreakdown.find(wb => wb.name === item.selectedWarehouseName)?.quantity || 0)
-                    : item.warehouseQty;
+                  const effectiveWhseQty = item.selectedWarehouseName ? (item.warehouseBreakdown.find(wb => wb.name === item.selectedWarehouseName)?.quantity || 0) : item.warehouseQty;
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
@@ -576,39 +491,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
-                          <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {effectiveWhseQty}
-                          </span>
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 truncate max-w-full">
-                            {item.selectedWarehouseName || 'All Whse'}
-                          </span>
+                          <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{effectiveWhseQty}</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 truncate max-w-full">{item.selectedWarehouseName || 'All Whse'}</span>
                         </div>
-                        {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 w-48 bg-slate-900 text-white rounded-lg shadow-xl p-2 z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                            <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                              <button onClick={() => handleSelectWarehouse(idx, null)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${!item.selectedWarehouseName ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
-                                <span className="truncate pr-2 font-medium">All Whse</span><span className="font-black shrink-0">{item.warehouseQty}</span>
-                              </button>
-                              {item.warehouseBreakdown.map((wb, i) => (
-                                <button key={i} onClick={() => handleSelectWarehouse(idx, wb.name)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${item.selectedWarehouseName === wb.name ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
-                                  <span className="truncate pr-2 font-medium">{wb.name}</span><span className="font-black shrink-0">{wb.quantity}</span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </td>
 
                       <td className="border border-slate-300 p-0 bg-indigo-50/20 relative">
                         <input 
-                          id={`qty-input-${item.productId}`}
-                          type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
+                          id={`qty-input-${item.productId}`} type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
                           className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
                         />
                         {item.officeStock !== undefined && reqQty > item.officeStock && (
-                          <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">
-                            Short {reqQty - item.officeStock}
-                          </span>
+                          <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - item.officeStock}</span>
                         )}
                       </td>
 
@@ -641,56 +535,24 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
                         onKeyDown={handleSearchKeyDown}
                         disabled={!selectedCustomer}
-                        className="w-full h-full px-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30 focus:bg-indigo-50/30 transition-colors"
+                        className="w-full h-full px-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30 focus:bg-indigo-50/30 transition-colors uppercase"
                       />
                     </div>
-
                     {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
                       <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
-                        {productSearchResults.length === 0 ? (
-                          <div className="p-4 text-slate-500 text-sm font-medium text-center">No products match.</div>
-                        ) : (
-                          productSearchResults.map((p, i) => (
-                            <div 
-                              key={p.id} 
-                              onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} 
-                              onMouseEnter={() => setHighlightedIndex(i)}
-                              className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
-                            >
-                              <div>
-                                <span className="font-bold text-slate-900">{p.name}</span>
-                                <span className="text-[10px] font-mono text-slate-400 ml-3">{p.sku}</span>
-                              </div>
-                              <div className="text-right">
-                                <div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div>
-                                <div className="text-[9px] font-bold uppercase tracking-widest mt-0.5 text-slate-400 flex gap-2 justify-end">
-                                  <span>Off: {p.officeStock}</span>
-                                  <span>Whse: {p.warehouseQty}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        )}
+                        {productSearchResults.map((p, i) => (
+                          <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} onMouseEnter={() => setHighlightedIndex(i)} className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
+                            <div><span className="font-bold text-slate-900 uppercase">{p.name}</span><span className="text-[10px] font-mono text-slate-400 ml-3 uppercase">{p.sku}</span></div>
+                            <div className="text-right"><div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div></div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
-                  <td className="border border-slate-300 bg-slate-50/50"></td>
+                  <td className="border border-slate-300 bg-slate-50/50"></td><td className="border border-slate-300 bg-slate-50/50"></td><td className="border border-slate-300 bg-slate-50/50"></td><td className="border border-slate-300 bg-slate-50/50"></td><td className="border border-slate-300 bg-slate-50/50"></td><td className="border border-slate-300 bg-slate-50/50"></td>
                 </tr>
-
                 <tr className="bg-slate-50/10 h-full">
-                  <td className="border border-slate-300 h-full"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
-                  <td className="border border-slate-300"></td>
+                  <td className="border border-slate-300 h-full"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td><td className="border border-slate-300"></td>
                 </tr>
               </tbody>
             </table>
@@ -711,17 +573,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <div className="text-sm font-black text-slate-800 uppercase tracking-widest">
                 Total: <span className="font-mono text-xl ml-2">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
               </div>
-              <button 
-                type="button" 
-                onClick={handleSubmit} 
-                disabled={!isFormValid || isProcessing} 
-                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm"
-              >
+              <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
                 {isProcessing ? 'Saving...' : 'Finalize O.S.'}
               </button>
             </div>
           </div>
-
         </div>
       </main>
 
@@ -729,9 +585,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       {finalizedOs && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
           
-          <style type="text/css" media="print">
-            {`@page { size: auto; margin: 0; }`}
-          </style>
+          <style type="text/css" media="print">{`@page { size: auto; margin: 0; }`}</style>
 
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
             
@@ -741,43 +595,24 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing or Final Order conversion.</p>
               </div>
               <div className="flex gap-3">
-                
-                {/* NEW: GEN FINAL ORDER BUTTON */}
                 {!finalOrderGenerated ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
-                    <input 
-                      type="text" 
-                      value={finalOrderNumber} 
-                      onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())}
-                      className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400"
-                      placeholder="FO-000000"
-                    />
+                    <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
                     </button>
                   </div>
                 ) : (
-                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">
-                    ✓ FINAL ORDER {finalOrderNumber} LOGGED
-                  </span>
+                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER {finalOrderNumber} LOGGED</span>
                 )}
-
-                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
-                  Print O.S.
-                </button>
-                <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">
-                  Close & Start New
-                </button>
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
+                <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
               </div>
             </div>
 
             {/* PRINT CONTAINER WITH ALL CAPS */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible">
-              
-              <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
-                {selectedCompany}
-              </h2>
-
+              <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
               <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
                 <div>
                   <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
@@ -820,18 +655,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
               <div className="flex justify-end border-t-2 border-slate-900 pt-6">
                 <div className="w-72 space-y-3">
-                  <div className="flex justify-between text-sm font-bold text-slate-600">
-                    <span>Subtotal:</span>
-                    <span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3">
-                    <span>VAT (12%):</span>
-                    <span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
-                  </div>
-                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1">
-                    <span>Total:</span>
-                    <span className="font-mono text-indigo-700">₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
-                  </div>
+                  <div className="flex justify-between text-sm font-bold text-slate-600"><span>Subtotal:</span><span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                  <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3"><span>VAT (12%):</span><span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className="font-mono text-indigo-700">₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
                 </div>
               </div>
             </div>

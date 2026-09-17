@@ -1,333 +1,136 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface OrderSlipItem { 
-  id: string; 
-  productId: number; 
-  sku: string; 
-  productName: string; 
-  requestedQty: number | ''; 
-  unitPrice: number; 
-  lineTotal: number; 
-  physicalQty?: number; 
-  shortageQty?: number; 
-  warehouseQty?: number; 
-  officeStock?: number; 
-}
+interface OrderSlipItem { id: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; physicalQty?: number; shortageQty?: number; warehouseQty?: number; officeStock?: number; }
 interface Customer { id: string; name: string; }
 interface OrderSlip {
-  id: string;
-  osNumber: string;
-  company: string;
-  customerId: string;
-  customer: Customer;
-  status: string;
-  subtotal: number;
-  vatApplied: boolean;
-  vatRate: number;
-  vatAmount: number;
-  grandTotal: number;
-  createdBy: string;
-  createdAt: string;
-  items: OrderSlipItem[];
+  id: string; osNumber: string; company: string; customerId: string; customer: Customer; status: string;
+  subtotal: number; vatApplied: boolean; vatRate: number; vatAmount: number; grandTotal: number;
+  createdBy: string; createdAt: string; items: OrderSlipItem[]; referenceOs?: string;
 }
 
-interface ShortageRecord {
-  id: string;
-  orderSlipId: string;
-  sku: string;
-  productName: string;
-  requestedQty: number;
-  confirmedQty: number;
-  shortageQty: number;
-  status: string;
-  createdAt: string;
-  orderSlip: { osNumber: string; customer: Customer; };
-}
-
-interface OrderSlipsModuleProps {
-  selectedCompany: string;
-  loginUsername: string;
-  API_BASE_URL: string;
-  onBack: () => void;
-  onCreateNew?: () => void; 
-}
+interface ShortageRecord { id: string; orderSlipId: string; sku: string; productName: string; requestedQty: number; confirmedQty: number; shortageQty: number; status: string; createdAt: string; orderSlip: { osNumber: string; customer: Customer; }; }
+interface OrderSlipsModuleProps { selectedCompany: string; loginUsername: string; API_BASE_URL: string; onBack: () => void; onCreateNew?: () => void; }
 
 export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
-
   const [activeMainTab, setActiveMainTab] = useState<'ledger' | 'shortages'>('ledger');
-
   const [orderSlips, setOrderSlips] = useState<OrderSlip[]>([]);
   const [shortages, setShortages] = useState<ShortageRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // --- FILTERS & PAGINATION ---
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalRecords, setTotalRecords] = useState(0);
-  const limit = 15;
+  const [search, setSearch] = useState(''); const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All'); const [startDate, setStartDate] = useState(''); const [endDate, setEndDate] = useState('');
+  const [page, setPage] = useState(1); const [totalPages, setTotalPages] = useState(1); const [totalRecords, setTotalRecords] = useState(0); const limit = 15;
 
   const [viewOs, setViewOs] = useState<OrderSlip | null>(null);
+  const [processOs, setProcessOs] = useState<OrderSlip | null>(null); const [processItems, setProcessItems] = useState<any[]>([]);
+  const [editOs, setEditOs] = useState<OrderSlip | null>(null); const [editStatus, setEditStatus] = useState(''); const [editItems, setEditItems] = useState<OrderSlipItem[]>([]); const [editVatApplied, setEditVatApplied] = useState(false);
+  const [editProductSearch, setEditProductSearch] = useState(''); const [editSearchResults, setEditSearchResults] = useState<any[]>([]); const [showEditSearch, setShowEditSearch] = useState(false); const [editSelectedIndex, setEditSelectedIndex] = useState(-1);
 
-  // --- PROCESSING STATES (PHASE 7) ---
-  const [processOs, setProcessOs] = useState<OrderSlip | null>(null);
-  const [processItems, setProcessItems] = useState<any[]>([]);
+  const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- ADVANCED EDIT STATES ---
-  const [editOs, setEditOs] = useState<OrderSlip | null>(null);
-  const [editStatus, setEditStatus] = useState('');
-  const [editItems, setEditItems] = useState<OrderSlipItem[]>([]);
-  const [editVatApplied, setEditVatApplied] = useState(false);
-  
-  const [editProductSearch, setEditProductSearch] = useState('');
-  const [editSearchResults, setEditSearchResults] = useState<any[]>([]);
-  const [showEditSearch, setShowEditSearch] = useState(false);
-  const [editSelectedIndex, setEditSelectedIndex] = useState(-1);
+  useEffect(() => { const handler = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 400); return () => clearTimeout(handler); }, [search]);
 
-  const showToast = (msg: string, type: 'success' | 'error') => {
-    setToast({ message: msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
-
-  useEffect(() => {
-    const handler = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 400);
-    return () => clearTimeout(handler);
-  }, [search]);
-
-  // --- FETCH LEDGER ---
   const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
       let url = `${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&page=${page}&limit=${limit}`;
       if (debouncedSearch) url += `&search=${encodeURIComponent(debouncedSearch)}`;
       if (statusFilter !== 'All') url += `&status=${encodeURIComponent(statusFilter)}`;
-      if (startDate && endDate) {
-        url += `&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
-      }
-
+      if (startDate && endDate) url += `&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      
-      setOrderSlips(data.data || []);
-      setTotalPages(data.totalPages || 1);
-      setTotalRecords(data.total || 0);
-    } catch (e) {
-      showToast("Error loading Order Slips.", "error");
-    } finally {
-      setIsLoading(false);
-    }
+      setOrderSlips(data.data || []); setTotalPages(data.totalPages || 1); setTotalRecords(data.total || 0);
+    } catch (e) { showToast("Error loading Order Slips.", "error"); } finally { setIsLoading(false); }
   }, [selectedCompany, page, limit, debouncedSearch, statusFilter, startDate, endDate, API_BASE_URL]);
 
-  // --- FETCH SHORTAGES ---
   const fetchShortages = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setShortages(data);
-      }
-    } catch (e) {
-      console.warn("Failed to fetch shortages");
-    }
+      if (res.ok) setShortages(await res.json());
+    } catch (e) { console.warn("Failed to fetch shortages"); }
   }, [selectedCompany, API_BASE_URL]);
 
-  useEffect(() => { 
-    if (activeMainTab === 'ledger') fetchOrderSlips(); 
-    if (activeMainTab === 'shortages') fetchShortages();
-  }, [fetchOrderSlips, fetchShortages, activeMainTab]);
+  useEffect(() => { if (activeMainTab === 'ledger') fetchOrderSlips(); if (activeMainTab === 'shortages') fetchShortages(); }, [fetchOrderSlips, fetchShortages, activeMainTab]);
 
   useEffect(() => {
-    if (editProductSearch.trim().length < 2) {
-      setEditSearchResults([]);
-      setEditSelectedIndex(-1);
-      return;
-    }
+    if (editProductSearch.trim().length < 2) { setEditSearchResults([]); setEditSelectedIndex(-1); return; }
     const handler = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${encodeURIComponent(selectedCompany)}&q=${encodeURIComponent(editProductSearch)}`);
-        if (res.ok) {
-          setEditSearchResults(await res.json());
-          setEditSelectedIndex(-1);
-        }
-      } catch (e) { console.warn(e); }
-    }, 400);
-    return () => clearTimeout(handler);
+      try { const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${encodeURIComponent(selectedCompany)}&q=${encodeURIComponent(editProductSearch)}`);
+        if (res.ok) { setEditSearchResults(await res.json()); setEditSelectedIndex(-1); }
+      } catch (e) {}
+    }, 400); return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
 
-  // --- EDIT PRODUCT SEARCH KEYBOARD NAVIGATION ---
   const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!showEditSearch || editSearchResults.length === 0) return;
-    
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setEditSelectedIndex(prev => (prev < editSearchResults.length - 1 ? prev + 1 : prev));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setEditSelectedIndex(prev => (prev > 0 ? prev - 1 : -1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (editSelectedIndex >= 0 && editSelectedIndex < editSearchResults.length) {
-        handleAddEditProduct(editSearchResults[editSelectedIndex]);
-      }
-    } else if (e.key === 'Escape') {
-      setShowEditSearch(false);
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setEditSelectedIndex(prev => (prev < editSearchResults.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setEditSelectedIndex(prev => (prev > 0 ? prev - 1 : -1)); } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (editSelectedIndex >= 0 && editSelectedIndex < editSearchResults.length) handleAddEditProduct(editSearchResults[editSelectedIndex]); } 
+    else if (e.key === 'Escape') { setShowEditSearch(false); }
   };
 
   const applyQuickDate = (type: 'today' | 'week' | 'month' | 'clear') => {
     const now = new Date();
     if (type === 'clear') { setStartDate(''); setEndDate(''); return; }
-    
-    if (type === 'today') {
-      const today = now.toISOString().split('T')[0];
-      setStartDate(today); setEndDate(today);
-    } else if (type === 'week') {
-      const first = now.getDate() - now.getDay() + 1;
-      const last = first + 6;
-      setStartDate(new Date(now.setDate(first)).toISOString().split('T')[0]);
-      setEndDate(new Date(now.setDate(last)).toISOString().split('T')[0]);
-    } else if (type === 'month') {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      setStartDate(first.toISOString().split('T')[0]);
-      setEndDate(last.toISOString().split('T')[0]);
-    }
+    if (type === 'today') { const today = now.toISOString().split('T')[0]; setStartDate(today); setEndDate(today); } 
+    else if (type === 'week') { const first = now.getDate() - now.getDay() + 1; const last = first + 6; setStartDate(new Date(now.setDate(first)).toISOString().split('T')[0]); setEndDate(new Date(now.setDate(last)).toISOString().split('T')[0]); } 
+    else if (type === 'month') { const first = new Date(now.getFullYear(), now.getMonth(), 1); const last = new Date(now.getFullYear(), now.getMonth() + 1, 0); setStartDate(first.toISOString().split('T')[0]); setEndDate(last.toISOString().split('T')[0]); }
     setPage(1);
   };
 
-  // --- PROCESSING WORKFLOW (PHASE 7) ---
   const openProcessModal = (os: OrderSlip) => {
     setProcessOs(os);
-    setProcessItems(os.items.map(i => ({
-      ...i,
-      physicalQty: i.physicalQty !== undefined && i.physicalQty !== null ? i.physicalQty : i.requestedQty,
-      shortageQty: i.shortageQty || 0
-    })));
+    setProcessItems(os.items.map(i => ({ ...i, physicalQty: i.physicalQty !== undefined && i.physicalQty !== null ? i.physicalQty : i.requestedQty, shortageQty: i.shortageQty || 0 })));
   };
 
   const handleProcessUpdateQty = (index: number, val: string) => {
     const updated = [...processItems];
-    if (val === '') {
-      updated[index].physicalQty = '';
-      updated[index].shortageQty = updated[index].requestedQty; // If empty, assume full shortage
-    } else {
-      const phys = parseInt(val, 10);
-      const requested = updated[index].requestedQty;
-      updated[index].physicalQty = isNaN(phys) ? '' : phys;
-      updated[index].shortageQty = isNaN(phys) ? requested : Math.max(0, requested - phys);
-    }
+    if (val === '') { updated[index].physicalQty = ''; updated[index].shortageQty = updated[index].requestedQty; } 
+    else { const phys = parseInt(val, 10); const requested = updated[index].requestedQty; updated[index].physicalQty = isNaN(phys) ? '' : phys; updated[index].shortageQty = isNaN(phys) ? requested : Math.max(0, requested - phys); }
     setProcessItems(updated);
   };
 
   const handleProcessSubmit = async () => {
     if (!processOs) return;
-    
-    // Prevent submission if fields are blank/NaN
     const isValid = processItems.every(i => typeof i.physicalQty === 'number' && !isNaN(i.physicalQty) && i.physicalQty >= 0);
     if (!isValid) return showToast("Enter a valid physical quantity for all items.", "error");
-
     setIsLoading(true);
     try {
-      const payload = {
-        user: loginUsername,
-        items: processItems.map(i => ({
-          id: i.id,
-          physicalQty: Number(i.physicalQty)
-        }))
-      };
-
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${processOs.id}/process`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
+      const payload = { user: loginUsername, items: processItems.map(i => ({ id: i.id, physicalQty: Number(i.physicalQty) })) };
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${processOs.id}/process`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
-      
-      showToast("Order Slip processed successfully.", "success");
-      setProcessOs(null);
-      fetchOrderSlips();
-      fetchShortages();
-    } catch (e) {
-      showToast("Failed to process Order Slip.", "error");
-    } finally {
-      setIsLoading(false);
-    }
+      showToast("Order Slip processed successfully.", "success"); setProcessOs(null); fetchOrderSlips(); fetchShortages();
+    } catch (e) { showToast("Failed to process Order Slip.", "error"); } finally { setIsLoading(false); }
   };
 
   const handleShortageStatusChange = async (shortageId: string, newStatus: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/${shortageId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (res.ok) {
-        showToast("Shortage status updated.", "success");
-        fetchShortages();
-      }
-    } catch (e) {
-      showToast("Failed to update shortage status.", "error");
-    }
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/${shortageId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) });
+      if (res.ok) { showToast("Shortage status updated.", "success"); fetchShortages(); }
+    } catch (e) { showToast("Failed to update shortage status.", "error"); }
   };
 
-  // --- EDIT WORKFLOW ACTIONS ---
-  const openEditModal = (os: OrderSlip) => {
-    setEditOs(os);
-    setEditStatus(os.status);
-    setEditVatApplied(os.vatApplied);
-    setEditItems(os.items.map(i => ({ ...i })));
-  };
+  const openEditModal = (os: OrderSlip) => { setEditOs(os); setEditStatus(os.status); setEditVatApplied(os.vatApplied); setEditItems(os.items.map(i => ({ ...i }))); };
 
   const handleAddEditProduct = (p: any) => {
-    if (editItems.some(i => i.productId === p.id)) {
-      return showToast("Product already exists in the order.", "error");
-    }
-    setEditItems([...editItems, {
-      id: `new-${p.id}`,
-      productId: p.id,
-      sku: p.sku,
-      productName: p.name,
-      requestedQty: 1,
-      unitPrice: p.sellingPrice || 0,
-      lineTotal: p.sellingPrice || 0,
-      officeStock: p.officeStock || 0
-    }]);
-    setEditProductSearch('');
-    setShowEditSearch(false);
-    setEditSelectedIndex(-1);
-
-    setTimeout(() => {
-      const input = document.getElementById(`edit-qty-${p.id}`);
-      if (input) input.focus();
-    }, 100);
+    if (editItems.some(i => i.productId === p.id)) return showToast("Product already exists in the order.", "error");
+    setEditItems([...editItems, { id: `new-${p.id}`, productId: p.id, sku: p.sku, productName: p.name, requestedQty: 1, unitPrice: p.sellingPrice || 0, lineTotal: p.sellingPrice || 0, officeStock: p.officeStock || 0 }]);
+    setEditProductSearch(''); setShowEditSearch(false); setEditSelectedIndex(-1);
+    setTimeout(() => { const input = document.getElementById(`edit-qty-${p.id}`); if (input) input.focus(); }, 100);
   };
 
   const handleEditUpdateQty = (index: number, val: string) => {
     const updated = [...editItems];
-    if (val === '') {
-      updated[index].requestedQty = '';
-      updated[index].lineTotal = 0;
-    } else {
-      const qty = parseInt(val, 10);
-      updated[index].requestedQty = isNaN(qty) ? '' : qty;
-      updated[index].lineTotal = isNaN(qty) ? 0 : Math.round((qty * updated[index].unitPrice) * 100) / 100;
-    }
+    if (val === '') { updated[index].requestedQty = ''; updated[index].lineTotal = 0; } 
+    else { const qty = parseInt(val, 10); updated[index].requestedQty = isNaN(qty) ? '' : qty; updated[index].lineTotal = isNaN(qty) ? 0 : Math.round((qty * updated[index].unitPrice) * 100) / 100; }
     setEditItems(updated);
   };
 
-  const handleEditRemoveItem = (index: number) => {
-    setEditItems(editItems.filter((_, i) => i !== index));
-  };
+  const handleEditRemoveItem = (index: number) => { setEditItems(editItems.filter((_, i) => i !== index)); };
 
   const editSubtotal = Math.round(editItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
   const editVatTotal = editVatApplied ? Math.round((editSubtotal * 0.12) * 100) / 100 : 0;
@@ -336,98 +139,55 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const isEditFormValid = editOs && editItems.length > 0 && editItems.every(i => typeof i.requestedQty === 'number' && !isNaN(i.requestedQty) && i.requestedQty > 0);
 
   const handleEditSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editOs) return;
-    if (!isEditFormValid) return showToast("Please ensure all items have a valid quantity.", "error");
-    
+    e.preventDefault(); if (!editOs) return; if (!isEditFormValid) return showToast("Please ensure all items have a valid quantity.", "error");
     try {
-      const payload = {
-        status: editStatus,
-        user: loginUsername,
-        isVatApplied: editVatApplied,
-        subtotal: Number(editSubtotal) || 0,
-        vatAmount: Number(editVatTotal) || 0,
-        grandTotal: Number(editGrandTotal) || 0,
-        items: editItems.map(i => ({
-          productId: i.productId,
-          sku: i.sku,
-          productName: i.productName,
-          requestedQty: Number(i.requestedQty) || 0,
-          unitPrice: Number(i.unitPrice) || 0,
-          lineTotal: Number(i.lineTotal) || 0
-        }))
-      };
-
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${editOs.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error();
-      
-      showToast("Order Slip updated successfully.", "success");
-      setEditOs(null);
-      fetchOrderSlips();
-    } catch (e) {
-      showToast("Failed to update Order Slip.", "error");
-    }
+      const payload = { status: editStatus, user: loginUsername, isVatApplied: editVatApplied, subtotal: Number(editSubtotal) || 0, vatAmount: Number(editVatTotal) || 0, grandTotal: Number(editGrandTotal) || 0, items: editItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty) || 0, unitPrice: Number(i.unitPrice) || 0, lineTotal: Number(i.lineTotal) || 0 })) };
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${editOs.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error(); showToast("Order Slip updated successfully.", "success"); setEditOs(null); fetchOrderSlips();
+    } catch (e) { showToast("Failed to update Order Slip.", "error"); }
   };
 
-  // --- RESTORE STOCK ON CANCEL ---
+  // --- RESTORE STOCK ON CANCEL FOR FINALIZED ORDERS ---
   const handleCancelOs = async (id: string) => {
-    if (!window.confirm("Void this Order Slip? It will remain in history as Cancelled.")) return;
+    const targetOs = orderSlips.find(o => o.id === id) || viewOs;
+    const isFinalOrder = targetOs?.status === 'Finalized Order';
+    const actionVerb = isFinalOrder ? 'Void this Final Order and Return items to Office Stock?' : 'Void this Order Slip? It will remain in history as Cancelled.';
+    
+    if (!window.confirm(actionVerb)) return;
 
     try {
-      const targetOs = orderSlips.find(o => o.id === id) || viewOs;
-      
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${id}/cancel`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: loginUsername })
-      });
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${id}/cancel`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername }) });
       if (!res.ok) throw new Error();
 
-      // If it was a Finalized Order, we must restore the deducted stock
-      if (targetOs && targetOs.status === 'Finalized Order') {
+      // RESTORE MASTER STOCK DEDUCTIONS
+      if (isFinalOrder && targetOs) {
         await Promise.all(targetOs.items.map((item: any) => 
           fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ officeStockAdjustment: item.requestedQty }) 
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: item.requestedQty }) 
           }).catch(() => console.warn(`Silent Stock Restore Fail for ${item.sku}`))
         ));
       }
 
-      showToast("Order Slip cancelled & Stock Restored (If applicable).", "success");
-      setViewOs(null);
-      fetchOrderSlips();
-    } catch (e) {
-      showToast("Failed to cancel Order Slip.", "error");
-    }
+      showToast(isFinalOrder ? "Final Order Cancelled & Stock Restored." : "Order Slip cancelled.", "success");
+      setViewOs(null); fetchOrderSlips();
+    } catch (e) { showToast("Failed to cancel document.", "error"); }
   };
 
   const handleHardDeleteOs = async (id: string) => {
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
     if (!window.confirm("CRITICAL WARNING: This will permanently wipe this Order Slip from the database. Are you sure?")) return;
-
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error();
-      showToast("Order Slip permanently deleted.", "success");
-      fetchOrderSlips();
-    } catch (e) {
-      showToast("Failed to delete Order Slip.", "error");
-    }
+      if (!res.ok) throw new Error(); showToast("Document permanently deleted.", "success"); fetchOrderSlips();
+    } catch (e) { showToast("Failed to delete document.", "error"); }
   };
 
   const handlePrint = () => window.print();
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
-      
-      {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'} print:hidden`}>
           {toast.message}
         </div>
       )}
@@ -450,18 +210,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       {/* TOP TAB NAVIGATOR */}
       <div className="bg-white border-b border-slate-200 px-6 sm:px-8 shrink-0 print:hidden">
         <div className="flex gap-6 max-w-7xl mx-auto">
-          <button 
-            onClick={() => setActiveMainTab('ledger')} 
-            className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'ledger' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            O.S. Ledger
-          </button>
-          <button 
-            onClick={() => setActiveMainTab('shortages')} 
-            className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'shortages' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            Pending Shortages
-          </button>
+          <button onClick={() => setActiveMainTab('ledger')} className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'ledger' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>O.S. Ledger</button>
+          <button onClick={() => setActiveMainTab('shortages')} className={`py-4 font-bold text-sm uppercase tracking-widest border-b-2 transition-colors ${activeMainTab === 'shortages' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>Pending Shortages</button>
         </div>
       </div>
 
@@ -519,7 +269,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
                     <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
                       <tr>
-                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. / FO Number</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Ref Number</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items</th>
@@ -535,10 +285,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                       ) : (
                         orderSlips.map(os => (
                           <tr key={os.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-3.5 px-6 font-mono text-sm font-black text-indigo-700">{os.osNumber}</td>
+                            <td className="py-3.5 px-6">
+                              <div className="font-mono text-sm font-black text-indigo-700">{os.osNumber}</div>
+                              {os.referenceOs && <div className="text-[9px] font-bold text-slate-400 mt-1 uppercase">REF: {os.referenceOs}</div>}
+                            </td>
                             <td className="py-3.5 px-6 font-medium text-slate-600">{new Date(os.createdAt).toLocaleDateString()}</td>
                             <td className="py-3.5 px-6">
-                              <div className="font-bold text-slate-900 truncate max-w-[250px]">{os.customer?.name || 'Unknown'}</div>
+                              <div className="font-bold text-slate-900 truncate max-w-[250px] uppercase">{os.customer?.name || 'Unknown'}</div>
                               <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{os.customerId.slice(0, 8)}</div>
                             </td>
                             <td className="py-3.5 px-6 text-center font-black text-slate-700">{os.items?.length || 0}</td>
@@ -555,7 +308,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             </td>
                             <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
                             <td className="py-3.5 px-6 text-right space-x-2">
-                              {os.status !== 'Cancelled' && (
+                              {os.status !== 'Cancelled' && os.status !== 'Finalized Order' && (
                                 <button onClick={() => openProcessModal(os)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Process</button>
                               )}
                               <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
@@ -609,9 +362,9 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                         <tr key={shortage.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-3 px-6 font-mono text-sm font-black text-indigo-700">{shortage.orderSlip?.osNumber || 'Unknown'}</td>
                           <td className="py-3 px-6 font-medium text-slate-600">{new Date(shortage.createdAt).toLocaleDateString()}</td>
-                          <td className="py-3 px-6 font-bold text-slate-900 truncate max-w-[200px]">{shortage.orderSlip?.customer?.name || 'Unknown'}</td>
+                          <td className="py-3 px-6 font-bold text-slate-900 truncate max-w-[200px] uppercase">{shortage.orderSlip?.customer?.name || 'Unknown'}</td>
                           <td className="py-3 px-6">
-                            <div className="font-bold text-slate-900 truncate max-w-[200px]">{shortage.productName}</div>
+                            <div className="font-bold text-slate-900 truncate max-w-[200px] uppercase">{shortage.productName}</div>
                             <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">{shortage.sku}</div>
                           </td>
                           <td className="py-3 px-6 text-center font-bold text-slate-700">{shortage.requestedQty}</td>
@@ -670,8 +423,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   {processItems.map((item, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="py-4 px-4 border border-slate-100">
-                        <div className="font-bold text-slate-900 truncate max-w-[300px]">{item.productName}</div>
-                        <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
+                        <div className="font-bold text-slate-900 truncate max-w-[300px] uppercase">{item.productName}</div>
+                        <div className="text-[10px] font-mono text-slate-500 uppercase">{item.sku}</div>
                       </td>
                       <td className="py-4 px-4 border border-slate-100 text-center font-bold text-slate-500">
                         {item.warehouseQty !== undefined ? item.warehouseQty : 'N/A'}
@@ -739,7 +492,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     onFocus={() => setShowEditSearch(true)}
                     onKeyDown={handleEditKeyDown}
                     onBlur={() => setTimeout(() => setShowEditSearch(false), 200)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all uppercase"
                   />
                   {showEditSearch && editProductSearch.trim().length >= 2 && (
                     <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
@@ -754,9 +507,9 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${editSelectedIndex === idx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
                           >
                             <div>
-                              <span className="font-bold text-slate-900">{p.name}</span>
+                              <span className="font-bold text-slate-900 uppercase">{p.name}</span>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
+                                <span className="text-[10px] font-mono text-slate-400 uppercase">{p.sku}</span>
                                 <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Stock: {p.officeStock || 0}</span>
                               </div>
                             </div>
@@ -782,8 +535,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     {editItems.map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-50">
                         <td className="py-3 px-4 border border-slate-100">
-                          <div className="font-bold text-slate-900 truncate max-w-[200px]">{item.productName}</div>
-                          <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
+                          <div className="font-bold text-slate-900 truncate max-w-[200px] uppercase">{item.productName}</div>
+                          <div className="text-[10px] font-mono text-slate-500 uppercase">{item.sku}</div>
                         </td>
                         <td className="py-2 px-4 border border-slate-100">
                           <input 
@@ -952,7 +705,9 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
             <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {viewOs.createdBy}</span>
               {viewOs.status !== 'Cancelled' && (
-                <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">Void / Cancel O.S.</button>
+                <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">
+                  {viewOs.status === 'Finalized Order' ? 'Void / Return to Stock' : 'Void / Cancel O.S.'}
+                </button>
               )}
             </div>
           </div>
