@@ -11,6 +11,7 @@ import OrderSlipsModule from './modules/OrderSlipsModule';
 // NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
+import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -243,13 +244,13 @@ export default function App() {
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   
-  // Inside your main render logic where other routes live:
-
-
- 
   if (activeModule === 'sales_orders') return (
     <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />
-    
+  );
+
+  // NEW PURCHASE ORDERS ROUTE
+  if (activeModule === 'purchase_orders') return (
+    <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />
   );
 
   if (activeModule === 'users') return (

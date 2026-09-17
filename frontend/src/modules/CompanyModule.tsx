@@ -199,6 +199,21 @@ export default function CompanyModule({
           </>
         )}
 
+        {/* PROCUREMENT / PURCHASE ORDERS MODULE */}
+        {hasPurchasing && (
+          <button onClick={() => onSelectModule('purchase_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-sky-950 transition-colors group-hover:text-sky-700">Procurement (P.O.)</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage Purchase Orders, verify deliveries, and track shortages.</p>
+            </div>
+          </button>
+        )}
+
         {/* UNIFIED MASTER INVENTORY MODULE */}
         {(hasProducts || hasInventory || hasWarehouses) && (
           <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
