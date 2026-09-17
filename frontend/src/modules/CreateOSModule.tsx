@@ -322,7 +322,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername,
-        status: loadedOsStatus, // Preserves the correct status
+        status: 'Order Updated', // Force status to Updated
         isVatApplied,
         vatRate,
         subtotal,
@@ -677,20 +677,24 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
-                <h3 className="text-xl font-black text-emerald-900 tracking-tight">O.S. Generated Successfully!</h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing or Final Order conversion.</p>
+                <h3 className="text-xl font-black text-emerald-900 tracking-tight">
+                  {loadedOsId ? 'O.S. Updated Successfully!' : 'O.S. Generated Successfully!'}
+                </h3>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">
+                  {loadedOsId ? 'Ready for immediate printing.' : 'Ready for immediate printing or Final Order conversion.'}
+                </p>
               </div>
               <div className="flex gap-3">
-                {!finalOrderGenerated ? (
+                {!finalOrderGenerated && !loadedOsId ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
                     </button>
                   </div>
-                ) : (
+                ) : finalOrderGenerated ? (
                   <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER {finalOrderNumber} LOGGED</span>
-                )}
+                ) : null}
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
               </div>
