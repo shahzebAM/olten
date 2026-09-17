@@ -21,6 +21,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
 
+  // --- P.O. GENERATION STATES ---
+  const [isGeneratingPO, setIsGeneratingPO] = useState(false);
+  const [poGenerated, setPoGenerated] = useState(false);
+
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
@@ -343,8 +347,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const newlyCreatedOs = await res.json();
       showToast("Order Slip generated successfully.", "success");
       
-      // Instead of clearing the form immediately, pop open the Print Modal
       setFinalizedOs(newlyCreatedOs);
+      setPoGenerated(false); // Reset PO generation state
 
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
@@ -353,9 +357,46 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  // Called when the user clicks "Close & Start New" on the Print Modal
+  // --- NEW: GENERATE P.O. DIRECTLY FROM FINALIZED O.S. ---
+  const handleGeneratePO = async () => {
+    if (!finalizedOs) return;
+    setIsGeneratingPO(true);
+    try {
+      const payload = {
+        company: selectedCompany,
+        osReference: finalizedOs.osNumber, 
+        isVatApplied: finalizedOs.vatApplied,
+        vatRate: finalizedOs.vatRate,
+        user: loginUsername,
+        items: finalizedOs.items.map((i: any) => ({
+          productId: i.productId,
+          sku: i.sku,
+          productName: i.productName,
+          requestedQty: i.requestedQty,
+          unitCost: i.unitPrice 
+        }))
+      };
+
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error("Failed to generate P.O.");
+      
+      showToast("Purchase Order successfully generated!", "success");
+      setPoGenerated(true); // Hide the button to prevent duplicate P.O.s
+    } catch (e: any) {
+      showToast("Failed to generate P.O.", "error");
+    } finally {
+      setIsGeneratingPO(false);
+    }
+  };
+
   const handleClosePrintModal = () => {
     setFinalizedOs(null);
+    setPoGenerated(false);
     setDraftItems([]);
     setSelectedCustomer(null);
     setCustomerSearch('');
@@ -650,11 +691,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       </main>
 
-      {/* FINALIZED PRINT MODAL */}
+      {/* FINALIZED PRINT & P.O. MODAL */}
       {finalizedOs && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
           
-          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
           <style type="text/css" media="print">
             {`@page { size: auto; margin: 0; }`}
           </style>
@@ -664,9 +704,20 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">O.S. Generated Successfully!</h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing or P.O. generation.</p>
               </div>
               <div className="flex gap-3">
+                {/* NEW: GENERATE P.O. BUTTON */}
+                {!poGenerated ? (
+                  <button onClick={handleGeneratePO} disabled={isGeneratingPO} className="px-5 py-2.5 bg-sky-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-sky-700 disabled:bg-slate-400 shadow-sm transition-colors">
+                    {isGeneratingPO ? 'Generating...' : 'Generate P.O.'}
+                  </button>
+                ) : (
+                  <span className="px-5 py-2.5 bg-emerald-200 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-emerald-300 flex items-center">
+                    ✓ P.O. Generated
+                  </span>
+                )}
+
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
                   Print O.S.
                 </button>
