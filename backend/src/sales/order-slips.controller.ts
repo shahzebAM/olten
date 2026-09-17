@@ -95,6 +95,23 @@ export class OrderSlipsController {
     return stockMap;
   }
 
+  // --- INSTANT STOCK ADJUSTMENT (DEDUCT & RESTORE) ---
+  @Patch('adjust-stock/:productId')
+  async adjustStock(@Param('productId') productId: string, @Body() data: any) {
+    // This safely extracts the number. 
+    // Negative numbers will deduct stock, positive numbers will restore stock.
+    const adjustment = Number(data.officeStockAdjustment) || 0;
+    
+    return await this.prisma.product.update({
+      where: { id: Number(productId) },
+      data: { 
+        currentStock: { 
+          increment: adjustment 
+        } 
+      }
+    });
+  }
+
   @Get('shortages/all')
   async getShortages(@Query('company') company: string) {
      if (!company) throw new BadRequestException("Company is required");
