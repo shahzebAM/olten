@@ -35,7 +35,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [osNumber, setOsNumber] = useState<string>('');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
-  const [loadedOsStatus, setLoadedOsStatus] = useState<string>('Generated');
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
@@ -182,16 +181,16 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setOsNumber(slip.osNumber);
     setReferenceOs(slip.osNumber);
     setIsVatApplied(slip.vatApplied || false);
-    setLoadedOsStatus(slip.status || 'Generated');
     
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
       setCustomerSearch(slip.customer.name);
     }
     
+    // STRICT NUMBER CASTING FIX
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
       productId: i.productId, sku: i.sku, productName: i.productName,
-      requestedQty: i.requestedQty, unitPrice: i.unitPrice, lineTotal: i.lineTotal,
+      requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
       officeStock: 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null
     }));
     
@@ -290,7 +289,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
-  const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
+  // STRICT VALIDATION
+  const isFormValid = selectedCustomer && 
+    osNumber.trim() !== '' && 
+    draftItems.length > 0 && 
+    draftItems.every(i => {
+      const rq = Number(i.requestedQty);
+      const up = Number(i.unitPrice);
+      return !isNaN(rq) && rq > 0 && !isNaN(up) && up >= 0;
+    });
 
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
@@ -311,7 +318,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
       setLoadedOsId(null);
-      setLoadedOsStatus('Generated');
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
@@ -322,7 +328,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername,
-        status: 'Order Updated', // Force status to Updated
+        status: 'Order Updated', // <--- Force status to Order Updated instantly
         isVatApplied,
         vatRate,
         subtotal,
@@ -335,7 +341,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const updatedOs = await res.json();
       
       showToast("Order updated successfully.", "success");
-      setFinalizedOs(updatedOs);
+      setFinalizedOs(updatedOs); // This triggers the modal to pop up automatically
       setFinalOrderGenerated(updatedOs.status === 'Finalized Order');
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
@@ -388,7 +394,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null);
     fetchNextOsNumber();
   };
 
@@ -493,7 +499,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
@@ -530,7 +536,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <th className="border border-slate-300 py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">REQUESTED</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">UNIT PRICE</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">LINE TOTAL</th>
-                  {/* MOVED WHSE QTY COLUMN HERE */}
+                  {/* MOVED WHSE QTY COLUMN HERE TO THE FAR RIGHT */}
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">WHSE QTY</th>
                   <th className="border border-slate-300 py-3 px-3 w-10 text-center"></th>
                 </tr>
@@ -566,7 +572,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
 
-                      {/* MOVED WHSE QTY DATA HERE */}
+                      {/* WHSE QTY DATA ON THE FAR RIGHT */}
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
                           <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{effectiveWhseQty}</span>
@@ -620,7 +626,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-[10px] font-mono text-slate-400 uppercase">{p.sku}</span>
                                 <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Off: {p.officeStock || 0}</span>
-                                <span className="text-[9px] font-black uppercase tracking-widest text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Whse: {p.warehouseQty || 0}</span>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Whse: {p.warehouseQty ?? (p as any).totalWarehouseQty ?? 0}</span>
                               </div>
                             </div>
                             <div className="text-right">
@@ -683,7 +689,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   {loadedOsId ? 'O.S. Updated Successfully!' : 'O.S. Generated Successfully!'}
                 </h3>
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">
-                  {loadedOsId ? 'Ready for immediate printing.' : 'Ready for immediate printing or Final Order conversion.'}
+                  Ready for immediate printing.
                 </p>
               </div>
               <div className="flex gap-3">
