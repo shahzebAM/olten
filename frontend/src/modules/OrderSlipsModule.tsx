@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface OrderSlipItem { id: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; physicalQty?: number; shortageQty?: number; warehouseQty?: number; officeStock?: number; }
+interface OrderSlipItem { 
+  id: string; 
+  productId: number; 
+  sku: string; 
+  productName: string; 
+  requestedQty: number | ''; 
+  unitPrice: number; 
+  lineTotal: number; 
+  physicalQty?: number; 
+  shortageQty?: number; 
+  warehouseQty?: number; 
+  officeStock?: number; 
+}
 interface Customer { id: string; name: string; }
 interface OrderSlip {
   id: string; osNumber: string; company: string; customerId: string; customer: Customer; status: string;
@@ -147,6 +159,41 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     } catch (e) { showToast("Failed to update Order Slip.", "error"); }
   };
 
+  // --- RETURN FINAL ORDER & RESTORE STOCK ---
+  const handleReturnOrder = async (id: string) => {
+    const targetOs = orderSlips.find(o => o.id === id) || viewOs;
+    if (!targetOs) return;
+    
+    if (!window.confirm("Mark this order as RETURNED and restore all items to office stock?")) return;
+
+    try {
+      // 1. Update status to 'Returned'
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${id}`, { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ status: 'Returned', user: loginUsername }) 
+      });
+      
+      if (!res.ok) throw new Error();
+
+      // 2. Restore Stock via the exact controller endpoint
+      await Promise.all(targetOs.items.map((item: any) => 
+        fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+          method: 'PATCH', 
+          headers: { 'Content-Type': 'application/json' }, 
+          // Positive number adds the stock back (sends both parameter styles to be safe)
+          body: JSON.stringify({ officeStockAdjustment: item.requestedQty, quantity: item.requestedQty }) 
+        }).catch(err => console.warn(`Silent Stock Restore Fail:`, err))
+      ));
+
+      showToast("Order marked as Returned & Stock Restored.", "success");
+      setViewOs(null); 
+      fetchOrderSlips();
+    } catch (e) { 
+      showToast("Failed to return order.", "error"); 
+    }
+  };
+
   // --- RESTORE STOCK ON CANCEL FOR FINALIZED ORDERS ---
   const handleCancelOs = async (id: string) => {
     const targetOs = orderSlips.find(o => o.id === id) || viewOs;
@@ -162,8 +209,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       // RESTORE MASTER STOCK DEDUCTIONS
       if (isFinalOrder && targetOs) {
         await Promise.all(targetOs.items.map((item: any) => 
-          fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: item.requestedQty }) 
+          fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: item.requestedQty, quantity: item.requestedQty }) 
           }).catch(() => console.warn(`Silent Stock Restore Fail for ${item.sku}`))
         ));
       }
@@ -237,6 +284,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     <option value="Verified">Verified</option>
                     <option value="Shipped">Shipped</option>
                     <option value="Completed">Completed</option>
+                    <option value="Returned">Returned</option>
                     <option value="Cancelled">Cancelled</option>
                   </select>
                 </div>
@@ -299,6 +347,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             <td className="py-3.5 px-6 text-center">
                               <span className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md 
                                 ${os.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' : 
+                                  os.status === 'Returned' ? 'bg-amber-200 text-amber-900 border border-amber-300' :
                                   os.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800 border border-teal-200' :
                                   os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 
                                   os.status === 'Partially Verified' ? 'bg-amber-100 text-amber-700' : 
@@ -308,7 +357,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             </td>
                             <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{os.createdBy}</td>
                             <td className="py-3.5 px-6 text-right space-x-2">
-                              {os.status !== 'Cancelled' && os.status !== 'Finalized Order' && (
+                              {os.status !== 'Cancelled' && os.status !== 'Finalized Order' && os.status !== 'Returned' && (
                                 <button onClick={() => openProcessModal(os)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Process</button>
                               )}
                               <button onClick={() => setViewOs(os)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
@@ -577,6 +626,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                       <option value="Verified">Verified</option>
                       <option value="Shipped">Shipped</option>
                       <option value="Completed">Completed</option>
+                      <option value="Returned">Returned</option>
                       <option value="Cancelled">Cancelled</option>
                     </select>
                   </div>
@@ -647,6 +697,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <h2 className="text-2xl font-mono font-black text-indigo-700">{viewOs.osNumber}</h2>
                   <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(viewOs.createdAt).toLocaleDateString()}</p>
                   {viewOs.status === 'Cancelled' && <p className="text-lg font-black text-rose-600 uppercase mt-2 border-2 border-rose-600 inline-block px-3 py-1">VOID / CANCELLED</p>}
+                  {viewOs.status === 'Returned' && <p className="text-lg font-black text-amber-600 uppercase mt-2 border-2 border-amber-600 inline-block px-3 py-1">RETURNED TO STOCK</p>}
                 </div>
               </div>
 
@@ -704,15 +755,22 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
             <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {viewOs.createdBy}</span>
-              {viewOs.status !== 'Cancelled' && (
-                <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">
-                  {viewOs.status === 'Finalized Order' ? 'Void / Return to Stock' : 'Void / Cancel O.S.'}
-                </button>
-              )}
+              <div className="flex gap-3">
+                {viewOs.status === 'Finalized Order' && (
+                  <button onClick={() => handleReturnOrder(viewOs.id)} className="px-5 py-2.5 bg-amber-100 border border-amber-300 text-amber-800 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-amber-200 shadow-sm transition-colors">
+                    Return Order to Stock
+                  </button>
+                )}
+                {viewOs.status !== 'Cancelled' && viewOs.status !== 'Returned' && (
+                  <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">
+                    Void / Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
     </div>
   );
-} 
+}
