@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 // --- INTERFACES ---
 interface OrderSlipItem { 
@@ -91,6 +91,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const [editSearchResults, setEditSearchResults] = useState<any[]>([]);
   const [showEditSearch, setShowEditSearch] = useState(false);
   const [editSelectedIndex, setEditSelectedIndex] = useState(-1);
+  const searchDropdownRef = useRef<HTMLDivElement>(null);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
@@ -130,7 +131,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   // --- FETCH SHORTAGES ---
   const fetchShortages = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
       if (res.ok) {
         const data = await res.json();
         setShortages(data);
@@ -162,6 +163,16 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }, 400);
     return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
+
+  // Handle auto-scroll for keyboard navigation in edit modal
+  useEffect(() => {
+    if (editSelectedIndex >= 0 && searchDropdownRef.current) {
+      const activeElement = searchDropdownRef.current.children[editSelectedIndex] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [editSelectedIndex]);
 
   // --- EDIT PRODUCT SEARCH KEYBOARD NAVIGATION ---
   const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -205,13 +216,36 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   };
 
   // --- PROCESSING WORKFLOW (PHASE 7) ---
-  const openProcessModal = (os: OrderSlip) => {
+  const openProcessModal = async (os: OrderSlip) => {
     setProcessOs(os);
+    
+    // Step 1: Open modal instantly with undefined warehouseQty (to show fetching state)
     setProcessItems(os.items.map(i => ({
       ...i,
       physicalQty: i.physicalQty !== undefined && i.physicalQty !== null ? i.physicalQty : i.requestedQty,
-      shortageQty: i.shortageQty || 0
+      shortageQty: i.shortageQty || 0,
+      warehouseQty: undefined 
     })));
+
+    // Step 2: Dynamically fetch live stock from warehouse in background
+    try {
+      const productIds = os.items.map(i => i.productId);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, productIds })
+      });
+      if (res.ok) {
+        const stockMap = await res.json();
+        setProcessItems(prev => prev.map(item => ({
+          ...item,
+          // Inject live warehouse stock so staff can make accurate decisions
+          warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0
+        })));
+      }
+    } catch (e) {
+      console.warn("Failed to fetch live warehouse stock for processing screen.", e);
+    }
   };
 
   const handleProcessUpdateQty = (index: number, val: string) => {
@@ -266,7 +300,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const handleShortageStatusChange = async (shortageId: string, newStatus: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/shortages/${shortageId}/status`, {
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/${shortageId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -308,9 +342,12 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
     // Auto-focus the quantity input for seamless typing
     setTimeout(() => {
-      const input = document.getElementById(`edit-qty-${p.id}`);
-      if (input) input.focus();
-    }, 100);
+      const input = document.getElementById(`edit-qty-${p.id}`) as HTMLInputElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 50);
   };
 
   const handleEditUpdateQty = (index: number, val: string) => {
@@ -658,7 +695,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                         <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                       </td>
                       <td className="py-4 px-4 border border-slate-100 text-center font-bold text-slate-500">
-                        {item.warehouseQty !== undefined ? item.warehouseQty : 'N/A'}
+                        {/* Show fetching animation until warehouseQty is loaded */}
+                        {item.warehouseQty !== undefined ? item.warehouseQty : <span className="text-slate-300 animate-pulse text-[10px] uppercase">Fetching...</span>}
                       </td>
                       <td className="py-4 px-4 border border-slate-100 text-center font-black text-indigo-700 bg-indigo-50/20">
                         {item.requestedQty}
@@ -727,7 +765,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all"
                   />
                   {showEditSearch && editProductSearch.trim().length >= 2 && (
-                    <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                    <div ref={searchDropdownRef} className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
                       {editSearchResults.length === 0 ? (
                         <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching products found.</div>
                       ) : (
@@ -770,7 +808,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                           <div className="font-bold text-slate-900 truncate max-w-[200px]">{item.productName}</div>
                           <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                         </td>
-                        <td className="py-2 px-4 border border-slate-100">
+                        <td className="py-2 px-4 border border-slate-100 relative">
                           <input 
                             id={`edit-qty-${item.productId}`}
                             type="number" min="1" value={item.requestedQty} 
@@ -778,7 +816,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             className="w-full px-2 py-1.5 text-center font-black text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
                           />
                           {item.officeStock !== undefined && Number(item.requestedQty) > item.officeStock && (
-                            <div className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded mt-1 w-full text-center uppercase tracking-widest">
+                            <div className="absolute top-full mt-1 left-0 right-0 text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded text-center uppercase tracking-widest">
                               Short {Number(item.requestedQty) - item.officeStock}
                             </div>
                           )}
