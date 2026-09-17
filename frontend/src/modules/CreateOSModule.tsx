@@ -220,7 +220,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         })));
       }).catch(() => {});
     }
-    showToast(`Loaded ${slip.osNumber} successfully. Ready to update.`, "success");
+    showToast(`Loaded ${slip.osNumber} successfully. Ready to edit.`, "success");
   };
 
   const handleLoadSlipKeyDown = (e: React.KeyboardEvent) => {
@@ -299,6 +299,48 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
+  // --- 🆕 RETURN / CANCEL WITH AUTOMATIC STOCK RESTORE ---
+  const handleStatusChangeWithStockRestore = async (newStatus: 'Cancelled' | 'Returned') => {
+    if (!loadedOsId) return;
+    if (!window.confirm(`Are you sure you want to mark this order as ${newStatus}? This will safely restore deducted stock.`)) return;
+
+    setIsProcessing(true);
+    try {
+      // 1. Update status in the Database
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+      });
+      if (!res.ok) throw new Error(`Failed to mark as ${newStatus}.`);
+
+      // 2. ONLY restore stock if this order previously deducted it (Finalized or Updated)
+      if (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') {
+        const concurrentStockUpdates: any[] = [];
+        
+        // Loop over the EXACT items and quantities that were originally loaded from the database
+        originalItems.forEach(item => {
+          const restoreQty = Math.abs(item.requestedQty); // Positive number to add back to stock
+          concurrentStockUpdates.push(
+            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+              method: 'PATCH', 
+              headers: { 'Content-Type': 'application/json' }, 
+              body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+            }).catch(err => console.warn(`Silent Stock Restore Fail for ID ${item.productId}:`, err))
+          );
+        });
+        await Promise.all(concurrentStockUpdates);
+      }
+
+      showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
+      handleClosePrintModal(); // Instantly clears the workspace
+    } catch (e: any) { 
+      showToast(e.message || "Failed to process cancellation.", "error"); 
+    } finally { 
+      setIsProcessing(false); 
+    }
+  };
+
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
@@ -308,7 +350,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to create Order Slip."); }
@@ -327,7 +369,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
-      // Logic: Only force 'Order Updated' status if it previously had stock deductions (Finalized)
+      // Force status to 'Order Updated' if it previously impacted stock
       const targetStatus = (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') ? 'Order Updated' : loadedOsStatus;
 
       const payload = {
@@ -345,16 +387,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
       const updatedOs = await res.json();
       
-      // --- CRITICAL STOCK RECONCILIATION ---
-      // We only execute stock adjustment math if the order previously deducted stock
+      // --- CRITICAL STOCK RECONCILIATION FOR UPDATES ---
       if (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') {
         const concurrentStockUpdates: any[] = [];
-        
-        // Grab unique product IDs across both the original saved items and the current drafted items
-        const allProductIds = Array.from(new Set([
-          ...originalItems.map(i => i.productId),
-          ...draftItems.map(i => i.productId)
-        ]));
+        const allProductIds = Array.from(new Set([...originalItems.map(i => i.productId), ...draftItems.map(i => i.productId)]));
 
         allProductIds.forEach(productId => {
           const oldItem = originalItems.find(i => i.productId === productId);
@@ -366,17 +402,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           const qtyDifference = newQty - oldQty; 
           
           if (qtyDifference !== 0) {
-            const stockAdjustment = -qtyDifference; // If we increased order by 2, we deduct (-2) from stock
+            const stockAdjustment = -qtyDifference; 
             concurrentStockUpdates.push(
               fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${productId}`, {
-                method: 'PATCH', 
-                headers: { 'Content-Type': 'application/json' }, 
-                body: JSON.stringify({ officeStockAdjustment: stockAdjustment, quantity: stockAdjustment }) 
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: stockAdjustment, quantity: stockAdjustment }) 
               }).catch(err => console.warn(`Stock Adjust Fail for ID ${productId}:`, err))
             );
           }
         });
-
         await Promise.all(concurrentStockUpdates);
       }
 
@@ -435,7 +468,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const handleClosePrintModal = () => {
     setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
-    setOriginalItems([]); // Clear reconciled memory
+    setOriginalItems([]);
     fetchNextOsNumber();
   };
 
@@ -453,11 +486,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
-          {loadedOsId && (
-            <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
-              {isProcessing ? 'Updating...' : 'Update Order'}
-            </button>
-          )}
           <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
             O.S. Records
           </button>
@@ -540,7 +568,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); setOriginalItems([]); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
@@ -696,12 +724,25 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            <div className="flex items-center gap-6 mt-4 sm:mt-0 w-full sm:w-auto justify-between sm:justify-end">
-              <div className="text-sm font-black text-slate-800 uppercase tracking-widest">
+            <div className="flex items-center gap-3 mt-4 sm:mt-0 w-full sm:w-auto justify-between sm:justify-end">
+              <div className="text-sm font-black text-slate-800 uppercase tracking-widest mr-4">
                 Total: <span className="font-mono text-xl ml-2">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
               </div>
+              
+              {/* ACTION BUTTONS */}
+              {loadedOsId && loadedOsStatus !== 'Cancelled' && loadedOsStatus !== 'Returned' && (
+                <>
+                  <button onClick={() => handleStatusChangeWithStockRestore('Returned')} disabled={isProcessing} className="px-5 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
+                    Return
+                  </button>
+                  <button onClick={() => handleStatusChangeWithStockRestore('Cancelled')} disabled={isProcessing} className="px-5 py-3 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
+                    Cancel
+                  </button>
+                </>
+              )}
+
               {loadedOsId ? (
-                <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
+                <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing || loadedOsStatus === 'Cancelled' || loadedOsStatus === 'Returned'} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
                   {isProcessing ? 'Updating...' : 'Update O.S.'}
                 </button>
               ) : (
@@ -740,7 +781,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                     </button>
                   </div>
                 ) : finalOrderGenerated ? (
-                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ ORDER LOGGED & SECURED</span>
+                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER LOGGED</span>
                 ) : null}
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
