@@ -2153,46 +2153,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   </div>
                 </div>
                 
-                {isReportModalOpen ? (
-                  <div className="overflow-x-auto p-4 border-t border-slate-200">
-                    <table className="w-full text-left border-collapse text-sm whitespace-nowrap min-w-[800px]">
-                      <thead className="bg-amber-100 text-amber-900 border-b border-amber-200">
-                        <tr>
-                          <th className="py-3 px-4 font-bold">Employee Name</th>
-                          <th className="py-3 px-4 font-bold text-center">Payrolls</th>
-                          <th className="py-3 px-4 font-bold text-center">Total Days</th>
-                          <th className="py-3 px-4 font-bold text-center">Total Hrs</th>
-                          <th className="py-3 px-4 font-bold text-right">Gross Pay</th>
-                          <th className="py-3 px-4 font-bold text-right">Deductions</th>
-                          <th className="py-3 px-4 font-bold text-right">Net Pay</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {getFilteredReportData().length === 0 ? (
-                          <tr><td colSpan={7} className="py-12 text-center text-slate-500 font-medium">No records found for this period.</td></tr>
-                        ) : (
-                          getFilteredReportData().map((row, idx) => (
-                            <tr key={idx} className="hover:bg-amber-50/30 transition-colors">
-                              <td className="py-3 px-4 font-bold text-slate-800 uppercase">{row.emp.lastName}, {row.emp.firstName}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.count}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalDays}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalHours.toFixed(2)}</td>
-                              <td className="py-3 px-4 text-right text-slate-700 font-mono">₱{row.totalGross.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                              <td className="py-3 px-4 text-right text-rose-600 font-mono">-₱{row.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                              <td className="py-3 px-4 text-right font-bold text-emerald-600 font-mono text-[15px]">₱{row.totalNet.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-12 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50">
-                    <svg className="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    <p className="font-medium text-lg">Report Engine Ready</p>
-                    <p className="text-sm mt-1">Select your date range above and click Generate Report.</p>
-                  </div>
-                )}
+                <div className="p-12 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50">
+                  <svg className="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <p className="font-medium text-lg">Report Engine Ready</p>
+                  <p className="text-sm mt-1">Select your date range above and click Generate Report.</p>
+                </div>
               </div>
             )}
 
