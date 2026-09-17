@@ -21,26 +21,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
 
-  // --- P.O. GENERATION STATES ---
-  const [isGeneratingPO, setIsGeneratingPO] = useState(false);
-  const [poGenerated, setPoGenerated] = useState(false);
-
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
   
   // Editable OS Number
   const [osNumber, setOsNumber] = useState<string>('');
-
-  // NEW: State to hold the successfully finalized Order Slip for printing
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
-  
-  // Customer Keyboard Navigation
   const [customerHighlightedIndex, setCustomerHighlightedIndex] = useState(-1);
   const customerDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -48,8 +40,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [productSearch, setProductSearch] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
-  
-  // Product Keyboard Navigation
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +48,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- FETCH LATEST OS NUMBER FOR AUTO-INCREMENT ---
   const fetchNextOsNumber = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=1`);
@@ -129,7 +118,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
 
-  // Handle auto-scroll for keyboard navigation
   useEffect(() => {
     if (highlightedIndex >= 0 && searchDropdownRef.current) {
       const activeElement = searchDropdownRef.current.children[highlightedIndex] as HTMLElement;
@@ -208,7 +196,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setProductSearchResults([]);
     setHighlightedIndex(-1);
 
-    // Auto-focus and auto-select the quantity input so they can instantly type
     setTimeout(() => {
       const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement;
       if (input) {
@@ -348,7 +335,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       showToast("Order Slip generated successfully.", "success");
       
       setFinalizedOs(newlyCreatedOs);
-      setPoGenerated(false); // Reset PO generation state
 
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
@@ -357,46 +343,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  // --- NEW: GENERATE P.O. DIRECTLY FROM FINALIZED O.S. ---
-  const handleGeneratePO = async () => {
-    if (!finalizedOs) return;
-    setIsGeneratingPO(true);
-    try {
-      const payload = {
-        company: selectedCompany,
-        osReference: finalizedOs.osNumber, 
-        isVatApplied: finalizedOs.vatApplied,
-        vatRate: finalizedOs.vatRate,
-        user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({
-          productId: i.productId,
-          sku: i.sku,
-          productName: i.productName,
-          requestedQty: i.requestedQty,
-          unitCost: i.unitPrice 
-        }))
-      };
-
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) throw new Error("Failed to generate P.O.");
-      
-      showToast("Purchase Order successfully generated!", "success");
-      setPoGenerated(true); // Hide the button to prevent duplicate P.O.s
-    } catch (e: any) {
-      showToast("Failed to generate P.O.", "error");
-    } finally {
-      setIsGeneratingPO(false);
-    }
-  };
-
   const handleClosePrintModal = () => {
     setFinalizedOs(null);
-    setPoGenerated(false);
     setDraftItems([]);
     setSelectedCustomer(null);
     setCustomerSearch('');
@@ -570,7 +518,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
                           className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
                         />
-                        {/* THE SHORT WARNING STRICTLY AGAINST OFFICE STOCK */}
                         {item.officeStock !== undefined && reqQty > item.officeStock && (
                           <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">
                             Short {reqQty - item.officeStock}
@@ -704,20 +651,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">O.S. Generated Successfully!</h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing or P.O. generation.</p>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
               </div>
               <div className="flex gap-3">
-                {/* NEW: GENERATE P.O. BUTTON */}
-                {!poGenerated ? (
-                  <button onClick={handleGeneratePO} disabled={isGeneratingPO} className="px-5 py-2.5 bg-sky-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-sky-700 disabled:bg-slate-400 shadow-sm transition-colors">
-                    {isGeneratingPO ? 'Generating...' : 'Generate P.O.'}
-                  </button>
-                ) : (
-                  <span className="px-5 py-2.5 bg-emerald-200 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-emerald-300 flex items-center">
-                    ✓ P.O. Generated
-                  </span>
-                )}
-
+                
+                {/* Print and Close buttons only */}
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
                   Print O.S.
                 </button>
