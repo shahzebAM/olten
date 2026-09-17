@@ -34,7 +34,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
-  const [loadedOsId, setLoadedOsId] = useState<string | null>(null); // Tracks if we are editing an existing OS
+  const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
@@ -179,6 +179,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setOsNumber(slip.osNumber);
     setReferenceOs(slip.osNumber);
     setIsVatApplied(slip.vatApplied || false);
+    setFinalizedOs(slip); // Set this so we retain its status during updates
     
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
@@ -285,7 +286,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         osNumber: osNumber.trim(), 
-        company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, user: loginUsername,
+        company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
+        subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
@@ -307,9 +309,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername,
+        status: finalizedOs?.status || 'Generated', // Preserve original status
         isVatApplied,
         vatRate,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        subtotal,
+        vatAmount,
+        grandTotal,
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
@@ -502,10 +508,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                     </button>
                   </th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">OFF QTY</th>
-                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">WHSE QTY</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">REQUESTED</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">UNIT PRICE</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">LINE TOTAL</th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">WHSE QTY</th>
                   <th className="border border-slate-300 py-3 px-3 w-10 text-center"></th>
                 </tr>
               </thead>
@@ -519,13 +525,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <td className="border border-slate-300 py-2.5 px-4 font-mono text-sm font-bold text-slate-900 uppercase">{item.sku}</td>
                       <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full font-bold text-slate-900 uppercase">{item.productName}</td>
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
-                      <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
-                        <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
-                          <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{effectiveWhseQty}</span>
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 truncate max-w-full">{item.selectedWarehouseName || 'All Whse'}</span>
-                        </div>
-                      </td>
-
+                      
                       <td className="border border-slate-300 p-0 bg-indigo-50/20 relative">
                         <input 
                           id={`qty-input-${item.productId}`} type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
@@ -545,6 +545,28 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       </td>
 
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+
+                      <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
+                        <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
+                          <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{effectiveWhseQty}</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 truncate max-w-full">{item.selectedWarehouseName || 'All Whse'}</span>
+                        </div>
+                        {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
+                          <div className="absolute top-full right-0 mt-0.5 w-48 bg-slate-900 text-white rounded-lg shadow-xl p-2 z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                            <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                              <button onClick={() => handleSelectWarehouse(idx, null)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${!item.selectedWarehouseName ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
+                                <span className="truncate pr-2 font-medium">All Whse</span><span className="font-black shrink-0">{item.warehouseQty}</span>
+                              </button>
+                              {item.warehouseBreakdown.map((wb, i) => (
+                                <button key={i} onClick={() => handleSelectWarehouse(idx, wb.name)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${item.selectedWarehouseName === wb.name ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
+                                  <span className="truncate pr-2 font-medium">{wb.name}</span><span className="font-black shrink-0">{wb.quantity}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </td>
+
                       <td className="border border-slate-300 py-2.5 px-3 text-center">
                         <button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 font-black transition-colors bg-slate-50 hover:bg-rose-50 p-1.5 rounded-md">✕</button>
                       </td>
@@ -572,8 +594,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
                         {productSearchResults.map((p, i) => (
                           <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} onMouseEnter={() => setHighlightedIndex(i)} className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
-                            <div><span className="font-bold text-slate-900 uppercase">{p.name}</span><span className="text-[10px] font-mono text-slate-400 ml-3 uppercase">{p.sku}</span></div>
-                            <div className="text-right"><div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div></div>
+                            <div>
+                              <span className="font-bold text-slate-900 uppercase">{p.name}</span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] font-mono text-slate-400 uppercase">{p.sku}</span>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Off: {p.officeStock || 0}</span>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Whse: {p.warehouseQty || 0}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -603,9 +634,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <div className="text-sm font-black text-slate-800 uppercase tracking-widest">
                 Total: <span className="font-mono text-xl ml-2">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
               </div>
-              <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                {isProcessing ? 'Saving...' : 'Finalize O.S.'}
-              </button>
+              {loadedOsId ? (
+                <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
+                  {isProcessing ? 'Updating...' : 'Update O.S.'}
+                </button>
+              ) : (
+                <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
+                  {isProcessing ? 'Saving...' : 'Finalize O.S.'}
+                </button>
+              )}
             </div>
           </div>
         </div>
