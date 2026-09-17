@@ -21,6 +21,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
 
+  // --- FINAL ORDER GENERATION STATES ---
+  const [isGeneratingFinalOrder, setIsGeneratingFinalOrder] = useState(false);
+  const [finalOrderGenerated, setFinalOrderGenerated] = useState(false);
+  const [finalOrderNumber, setFinalOrderNumber] = useState(''); 
+
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
@@ -335,6 +340,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       showToast("Order Slip generated successfully.", "success");
       
       setFinalizedOs(newlyCreatedOs);
+      setFinalOrderGenerated(false);
+      
+      // Auto-propose Final Order Number
+      const numMatch = newlyCreatedOs.osNumber.match(/\d+/);
+      if (numMatch) {
+        setFinalOrderNumber(`FO-${numMatch[0]}`);
+      } else {
+        setFinalOrderNumber(`FO-${newlyCreatedOs.osNumber}`);
+      }
 
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
@@ -343,8 +357,62 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // --- GENERATE FINAL ORDER DIRECTLY INTO O.S. LEDGER ---
+  const handleGenerateFinalOrder = async () => {
+    if (!finalizedOs) return;
+    if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
+
+    setIsGeneratingFinalOrder(true);
+    try {
+      const payload = {
+        osNumber: finalOrderNumber.trim(), 
+        company: selectedCompany,
+        customerId: finalizedOs.customerId,
+        isVatApplied: finalizedOs.vatApplied,
+        vatRate: finalizedOs.vatRate,
+        user: loginUsername,
+        items: finalizedOs.items.map((i: any) => ({
+          productId: i.productId,
+          sku: i.sku,
+          productName: i.productName,
+          requestedQty: i.requestedQty,
+          unitPrice: i.unitPrice 
+        }))
+      };
+
+      // Create a duplicate record in the O.S. Ledger
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to generate Final Order.");
+      }
+      
+      const newFo = await res.json();
+
+      // Force status update to "Finalized Order"
+      await fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
+      });
+      
+      showToast("Final Order successfully generated to Ledger!", "success");
+      setFinalOrderGenerated(true); 
+    } catch (e: any) {
+      showToast(e.message || "Failed to generate Final Order.", "error");
+    } finally {
+      setIsGeneratingFinalOrder(false);
+    }
+  };
+
   const handleClosePrintModal = () => {
     setFinalizedOs(null);
+    setFinalOrderGenerated(false);
     setDraftItems([]);
     setSelectedCustomer(null);
     setCustomerSearch('');
@@ -638,7 +706,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       </main>
 
-      {/* FINALIZED PRINT & P.O. MODAL */}
+      {/* FINALIZED PRINT MODAL */}
       {finalizedOs && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
           
@@ -651,11 +719,30 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">O.S. Generated Successfully!</h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing or Final Order conversion.</p>
               </div>
               <div className="flex gap-3">
                 
-                {/* Print and Close buttons only */}
+                {/* NEW: GEN FINAL ORDER BUTTON */}
+                {!finalOrderGenerated ? (
+                  <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
+                    <input 
+                      type="text" 
+                      value={finalOrderNumber} 
+                      onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())}
+                      className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400"
+                      placeholder="FO-000000"
+                    />
+                    <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
+                      {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
+                    </button>
+                  </div>
+                ) : (
+                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">
+                    ✓ FINAL ORDER {finalOrderNumber} LOGGED
+                  </span>
+                )}
+
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
                   Print O.S.
                 </button>
