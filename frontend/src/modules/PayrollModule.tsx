@@ -1503,6 +1503,87 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
         </div>
       )}
 
+      {/* SUMMARY REPORT PRINT MODAL */}
+      {isReportModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
+            
+            <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-amber-50 z-10 sticky top-0 no-print shrink-0">
+              <div>
+                <h2 className="font-bold text-amber-900 text-lg">Payroll Summary Report</h2>
+                <p className="text-xs font-medium text-amber-700 mt-0.5">
+                  {reportFromDate ? formatMDY(reportFromDate) : 'Start'} to {reportToDate ? formatMDY(reportToDate) : 'End'}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => window.print()} className="bg-blue-600 text-white px-5 py-2.5 rounded-lg shadow-sm font-bold text-sm hover:bg-blue-700 flex items-center gap-2 transition-colors">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                  Print Report
+                </button>
+                <button onClick={() => setIsReportModalOpen(false)} className="bg-white border border-slate-300 text-slate-700 px-5 py-2.5 rounded-lg shadow-sm font-bold text-sm hover:bg-slate-50 transition-colors">Close</button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-8 bg-white flex justify-center items-start print-modal-content">
+              <div id="report-print-area" className="w-full max-w-5xl font-sans text-black">
+                
+                <div className="hidden print:block mb-8 border-b-2 border-slate-900 pb-4">
+                  <h1 className="text-2xl font-black uppercase text-slate-900">{selectedCompany} TRADING CORP.</h1>
+                  <h2 className="text-lg font-bold text-slate-600 uppercase mt-1">Payroll Summary Report</h2>
+                  <p className="text-sm font-medium text-slate-500 mt-1">
+                    Period: {reportFromDate ? formatMDY(reportFromDate) : 'Beginning'} - {reportToDate ? formatMDY(reportToDate) : 'Present'}
+                  </p>
+                </div>
+
+                <table className="w-full text-left border-collapse text-sm whitespace-nowrap min-w-[800px]">
+                  <thead className="bg-amber-100/50 text-amber-950 border-y-2 border-slate-900 print:bg-slate-100">
+                    <tr>
+                      <th className="py-3 px-4 font-black uppercase text-xs">Employee Name</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-center">Payrolls</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-center">Total Days</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-center">Total Hrs</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-right">Gross Pay</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-right">Deductions</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-right">Net Pay</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {getFilteredReportData().length === 0 ? (
+                      <tr><td colSpan={7} className="py-12 text-center text-slate-500 font-medium">No records found for this period.</td></tr>
+                    ) : (
+                      <>
+                        {getFilteredReportData().map((row, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="py-3 px-4 font-bold text-slate-800 uppercase">{row.emp.lastName}, {row.emp.firstName}</td>
+                            <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.count}</td>
+                            <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalDays}</td>
+                            <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalHours.toFixed(2)}</td>
+                            <td className="py-3 px-4 text-right text-slate-700 font-mono">₱{row.totalGross.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                            <td className="py-3 px-4 text-right text-rose-600 font-mono">-₱{row.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                            <td className="py-3 px-4 text-right font-black text-slate-900 font-mono text-[15px]">₱{row.totalNet.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50 border-t-2 border-slate-900 font-black">
+                          <td colSpan={4} className="py-3 px-4 text-right uppercase text-slate-800 text-xs tracking-widest">Grand Totals:</td>
+                          <td className="py-3 px-4 text-right text-slate-900 font-mono">₱{getFilteredReportData().reduce((s, r) => s + r.totalGross, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                          <td className="py-3 px-4 text-right text-rose-700 font-mono">-₱{getFilteredReportData().reduce((s, r) => s + r.totalDeductions, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                          <td className="py-3 px-4 text-right text-indigo-700 font-mono text-lg bg-indigo-50 border-b-4 border-indigo-200">₱{getFilteredReportData().reduce((s, r) => s + r.totalNet, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+
+                <div className="hidden print:flex mt-16 justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-widest">
+                  <div>Printed By: {loginUsername}</div>
+                  <div>Date Printed: {new Date().toLocaleDateString()}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SIDEBAR NAVIGATION & OVERLAY */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 md:hidden print-hidden" onClick={() => setIsMobileMenuOpen(false)}></div>
@@ -2134,11 +2215,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       <label className="text-sm font-bold text-slate-600 uppercase tracking-wide">Select Employee</label>
                       <div className="relative">
                         <select value={reportSelectedEmp} onChange={(e) => setReportSelectedEmp(e.target.value)} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg focus:ring-4 focus:ring-amber-600/10 focus:border-amber-600 focus:outline-none transition-all text-sm shadow-sm text-slate-800 appearance-none cursor-pointer">
-                          <option value="all">All Employees</option>
-                          {employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>{emp.lastName}, {emp.firstName}</option>
-                          ))}
-                        </select>
+    <option value="all">All Employees</option>
+    {/* FIXED: Filtered by selectedCompany */}
+    {employees.filter(emp => emp.company === selectedCompany).map(emp => (
+      <option key={emp.id} value={emp.id}>{emp.lastName}, {emp.firstName}</option>
+    ))}
+  </select>
                         <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6"/></svg>
                         </div>
@@ -2153,46 +2235,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                   </div>
                 </div>
                 
-                {isReportModalOpen ? (
-                  <div className="overflow-x-auto p-4 border-t border-slate-200">
-                    <table className="w-full text-left border-collapse text-sm whitespace-nowrap min-w-[800px]">
-                      <thead className="bg-amber-100 text-amber-900 border-b border-amber-200">
-                        <tr>
-                          <th className="py-3 px-4 font-bold">Employee Name</th>
-                          <th className="py-3 px-4 font-bold text-center">Payrolls</th>
-                          <th className="py-3 px-4 font-bold text-center">Total Days</th>
-                          <th className="py-3 px-4 font-bold text-center">Total Hrs</th>
-                          <th className="py-3 px-4 font-bold text-right">Gross Pay</th>
-                          <th className="py-3 px-4 font-bold text-right">Deductions</th>
-                          <th className="py-3 px-4 font-bold text-right">Net Pay</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {getFilteredReportData().length === 0 ? (
-                          <tr><td colSpan={7} className="py-12 text-center text-slate-500 font-medium">No records found for this period.</td></tr>
-                        ) : (
-                          getFilteredReportData().map((row, idx) => (
-                            <tr key={idx} className="hover:bg-amber-50/30 transition-colors">
-                              <td className="py-3 px-4 font-bold text-slate-800 uppercase">{row.emp.lastName}, {row.emp.firstName}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.count}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalDays}</td>
-                              <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalHours.toFixed(2)}</td>
-                              <td className="py-3 px-4 text-right text-slate-700 font-mono">₱{row.totalGross.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                              <td className="py-3 px-4 text-right text-rose-600 font-mono">-₱{row.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                              <td className="py-3 px-4 text-right font-bold text-emerald-600 font-mono text-[15px]">₱{row.totalNet.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-12 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50">
-                    <svg className="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    <p className="font-medium text-lg">Report Engine Ready</p>
-                    <p className="text-sm mt-1">Select your date range above and click Generate Report.</p>
-                  </div>
-                )}
+              <div className="p-12 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 print-hidden">
+                  <svg className="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <p className="font-medium text-lg">Report Engine Ready</p>
+                  <p className="text-sm mt-1">Select your date range above and click Generate Report.</p>
+                </div>
               </div>
             )}
 
