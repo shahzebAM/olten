@@ -8,6 +8,7 @@ import { SettingsController } from './settings/settings.controller';
 import { MasterInventoryController } from './master-inventory/master-inventory.controller';
 import { SalesController } from './sales/sales.controller';
 import { OrderSlipsController } from './sales/order-slips.controller';
+import { PurchaseOrdersController } from './sales/purchase-orders.controller';
 
 @Module({
   imports: [
@@ -20,7 +21,8 @@ import { OrderSlipsController } from './sales/order-slips.controller';
     CompaniesController,
     SettingsController,
     SalesController,
-    OrderSlipsController
+    OrderSlipsController,
+    PurchaseOrdersController
   ],
   providers: [AppService],
 })

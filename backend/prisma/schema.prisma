@@ -279,33 +279,37 @@ model OrderSlipItem {
 }
 
 model Shortage {
-  id              String        @id @default(uuid())
-  orderSlipId     String
-  orderSlipItemId String
-  company         String
-  customerId      String
-  osNumber        String
-  sku             String
-  productName     String
-  requestedQty    Int
-  confirmedQty    Int
-  shortageQty     Int
-  status          String        @default("Open")
-  createdBy       String?
-  updatedBy       String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                  String          @id @default(uuid())
+  company             String
+  sku                 String
+  productName         String
+  requestedQty        Int
+  confirmedQty        Int
+  shortageQty         Int
+  status              String          @default("Open")
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
-  orderSlip       OrderSlip     @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
-  orderSlipItem   OrderSlipItem @relation(fields: [orderSlipItemId], references: [id], onDelete: Cascade)
-  customer        Customer      @relation(fields: [customerId], references: [id])
+  // 1. SCALAR FIELDS (Made Optional)
+  orderSlipId         String?
+  orderSlipItemId     String?
+  customerId          String?
+  osNumber            String?
+
+  // 2. RELATION FIELDS (Made Optional)
+  orderSlip           OrderSlip?      @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
+  orderSlipItem       OrderSlipItem?  @relation(fields: [orderSlipItemId], references: [id], onDelete: Cascade)
+  customer            Customer?       @relation(fields: [customerId], references: [id])
 
   @@index([company])
   @@index([orderSlipId])
 
-  poNumber             String?
-  purchaseOrderId      String?
-  purchaseOrderItemId  String?
+  // 3. P.O. SPECIFIC FIELDS
+  poNumber            String?
+  purchaseOrderId     String?
+  purchaseOrderItemId String?
 }
 
 model PurchaseOrder {
