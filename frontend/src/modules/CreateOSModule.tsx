@@ -31,9 +31,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [allSlips, setAllSlips] = useState<any[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
   
-  // Editable OS Number & Reference
+  // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
+  const [loadedOsId, setLoadedOsId] = useState<string | null>(null); // Tracks if we are editing an existing OS
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
@@ -58,14 +59,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- INTELLIGENT NUMBER FETCHERS (Supports purely numeric IDs like 91123) ---
+  // --- INTELLIGENT NUMBER FETCHERS ---
   const fetchNextOsNumber = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=200`);
       const data = await res.json();
       const slips = data.data || [];
       
-      setAllSlips(slips); // Cache slips for the "Load Template" dropdown
+      setAllSlips(slips);
 
       const lastOs = slips.find((s: any) => s.status !== 'Finalized Order');
       
@@ -149,9 +150,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           setProductSearchResults(data);
           setHighlightedIndex(-1); 
         }
-      } catch (e) {
-        console.warn("Product search failed.");
-      } finally {
+      } catch (e) {} finally {
         setIsSearchingProducts(false);
       }
     }, 400);
@@ -161,19 +160,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.toLowerCase();
-    return customers.filter(c => 
-      c.name.toLowerCase().includes(query) || 
-      c.company.toLowerCase().includes(query) || 
-      c.id.toLowerCase().includes(query)
-    );
+    return customers.filter(c => c.name.toLowerCase().includes(query) || c.company.toLowerCase().includes(query) || c.id.toLowerCase().includes(query));
   }, [customers, customerSearch]);
 
   const filteredSlips = useMemo(() => {
     const query = loadSlipSearch.toLowerCase();
-    return allSlips.filter(s => 
-      s.osNumber.toLowerCase().includes(query) || 
-      s.customer?.name.toLowerCase().includes(query)
-    );
+    return allSlips.filter(s => s.osNumber.toLowerCase().includes(query) || s.customer?.name.toLowerCase().includes(query));
   }, [allSlips, loadSlipSearch]);
 
   const handleSelectCustomer = (c: Customer) => {
@@ -182,9 +174,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setShowCustomerDropdown(false);
   };
 
- const handleLoadSlip = async (slip: any) => {
-    setOsNumber(slip.osNumber); // <-- ADD THIS LINE
+  const handleLoadSlip = async (slip: any) => {
+    setLoadedOsId(slip.id);
+    setOsNumber(slip.osNumber);
     setReferenceOs(slip.osNumber);
+    setIsVatApplied(slip.vatApplied || false);
+    
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
       setCustomerSearch(slip.customer.name);
@@ -200,12 +195,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setShowLoadSlipDropdown(false);
     setLoadSlipSearch('');
     
-    // Automatically trigger stock refresh for loaded items to guarantee live data
     if (mappedItems.length > 0) {
       const productIds = mappedItems.map(i => i.productId);
       fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, productIds })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
       }).then(res => res.json()).then(stockMap => {
         setDraftItems(prev => prev.map(item => ({
           ...item,
@@ -215,7 +208,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         })));
       }).catch(() => {});
     }
-    showToast(`Loaded ${slip.osNumber} successfully.`, "success");
+    showToast(`Loaded ${slip.osNumber} successfully. Ready to update.`, "success");
   };
 
   const handleCustomerKeyDown = (e: React.KeyboardEvent) => {
@@ -303,18 +296,38 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       showToast("Order Slip generated successfully.", "success");
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
+      setLoadedOsId(null);
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- GENERATE FINAL ORDER & DEDUCT STOCK (OPTIMIZED FOR MILLISECONDS) ---
+  const handleUpdateOrder = async () => {
+    if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
+    setIsProcessing(true);
+    try {
+      const payload = {
+        user: loginUsername,
+        isVatApplied,
+        vatRate,
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+      };
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
+      const updatedOs = await res.json();
+      
+      showToast("Order updated successfully.", "success");
+      setFinalizedOs(updatedOs);
+      setFinalOrderGenerated(updatedOs.status === 'Finalized Order');
+      fetchNextFoNumber();
+    } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
+  };
+
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
 
     setIsGeneratingFinalOrder(true);
     try {
-      // 1. Prepare and send the primary creation payload
       const payload = {
         osNumber: finalOrderNumber.trim(), 
         referenceOs: finalizedOs.osNumber, 
@@ -323,71 +336,40 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         isVatApplied: finalizedOs.vatApplied,
         vatRate: finalizedOs.vatRate,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ 
-          productId: i.productId, 
-          sku: i.sku, 
-          productName: i.productName, 
-          requestedQty: Number(i.requestedQty), 
-          unitPrice: Number(i.unitPrice) 
-        }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
 
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(payload) 
-      });
-      
-      if (!res.ok) { 
-        const err = await res.json(); 
-        throw new Error(err.message || "Failed to generate Final Order."); 
-      }
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to generate Final Order."); }
       const newFo = await res.json();
 
-      // 2. PARALLEL EXECUTION: Fire all updates simultaneously for millisecond speeds
       const concurrentUpdates = [];
 
-      // -> Push the Status Update into the queue
       concurrentUpdates.push(
         fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, { 
-          method: 'PATCH', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
         })
       );
 
-      // -> Push ALL Stock Deductions into the queue
       finalizedOs.items.forEach((item: any) => {
-        // Enforce strict negative number for deduction
         const deductedQty = -Math.abs(Number(item.requestedQty));
-        
         concurrentUpdates.push(
           fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
-            method: 'PATCH', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify({ 
-              officeStockAdjustment: deductedQty,
-              quantity: deductedQty 
-            }) 
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: deductedQty, quantity: deductedQty }) 
           }).catch(err => console.warn(`Silent Stock Deduction Fail for ${item.sku}:`, err))
         );
       });
 
-      // Execute everything at the exact same time
       await Promise.all(concurrentUpdates);
       
       showToast("Final Order logged & Stock Deducted instantly!", "success");
       setFinalOrderGenerated(true); 
       
-    } catch (e: any) { 
-      showToast(e.message || "Failed to generate Final Order.", "error"); 
-    } finally { 
-      setIsGeneratingFinalOrder(false); 
-    }
+    } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null);
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null);
     fetchNextOsNumber();
   };
 
@@ -405,7 +387,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
-         <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
+          {loadedOsId && (
+            <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
+              {isProcessing ? 'Updating...' : 'Update Order'}
+            </button>
+          )}
+          <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
             O.S. Records
           </button>
           <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
@@ -419,7 +406,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
             
-            {/* NEW: LOAD TEMPLATE DROPDOWN */}
             <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
               <input 
@@ -482,7 +468,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
