@@ -306,13 +306,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- GENERATE FINAL ORDER & DEDUCT STOCK ---
+  // --- GENERATE FINAL ORDER & DEDUCT STOCK (OPTIMIZED FOR MILLISECONDS) ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
 
     setIsGeneratingFinalOrder(true);
     try {
+      // 1. Prepare and send the primary creation payload
       const payload = {
         osNumber: finalOrderNumber.trim(), 
         referenceOs: finalizedOs.osNumber, 
@@ -321,25 +322,67 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         isVatApplied: finalizedOs.vatApplied,
         vatRate: finalizedOs.vatRate,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: i.requestedQty, unitPrice: i.unitPrice }))
+        items: finalizedOs.items.map((i: any) => ({ 
+          productId: i.productId, 
+          sku: i.sku, 
+          productName: i.productName, 
+          requestedQty: Number(i.requestedQty), 
+          unitPrice: Number(i.unitPrice) 
+        }))
       };
 
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to generate Final Order."); }
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload) 
+      });
+      
+      if (!res.ok) { 
+        const err = await res.json(); 
+        throw new Error(err.message || "Failed to generate Final Order."); 
+      }
       const newFo = await res.json();
 
-      await fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) });
+      // 2. PARALLEL EXECUTION: Fire all updates simultaneously for millisecond speeds
+      const concurrentUpdates = [];
+
+      // -> Push the Status Update into the queue
+      concurrentUpdates.push(
+        fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, { 
+          method: 'PATCH', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
+        })
+      );
+
+      // -> Push ALL Stock Deductions into the queue
+      finalizedOs.items.forEach((item: any) => {
+        // Enforce strict negative number for deduction
+        const deductedQty = -Math.abs(Number(item.requestedQty));
+        
+        concurrentUpdates.push(
+          fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
+            method: 'PATCH', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ 
+              officeStockAdjustment: deductedQty,
+              quantity: deductedQty 
+            }) 
+          }).catch(err => console.warn(`Silent Stock Deduction Fail for ${item.sku}:`, err))
+        );
+      });
+
+      // Execute everything at the exact same time
+      await Promise.all(concurrentUpdates);
       
-      // DEDUCT OFFICE STOCK
-      await Promise.all(finalizedOs.items.map((item: any) => 
-        fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: -item.requestedQty }) 
-        }).catch(() => console.warn(`Silent Stock Adjustment Fail for ${item.sku}`))
-      ));
-      
-      showToast("Final Order logged & Stock Deducted!", "success");
+      showToast("Final Order logged & Stock Deducted instantly!", "success");
       setFinalOrderGenerated(true); 
-    } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
+      
+    } catch (e: any) { 
+      showToast(e.message || "Failed to generate Final Order.", "error"); 
+    } finally { 
+      setIsGeneratingFinalOrder(false); 
+    }
   };
 
   const handleClosePrintModal = () => {
