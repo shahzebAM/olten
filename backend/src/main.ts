@@ -13,8 +13,11 @@ async function bootstrap() {
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
-  
+  app.enableCors();
   // The ?? has been changed back to || so it safely runs everywhere
-  await app.listen(process.env.PORT || 3000);
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
+  console.log(`Backend is running on port ${port}`);
 }
+
 bootstrap();
