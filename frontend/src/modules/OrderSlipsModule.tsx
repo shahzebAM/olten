@@ -130,7 +130,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   // --- FETCH SHORTAGES ---
   const fetchShortages = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/sales/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
       if (res.ok) {
         const data = await res.json();
         setShortages(data);
@@ -145,7 +145,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     if (activeMainTab === 'shortages') fetchShortages();
   }, [fetchOrderSlips, fetchShortages, activeMainTab]);
 
-  // --- EDIT PRODUCT SEARCH DEBOUNCE ---
   useEffect(() => {
     if (editProductSearch.trim().length < 2) {
       setEditSearchResults([]);
@@ -267,7 +266,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const handleShortageStatusChange = async (shortageId: string, newStatus: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/${shortageId}/status`, {
+      const res = await fetch(`${API_BASE_URL}/sales/shortages/${shortageId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -306,6 +305,12 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setEditProductSearch('');
     setShowEditSearch(false);
     setEditSelectedIndex(-1);
+
+    // Auto-focus the quantity input for seamless typing
+    setTimeout(() => {
+      const input = document.getElementById(`edit-qty-${p.id}`);
+      if (input) input.focus();
+    }, 100);
   };
 
   const handleEditUpdateQty = (index: number, val: string) => {
@@ -767,6 +772,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                         </td>
                         <td className="py-2 px-4 border border-slate-100">
                           <input 
+                            id={`edit-qty-${item.productId}`}
                             type="number" min="1" value={item.requestedQty} 
                             onChange={e => handleEditUpdateQty(idx, e.target.value)} 
                             className="w-full px-2 py-1.5 text-center font-black text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 

@@ -12,7 +12,7 @@ interface CreateOSModuleProps {
   API_BASE_URL: string;
   onBack: () => void;
   onViewLedger?: () => void;
-  setActiveTab?: (tab: string) => void; // NEW PROP for the O.S. Records button
+  setActiveTab?: (tab: string) => void;
   initialCustomerId?: string | null;
 }
 
@@ -32,11 +32,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  
+  // Customer Keyboard Navigation
+  const [customerHighlightedIndex, setCustomerHighlightedIndex] = useState(-1);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
+  
+  // Product Keyboard Navigation
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -126,6 +132,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   }, [highlightedIndex]);
 
+  useEffect(() => {
+    if (customerHighlightedIndex >= 0 && customerDropdownRef.current) {
+      const activeElement = customerDropdownRef.current.children[customerHighlightedIndex] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [customerHighlightedIndex]);
+
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.toLowerCase();
     return customers.filter(c => 
@@ -141,6 +156,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setSelectedCustomer(c);
     setCustomerSearch(c.name);
     setShowCustomerDropdown(false);
+  };
+
+  const handleCustomerKeyDown = (e: React.KeyboardEvent) => {
+    if (!showCustomerDropdown || filteredCustomers.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setCustomerHighlightedIndex(prev => (prev < filteredCustomers.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) {
+        handleSelectCustomer(filteredCustomers[customerHighlightedIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      setShowCustomerDropdown(false);
+      setCustomerHighlightedIndex(-1);
+    }
   };
 
   const handleAddProduct = (p: SearchedProduct) => {
@@ -165,6 +200,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setShowProductDropdown(false);
     setProductSearchResults([]);
     setHighlightedIndex(-1);
+
+    // Auto-focus and auto-select the quantity input so they can instantly type
+    setTimeout(() => {
+      const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 50);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -317,15 +361,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       )}
 
       {/* HEADER WITH NEW BUTTON */}
-      {/* HEADER WITH NEW BUTTON */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
           
-          {/* O.S. Records Button - Now forced to always show! */}
          <button 
             onClick={() => {
-              console.log("O.S. Records clicked!");
               if (onViewLedger) {
                 onViewLedger();
               } else if (setActiveTab) {
@@ -357,20 +398,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                     type="text" 
                     placeholder="search customer..." 
                     value={customerSearch}
-                    onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); }}
+                    onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); setCustomerHighlightedIndex(-1); }}
                     onFocus={() => setShowCustomerDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                    onKeyDown={handleCustomerKeyDown}
                     className="w-full text-center py-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:uppercase placeholder:tracking-widest focus:bg-indigo-50/30 transition-colors"
                   />
                   {showCustomerDropdown && (
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
+                    <div ref={customerDropdownRef} className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
                       {filteredCustomers.length === 0 ? (
                         <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div>
                       ) : (
-                        filteredCustomers.map(c => (
-                          <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center group">
+                        filteredCustomers.map((c, i) => (
+                          <div 
+                            key={c.id} 
+                            onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} 
+                            onMouseEnter={() => setCustomerHighlightedIndex(i)}
+                            className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
+                          >
                             <div>
-                              <span className="font-bold text-slate-900 group-hover:text-indigo-700 block">{c.name}</span>
+                              <span className="font-bold text-slate-900 block">{c.name}</span>
                             </div>
                             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
                           </div>
@@ -425,7 +472,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   const effectiveWhseQty = item.selectedWarehouseName 
                     ? (item.warehouseBreakdown.find(wb => wb.name === item.selectedWarehouseName)?.quantity || 0)
                     : item.warehouseQty;
-                  const totalAvailable = item.officeStock + effectiveWhseQty;
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
@@ -466,10 +512,19 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                       <td className="border border-slate-300 p-0 bg-indigo-50/20 relative">
                         <input 
+                          id={`qty-input-${item.productId}`}
                           type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
                           className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
                         />
-                        {totalAvailable > 0 && reqQty > totalAvailable && <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - totalAvailable}</span>}
+                        {/* 
+                          UPDATED: The SHORT warning now STRICTLY compares the 
+                          requested quantity against the OFF QTY (item.officeStock) only.
+                        */}
+                        {item.officeStock !== undefined && reqQty > item.officeStock && (
+                          <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">
+                            Short {reqQty - item.officeStock}
+                          </span>
+                        )}
                       </td>
 
                       <td className="border border-slate-300 p-0 relative bg-white">
