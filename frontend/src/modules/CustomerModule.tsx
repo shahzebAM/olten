@@ -158,7 +158,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50">
         <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Customer Details</span></h2></div>
+          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise Bingo <span className="text-slate-400 font-medium">| Customer Details</span></h2></div>
           <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Exit Gateway</button>
         </header>
 
