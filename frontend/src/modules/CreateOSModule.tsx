@@ -35,7 +35,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [osNumber, setOsNumber] = useState<string>('');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
+  const [loadedOsStatus, setLoadedOsStatus] = useState<string>('Generated');
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
+  
+  // --- INVENTORY RECONCILIATION STATE ---
+  const [originalItems, setOriginalItems] = useState<{productId: number, requestedQty: number}[]>([]);
 
   // --- WORKFLOW STATES ---
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -181,13 +185,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setOsNumber(slip.osNumber);
     setReferenceOs(slip.osNumber);
     setIsVatApplied(slip.vatApplied || false);
+    setLoadedOsStatus(slip.status || 'Generated');
     
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
       setCustomerSearch(slip.customer.name);
     }
     
-    // STRICT NUMBER CASTING FIX
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
       productId: i.productId, sku: i.sku, productName: i.productName,
       requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
@@ -195,6 +199,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }));
     
     setDraftItems(mappedItems);
+    
+    // TRACE ORIGINAL QUANTITIES FOR INVENTORY RECONCILIATION
+    setOriginalItems(slip.items.map((i: any) => ({ productId: i.productId, requestedQty: Number(i.requestedQty) })));
+
     setShowLoadSlipDropdown(false);
     setLoadSlipSearch('');
     setLoadSlipHighlightedIndex(-1);
@@ -289,15 +297,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
 
-  // STRICT VALIDATION
-  const isFormValid = selectedCustomer && 
-    osNumber.trim() !== '' && 
-    draftItems.length > 0 && 
-    draftItems.every(i => {
-      const rq = Number(i.requestedQty);
-      const up = Number(i.unitPrice);
-      return !isNaN(rq) && rq > 0 && !isNaN(up) && up >= 0;
-    });
+  const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
@@ -308,7 +308,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to create Order Slip."); }
@@ -318,6 +318,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
       setLoadedOsId(null);
+      setLoadedOsStatus('Generated');
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
@@ -326,9 +327,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
+      // Logic: Only force 'Order Updated' status if it previously had stock deductions (Finalized)
+      const targetStatus = (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') ? 'Order Updated' : loadedOsStatus;
+
       const payload = {
         user: loginUsername,
-        status: 'Order Updated', // <--- Force status to Order Updated instantly
+        status: targetStatus,
         isVatApplied,
         vatRate,
         subtotal,
@@ -336,13 +340,49 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         grandTotal,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
+      
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
       const updatedOs = await res.json();
       
-      showToast("Order updated successfully.", "success");
-      setFinalizedOs(updatedOs); // This triggers the modal to pop up automatically
-      setFinalOrderGenerated(updatedOs.status === 'Finalized Order');
+      // --- CRITICAL STOCK RECONCILIATION ---
+      // We only execute stock adjustment math if the order previously deducted stock
+      if (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') {
+        const concurrentStockUpdates: any[] = [];
+        
+        // Grab unique product IDs across both the original saved items and the current drafted items
+        const allProductIds = Array.from(new Set([
+          ...originalItems.map(i => i.productId),
+          ...draftItems.map(i => i.productId)
+        ]));
+
+        allProductIds.forEach(productId => {
+          const oldItem = originalItems.find(i => i.productId === productId);
+          const newItem = draftItems.find(i => i.productId === productId);
+          
+          const oldQty = oldItem ? oldItem.requestedQty : 0;
+          const newQty = newItem ? Number(newItem.requestedQty) : 0;
+          
+          const qtyDifference = newQty - oldQty; 
+          
+          if (qtyDifference !== 0) {
+            const stockAdjustment = -qtyDifference; // If we increased order by 2, we deduct (-2) from stock
+            concurrentStockUpdates.push(
+              fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${productId}`, {
+                method: 'PATCH', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ officeStockAdjustment: stockAdjustment, quantity: stockAdjustment }) 
+              }).catch(err => console.warn(`Stock Adjust Fail for ID ${productId}:`, err))
+            );
+          }
+        });
+
+        await Promise.all(concurrentStockUpdates);
+      }
+
+      showToast("Order updated and stock reconciled successfully.", "success");
+      setFinalizedOs(updatedOs);
+      setFinalOrderGenerated(updatedOs.status === 'Finalized Order' || updatedOs.status === 'Order Updated');
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
@@ -394,7 +434,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null);
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
+    setOriginalItems([]); // Clear reconciled memory
     fetchNextOsNumber();
   };
 
@@ -456,7 +497,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
                         <span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span>
                       </div>
-                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' || slip.status === 'Order Updated' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
                     </div>
                   ))}
                 </div>
@@ -499,7 +540,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
@@ -536,7 +577,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <th className="border border-slate-300 py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">REQUESTED</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">UNIT PRICE</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">LINE TOTAL</th>
-                  {/* MOVED WHSE QTY COLUMN HERE TO THE FAR RIGHT */}
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-32">WHSE QTY</th>
                   <th className="border border-slate-300 py-3 px-3 w-10 text-center"></th>
                 </tr>
@@ -572,7 +612,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
 
-                      {/* WHSE QTY DATA ON THE FAR RIGHT */}
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
                           <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{effectiveWhseQty}</span>
@@ -701,7 +740,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                     </button>
                   </div>
                 ) : finalOrderGenerated ? (
-                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER {finalOrderNumber} LOGGED</span>
+                  <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ ORDER LOGGED & SECURED</span>
                 ) : null}
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
