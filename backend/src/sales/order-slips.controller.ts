@@ -5,25 +5,40 @@ import { PrismaClient, Prisma } from '@prisma/client';
 export class OrderSlipsController {
   private readonly prisma = new PrismaClient();
 
+  // --- NEW: CUSTOMER SEARCH ENDPOINT TO SUPPORT KEYBOARD NAV ---
+  @Get('search-customers')
+  async searchCustomers(@Query('company') company: string, @Query('q') q: string) {
+    if (!company || !q || q.length < 2) return [];
+
+    const searchString = q.toLowerCase();
+    const allCompanyCustomers = await this.prisma.customer.findMany({
+      where: { company },
+      select: { id: true, name: true, email: true, phone: true }
+    });
+
+    const customers = allCompanyCustomers.filter(c =>
+      (c.name && c.name.toLowerCase().includes(searchString))
+    ).slice(0, 15);
+
+    return customers;
+  }
+
   @Get('search-products')
   async searchProducts(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
 
-    // Force lower case search string to combat database collation issues
     const searchString = q.toLowerCase();
 
-    // 1. First fetch products for the company
     const allCompanyProducts = await this.prisma.product.findMany({
       where: { company },
       select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true }
     });
 
-    // 2. Perform the case-insensitive search in memory (100% reliable regardless of DB type)
     const products = allCompanyProducts.filter(p =>
       (p.name && p.name.toLowerCase().includes(searchString)) ||
       (p.sku && p.sku.toLowerCase().includes(searchString)) ||
       (p.category && p.category.toLowerCase().includes(searchString))
-    ).slice(0, 15); // limit to 15 results
+    ).slice(0, 15);
 
     if (products.length === 0) return [];
 
@@ -80,7 +95,6 @@ export class OrderSlipsController {
     return stockMap;
   }
 
-  // --- PHASE 7: FETCH PENDING SHORTAGES ---
   @Get('shortages/all')
   async getShortages(@Query('company') company: string) {
      if (!company) throw new BadRequestException("Company is required");
@@ -91,7 +105,6 @@ export class OrderSlipsController {
      });
   }
 
-  // --- PHASE 7: UPDATE SHORTAGE STATUS ---
   @Patch('shortages/:id/status')
   async updateShortageStatus(@Param('id') id: string, @Body() body: any) {
      return await this.prisma.shortage.update({
@@ -180,7 +193,6 @@ export class OrderSlipsController {
             create: cleanItems
           }
         },
-        // Include product stock so frontend warnings work immediately upon return
         include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
       });
 
@@ -235,7 +247,6 @@ export class OrderSlipsController {
         where: whereClause,
         include: { 
           customer: { select: { name: true, id: true } }, 
-          // Inject the product current stock to support the frontend visual cues
           items: { include: { product: { select: { currentStock: true } } } } 
         },
         orderBy: { createdAt: 'desc' },
@@ -245,7 +256,6 @@ export class OrderSlipsController {
       this.prisma.orderSlip.count({ where: whereClause })
     ]);
 
-    // Map the database response to match the frontend expectations perfectly
     const formattedData = data.map((os: any) => ({
       ...os,
       items: os.items.map((i: any) => ({
@@ -274,7 +284,6 @@ export class OrderSlipsController {
     };
   }
 
-  // --- PHASE 7: PROCESS ORDER SLIP (Physical Validation) ---
   @Patch(':id/process')
   async processOrderSlip(@Param('id') id: string, @Body() body: any) {
     const { items, user } = body; 
@@ -294,13 +303,11 @@ export class OrderSlipsController {
 
         if (shortageQty > 0) hasShortage = true;
 
-        // 1. Update OS Item with physical verification data
         await tx.orderSlipItem.update({
           where: { id: osItem.id },
           data: { confirmedQty: physicalQty, shortageQty }
         });
 
-        // 2. Create Shortage Record if missing stock
         if (shortageQty > 0) {
           await tx.shortage.create({
             data: {
@@ -321,7 +328,6 @@ export class OrderSlipsController {
         }
       }
 
-      // 3. Update overall OS Status
       await tx.orderSlip.update({
         where: { id },
         data: { 
@@ -334,10 +340,11 @@ export class OrderSlipsController {
     });
   }
 
-  // --- ADVANCED EDIT ACTION (Modify Status, Items, and VAT) ---
   @Patch(':id')
   async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
-    const { status, user, items, isVatApplied, vatRate = 0.12 } = data;
+    // --- ADDED customerId extraction to support frontend customer editing ---
+    const { status, user, items, isVatApplied, vatRate = 0.12, customerId } = data;
+    
     const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Order Slip not found.');
     if (existing.status === 'Cancelled') throw new BadRequestException('Cannot modify a cancelled Order Slip.');
@@ -382,6 +389,7 @@ export class OrderSlipsController {
           where: { id },
           data: { 
             status: status || existing.status, 
+            customerId: customerId || existing.customerId, // Saves new customer
             updatedBy: user,
             subtotal: calculatedSubtotal,
             vatApplied: applyVat,
@@ -400,7 +408,11 @@ export class OrderSlipsController {
 
       const updatedStatusOs = await tx.orderSlip.update({
         where: { id },
-        data: { status, updatedBy: user },
+        data: { 
+          status, 
+          customerId: customerId || existing.customerId, // Saves new customer
+          updatedBy: user 
+        },
         include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
       });
 
