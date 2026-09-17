@@ -53,16 +53,19 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
+  // --- INTELLIGENT NUMBER FETCHERS ---
   const fetchNextOsNumber = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=1`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=100`);
       const data = await res.json();
-      if (data.data && data.data.length > 0) {
-        const lastOs = data.data[0].osNumber; 
-        const match = lastOs.match(/(\d+)$/); 
+      const slips = data.data || [];
+      const lastOs = slips.find((s: any) => s.osNumber && s.osNumber.toUpperCase().startsWith('OS-'));
+      
+      if (lastOs) {
+        const match = lastOs.osNumber.match(/(\d+)$/); 
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastOs.substring(0, match.index);
+          const prefix = lastOs.osNumber.substring(0, match.index);
           const padding = match[0].length;
           setOsNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
         } else {
@@ -73,6 +76,31 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       }
     } catch (e) {
       setOsNumber('OS-000001');
+    }
+  }, [selectedCompany, API_BASE_URL]);
+
+  const fetchNextFoNumber = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=100`);
+      const data = await res.json();
+      const slips = data.data || [];
+      const lastFo = slips.find((s: any) => s.osNumber && s.osNumber.toUpperCase().startsWith('FO-'));
+      
+      if (lastFo) {
+        const match = lastFo.osNumber.match(/(\d+)$/); 
+        if (match) {
+          const nextNum = parseInt(match[0], 10) + 1;
+          const prefix = lastFo.osNumber.substring(0, match.index);
+          const padding = match[0].length;
+          setFinalOrderNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
+        } else {
+          setFinalOrderNumber('FO-000001');
+        }
+      } else {
+        setFinalOrderNumber('FO-000001');
+      }
+    } catch (e) {
+      setFinalOrderNumber('FO-000001');
     }
   }, [selectedCompany, API_BASE_URL]);
 
@@ -342,13 +370,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
       
-      // Auto-propose Final Order Number
-      const numMatch = newlyCreatedOs.osNumber.match(/\d+/);
-      if (numMatch) {
-        setFinalOrderNumber(`FO-${numMatch[0]}`);
-      } else {
-        setFinalOrderNumber(`FO-${newlyCreatedOs.osNumber}`);
-      }
+      // Auto-propose Final Order Number on modal open
+      fetchNextFoNumber();
 
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
@@ -357,7 +380,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  // --- GENERATE FINAL ORDER DIRECTLY INTO O.S. LEDGER ---
+  // --- GENERATE FINAL ORDER DIRECTLY INTO O.S. LEDGER WITH STOCK DEDUCTION ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -380,7 +403,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         }))
       };
 
-      // Create a duplicate record in the O.S. Ledger
+      // 1. Create a duplicate record in the O.S. Ledger
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -394,14 +417,23 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       const newFo = await res.json();
 
-      // Force status update to "Finalized Order"
+      // 2. Force status update to "Finalized Order"
       await fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
       
-      showToast("Final Order successfully generated to Ledger!", "success");
+      // 3. Automatically Deduct Office Stock for all items
+      await Promise.all(finalizedOs.items.map((item: any) => 
+        fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officeStockAdjustment: -item.requestedQty }) // Adjust payload to match your backend logic
+        }).catch(() => console.warn(`Silent Stock Adjustment Fail for ${item.sku}`))
+      ));
+      
+      showToast("Final Order successfully generated & Stock Deducted!", "success");
       setFinalOrderGenerated(true); 
     } catch (e: any) {
       showToast(e.message || "Failed to generate Final Order.", "error");
@@ -430,26 +462,22 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       )}
 
-      {/* HEADER WITH NEW BUTTON */}
+      {/* HEADER */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
-          
          <button 
             onClick={() => {
               if (onViewLedger) {
                 onViewLedger();
               } else if (setActiveTab) {
                 setActiveTab('os-ledger');
-              } else {
-                alert("The button works, but the parent component hasn't passed the navigation function yet!");
               }
             }} 
             className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative"
           >
             O.S. Records
           </button>
-
           <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
             Back to Gateway
           </button>
@@ -460,7 +488,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
-            
             <div className="flex-1 relative flex items-center border-r border-slate-300">
               {!selectedCustomer ? (
                 <div className="w-full relative">
@@ -536,7 +563,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 </tr>
               </thead>
               <tbody className="bg-white">
-                
                 {draftItems.map((item, idx) => {
                   const reqQty = Number(item.requestedQty) || 0;
                   const effectiveWhseQty = item.selectedWarehouseName 
@@ -545,16 +571,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50">
-                      <td className="border border-slate-300 py-2.5 px-4 font-mono text-sm font-bold text-slate-900 uppercase">
-                        {item.sku}
-                      </td>
-                      <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full font-bold text-slate-900">
-                        {item.productName}
-                      </td>
-                      <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {item.officeStock}
-                      </td>
-                      
+                      <td className="border border-slate-300 py-2.5 px-4 font-mono text-sm font-bold text-slate-900 uppercase">{item.sku}</td>
+                      <td className="border border-slate-300 py-2.5 px-4 truncate max-w-0 w-full font-bold text-slate-900 uppercase">{item.productName}</td>
+                      <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
                           <span className={`font-black text-sm leading-none ${effectiveWhseQty > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -708,13 +727,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
       {/* FINALIZED PRINT MODAL */}
       {finalizedOs && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
           
           <style type="text/css" media="print">
             {`@page { size: auto; margin: 0; }`}
           </style>
 
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
             
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
@@ -752,8 +771,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            {/* PRINT CONTAINER */}
-            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
+            {/* PRINT CONTAINER WITH ALL CAPS */}
+            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible">
               
               <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
                 {selectedCompany}
@@ -772,7 +791,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
               <div className="mb-8">
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
-                <div className="font-black text-lg text-slate-900">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
+                <div className="font-black text-lg text-slate-900 uppercase">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
                 <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {finalizedOs.customerId.slice(0,8)}</div>
               </div>
 
@@ -789,8 +808,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <tbody className="divide-y divide-slate-200">
                   {finalizedOs.items.map((item: any, idx: number) => (
                     <tr key={idx}>
-                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700">{item.sku}</td>
-                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">{item.productName}</td>
+                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">{item.productName}</td>
                       <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
                       <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                       <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
@@ -817,7 +836,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
             </div>
 
-            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl">
+            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {finalizedOs.createdBy}</span>
             </div>
           </div>

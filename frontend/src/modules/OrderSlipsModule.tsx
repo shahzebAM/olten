@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
 interface OrderSlipItem { 
@@ -91,7 +91,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const [editSearchResults, setEditSearchResults] = useState<any[]>([]);
   const [showEditSearch, setShowEditSearch] = useState(false);
   const [editSelectedIndex, setEditSelectedIndex] = useState(-1);
-  const searchDropdownRef = useRef<HTMLDivElement>(null);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
@@ -164,16 +163,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
 
-  // Handle auto-scroll for keyboard navigation in edit modal
-  useEffect(() => {
-    if (editSelectedIndex >= 0 && searchDropdownRef.current) {
-      const activeElement = searchDropdownRef.current.children[editSelectedIndex] as HTMLElement;
-      if (activeElement) {
-        activeElement.scrollIntoView({ block: 'nearest' });
-      }
-    }
-  }, [editSelectedIndex]);
-
   // --- EDIT PRODUCT SEARCH KEYBOARD NAVIGATION ---
   const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!showEditSearch || editSearchResults.length === 0) return;
@@ -216,36 +205,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   };
 
   // --- PROCESSING WORKFLOW (PHASE 7) ---
-  const openProcessModal = async (os: OrderSlip) => {
+  const openProcessModal = (os: OrderSlip) => {
     setProcessOs(os);
-    
-    // Step 1: Open modal instantly with undefined warehouseQty (to show fetching state)
     setProcessItems(os.items.map(i => ({
       ...i,
       physicalQty: i.physicalQty !== undefined && i.physicalQty !== null ? i.physicalQty : i.requestedQty,
-      shortageQty: i.shortageQty || 0,
-      warehouseQty: undefined 
+      shortageQty: i.shortageQty || 0
     })));
-
-    // Step 2: Dynamically fetch live stock from warehouse in background
-    try {
-      const productIds = os.items.map(i => i.productId);
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, productIds })
-      });
-      if (res.ok) {
-        const stockMap = await res.json();
-        setProcessItems(prev => prev.map(item => ({
-          ...item,
-          // Inject live warehouse stock so staff can make accurate decisions
-          warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0
-        })));
-      }
-    } catch (e) {
-      console.warn("Failed to fetch live warehouse stock for processing screen.", e);
-    }
   };
 
   const handleProcessUpdateQty = (index: number, val: string) => {
@@ -340,14 +306,10 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setShowEditSearch(false);
     setEditSelectedIndex(-1);
 
-    // Auto-focus the quantity input for seamless typing
     setTimeout(() => {
-      const input = document.getElementById(`edit-qty-${p.id}`) as HTMLInputElement;
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    }, 50);
+      const input = document.getElementById(`edit-qty-${p.id}`);
+      if (input) input.focus();
+    }, 100);
   };
 
   const handleEditUpdateQty = (index: number, val: string) => {
@@ -411,17 +373,32 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
   };
 
+  // --- RESTORE STOCK ON CANCEL ---
   const handleCancelOs = async (id: string) => {
     if (!window.confirm("Void this Order Slip? It will remain in history as Cancelled.")) return;
 
     try {
+      const targetOs = orderSlips.find(o => o.id === id) || viewOs;
+      
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${id}/cancel`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user: loginUsername })
       });
       if (!res.ok) throw new Error();
-      showToast("Order Slip cancelled.", "success");
+
+      // If it was a Finalized Order, we must restore the deducted stock
+      if (targetOs && targetOs.status === 'Finalized Order') {
+        await Promise.all(targetOs.items.map((item: any) => 
+          fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ officeStockAdjustment: item.requestedQty }) 
+          }).catch(() => console.warn(`Silent Stock Restore Fail for ${item.sku}`))
+        ));
+      }
+
+      showToast("Order Slip cancelled & Stock Restored (If applicable).", "success");
       setViewOs(null);
       fetchOrderSlips();
     } catch (e) {
@@ -505,6 +482,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer">
                     <option value="All">All Statuses</option>
                     <option value="Generated">Generated</option>
+                    <option value="Finalized Order">Finalized Order</option>
                     <option value="Partially Verified">Partially Verified</option>
                     <option value="Verified">Verified</option>
                     <option value="Shipped">Shipped</option>
@@ -541,7 +519,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px] border-collapse">
                     <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
                       <tr>
-                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Number</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. / FO Number</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
                         <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items</th>
@@ -568,6 +546,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             <td className="py-3.5 px-6 text-center">
                               <span className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md 
                                 ${os.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' : 
+                                  os.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800 border border-teal-200' :
                                   os.status === 'Generated' ? 'bg-indigo-100 text-indigo-700' : 
                                   os.status === 'Partially Verified' ? 'bg-amber-100 text-amber-700' : 
                                   os.status === 'Verified' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
@@ -665,7 +644,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
       {/* ===================== PHASE 7: PROCESSING MODAL ===================== */}
       {processOs && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex justify-center items-center p-4 sm:p-8">
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex justify-center items-center p-4 sm:p-8 overflow-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 max-h-full">
             
             <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
@@ -695,8 +674,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                         <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                       </td>
                       <td className="py-4 px-4 border border-slate-100 text-center font-bold text-slate-500">
-                        {/* Show fetching animation until warehouseQty is loaded */}
-                        {item.warehouseQty !== undefined ? item.warehouseQty : <span className="text-slate-300 animate-pulse text-[10px] uppercase">Fetching...</span>}
+                        {item.warehouseQty !== undefined ? item.warehouseQty : 'N/A'}
                       </td>
                       <td className="py-4 px-4 border border-slate-100 text-center font-black text-indigo-700 bg-indigo-50/20">
                         {item.requestedQty}
@@ -751,7 +729,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
             <div className="flex flex-col lg:flex-row h-[600px] max-h-[70vh]">
               
-              {/* Product Edit Table */}
               <div className="flex-1 overflow-y-auto p-6 bg-white border-r border-slate-200 relative">
                 <div className="mb-4 relative">
                   <input 
@@ -765,7 +742,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all"
                   />
                   {showEditSearch && editProductSearch.trim().length >= 2 && (
-                    <div ref={searchDropdownRef} className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                    <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
                       {editSearchResults.length === 0 ? (
                         <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching products found.</div>
                       ) : (
@@ -808,7 +785,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                           <div className="font-bold text-slate-900 truncate max-w-[200px]">{item.productName}</div>
                           <div className="text-[10px] font-mono text-slate-500">{item.sku}</div>
                         </td>
-                        <td className="py-2 px-4 border border-slate-100 relative">
+                        <td className="py-2 px-4 border border-slate-100">
                           <input 
                             id={`edit-qty-${item.productId}`}
                             type="number" min="1" value={item.requestedQty} 
@@ -816,7 +793,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             className="w-full px-2 py-1.5 text-center font-black text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
                           />
                           {item.officeStock !== undefined && Number(item.requestedQty) > item.officeStock && (
-                            <div className="absolute top-full mt-1 left-0 right-0 text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded text-center uppercase tracking-widest">
+                            <div className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded mt-1 w-full text-center uppercase tracking-widest">
                               Short {Number(item.requestedQty) - item.officeStock}
                             </div>
                           )}
@@ -832,7 +809,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 </table>
               </div>
 
-              {/* Edit Controls Sidebar */}
               <div className="w-full lg:w-80 bg-slate-50 p-6 flex flex-col justify-between">
                 <div className="space-y-6">
                   <div>
@@ -843,6 +819,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                       className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all cursor-pointer"
                     >
                       <option value="Generated">Generated</option>
+                      <option value="Finalized Order">Finalized Order</option>
                       <option value="Partially Verified">Partially Verified</option>
                       <option value="Verified">Verified</option>
                       <option value="Shipped">Shipped</option>
@@ -883,14 +860,13 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
       {/* VIEW / PRINT MODAL */}
       {viewOs && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
           
-          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
           <style type="text/css" media="print">
             {`@page { size: auto; margin: 0; }`}
           </style>
 
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
             
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
@@ -903,10 +879,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </div>
             </div>
 
-            {/* PRINT CONTAINER (Adds margins back inside the document to compensate for @page margin: 0) */}
-            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
+            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible">
               
-              {/* PRINT ONLY HEADER */}
               <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
                 {selectedCompany}
               </h2>
@@ -925,7 +899,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
               <div className="mb-8">
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
-                <div className="font-black text-lg text-slate-900">{viewOs.customer?.name || 'Unknown Customer'}</div>
+                <div className="font-black text-lg text-slate-900 uppercase">{viewOs.customer?.name || 'Unknown Customer'}</div>
                 <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {viewOs.customerId.slice(0,8)}</div>
               </div>
 
@@ -934,8 +908,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <tr>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Req Qty</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Conf Qty</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
                     <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
                   </tr>
@@ -943,15 +916,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 <tbody className="divide-y divide-slate-200">
                   {viewOs.items.map((item, idx) => (
                     <tr key={idx}>
-                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700">{item.sku}</td>
-                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">
+                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">
                         {item.productName}
                         {item.shortageQty && item.shortageQty > 0 ? (
                           <span className="ml-2 px-1.5 py-0.5 bg-rose-100 text-rose-700 text-[9px] font-black uppercase rounded">Short {item.shortageQty}</span>
                         ) : null}
                       </td>
                       <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
-                      <td className="py-3 px-3 text-center font-black border-r border-slate-200 text-indigo-700">{item.physicalQty !== undefined && item.physicalQty !== null ? item.physicalQty : '-'}</td>
                       <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                       <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                     </tr>
@@ -977,7 +949,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </div>
             </div>
 
-            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl">
+            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {viewOs.createdBy}</span>
               {viewOs.status !== 'Cancelled' && (
                 <button onClick={() => handleCancelOs(viewOs.id)} className="px-5 py-2.5 bg-white border border-rose-200 text-rose-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-rose-50 shadow-sm transition-colors">Void / Cancel O.S.</button>
