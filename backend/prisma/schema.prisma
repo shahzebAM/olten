@@ -297,7 +297,7 @@ model Shortage {
   orderSlipItemId     String?
   customerId          String?
   osNumber            String?
-
+ 
   // 2. RELATION FIELDS (Made Optional)
   orderSlip           OrderSlip?      @relation(fields: [orderSlipId], references: [id], onDelete: Cascade)
   orderSlipItem       OrderSlipItem?  @relation(fields: [orderSlipItemId], references: [id], onDelete: Cascade)
