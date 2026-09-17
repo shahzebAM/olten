@@ -1,0 +1,140 @@
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException } from '@nestjs/common';
+import { PrismaClient, Prisma } from '@prisma/client';
+
+@Controller('procurement/purchase-orders')
+export class PurchaseOrdersController {
+  private readonly prisma = new PrismaClient();
+
+  @Post()
+  async createPurchaseOrder(@Body() data: any) {
+    const { company, items, isVatApplied, vatRate = 0.12, user, osReference } = data;
+
+    if (!company || !items || items.length === 0) {
+      throw new BadRequestException('Missing required fields.');
+    }
+
+    return await this.prisma.$transaction(async (tx) => {
+      let calculatedSubtotal = 0;
+      const cleanItems = items.map((item: any) => {
+        const lineTotal = Math.round((Number(item.requestedQty) * Number(item.unitCost)) * 100) / 100;
+        calculatedSubtotal += lineTotal;
+        return {
+          productId: Number(item.productId),
+          sku: item.sku,
+          productName: item.productName,
+          requestedQty: Number(item.requestedQty),
+          unitCost: Number(item.unitCost),
+          lineTotal
+        };
+      });
+
+      // Auto-increment PO Number
+      const lastPo = await tx.purchaseOrder.findFirst({
+        where: { company },
+        orderBy: { poNumber: 'desc' }
+      });
+
+      let nextNum = 1;
+      if (lastPo && lastPo.poNumber.startsWith('PO-')) {
+        const lastNum = parseInt(lastPo.poNumber.replace('PO-', ''), 10);
+        if (!isNaN(lastNum)) nextNum = lastNum + 1;
+      }
+      const poNumber = `PO-${String(nextNum).padStart(6, '0')}`;
+
+      calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
+      const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
+      const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+
+      return await tx.purchaseOrder.create({
+        data: {
+          poNumber, company, osReference, status: 'Generated', 
+          subtotal: calculatedSubtotal, vatApplied: isVatApplied,
+          vatRate: Number(vatRate), vatAmount: calculatedVat, grandTotal: calculatedGrandTotal,
+          createdBy: user,
+          items: { create: cleanItems }
+        },
+        include: { items: true }
+      });
+    });
+  }
+
+  @Get()
+  async listPurchaseOrders(@Query('company') company: string) {
+    if (!company) throw new BadRequestException('Company is required.');
+    return await this.prisma.purchaseOrder.findMany({
+      where: { company },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  @Post(':id/receive')
+  async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
+    const { user, verifications } = data; 
+    return await this.prisma.$transaction(async (tx) => {
+      const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
+      if (!po) throw new NotFoundException('P.O. not found.');
+      if (po.status === 'Cancelled') throw new BadRequestException('Cannot receive a cancelled P.O.');
+
+      let hasShortage = false;
+
+      for (const v of verifications) {
+        const item = po.items.find(i => i.id === v.itemId);
+        if (!item) continue;
+
+        const requested = item.requestedQty;
+        const confirmed = Math.max(0, Number(v.confirmedQty) || 0);
+        const shortage = Math.max(0, requested - confirmed);
+
+        await tx.purchaseOrderItem.update({
+          where: { id: item.id },
+          data: { confirmedQty: confirmed, shortageQty: shortage }
+        });
+
+        if (shortage > 0) {
+          hasShortage = true;
+          await tx.shortage.create({
+            data: {
+              company: po.company,
+              poNumber: po.poNumber,
+              purchaseOrderId: po.id,
+              purchaseOrderItemId: item.id,
+              sku: item.sku,
+              productName: item.productName,
+              requestedQty: requested,
+              confirmedQty: confirmed,
+              shortageQty: shortage,
+              status: 'Pending Purchase', // Default for P.O. shortages
+              createdBy: user
+            }
+          });
+        }
+      }
+
+      const newStatus = hasShortage ? 'Partially Received' : 'Received';
+      return await tx.purchaseOrder.update({
+        where: { id },
+        data: { status: newStatus, updatedBy: user, receivedAt: new Date() },
+        include: { items: true }
+      });
+    });
+  }
+
+  @Delete(':id/cancel')
+  async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
+    return this.prisma.$transaction(async tx => {
+      const existing = await tx.purchaseOrder.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('P.O. not found.');
+      await tx.shortage.updateMany({
+        where: { purchaseOrderId: id, status: { notIn: ['Fulfilled', 'Cancelled'] } },
+        data: { status: 'Cancelled', updatedBy: user },
+      });
+      return tx.purchaseOrder.update({ where: { id }, data: { status: 'Cancelled', updatedBy: user } });
+    });
+  }
+
+  @Delete(':id')
+  async hardDeletePurchaseOrder(@Param('id') id: string) {
+    return this.prisma.purchaseOrder.delete({ where: { id } });
+  }
+}

@@ -302,4 +302,44 @@ model Shortage {
 
   @@index([company])
   @@index([orderSlipId])
+
+  poNumber             String?
+  purchaseOrderId      String?
+  purchaseOrderItemId  String?
 }
+
+model PurchaseOrder {
+  id          String   @id @default(uuid())
+  poNumber    String   @unique
+  company     String
+  status      String   // Generated, Partially Received, Received, Cancelled
+  subtotal    Float
+  vatApplied  Boolean  @default(false)
+  vatRate     Float    @default(0.12)
+  vatAmount   Float    @default(0)
+  grandTotal  Float
+  createdBy   String
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  receivedAt  DateTime?
+  osReference String?  // Links directly to the OS it was generated from
+
+  items       PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              String @id @default(uuid())
+  purchaseOrderId String
+  productId       Int
+  sku             String
+  productName     String
+  requestedQty    Int
+  confirmedQty    Int?
+  shortageQty     Int?
+  unitCost        Float
+  lineTotal       Float
+
+  po PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+}
+
+// NOTE: Add these 3 lines inside your EXISTING Shortage model:
