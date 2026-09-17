@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface OrderSlipItem { id: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number; lineTotal: number; physicalQty?: number; shortageQty?: number; warehouseQty?: number; }
+interface OrderSlipItem { 
+  id: string; 
+  productId: number; 
+  sku: string; 
+  productName: string; 
+  requestedQty: number | ''; 
+  unitPrice: number; 
+  lineTotal: number; 
+  physicalQty?: number; 
+  shortageQty?: number; 
+  warehouseQty?: number; 
+  officeStock?: number; 
+}
 interface Customer { id: string; name: string; }
 interface OrderSlip {
   id: string;
@@ -78,6 +90,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const [editProductSearch, setEditProductSearch] = useState('');
   const [editSearchResults, setEditSearchResults] = useState<any[]>([]);
   const [showEditSearch, setShowEditSearch] = useState(false);
+  const [editSelectedIndex, setEditSelectedIndex] = useState(-1);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
@@ -117,7 +130,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   // --- FETCH SHORTAGES ---
   const fetchShortages = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/all?company=${encodeURIComponent(selectedCompany)}`);
       if (res.ok) {
         const data = await res.json();
         setShortages(data);
@@ -132,19 +145,44 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     if (activeMainTab === 'shortages') fetchShortages();
   }, [fetchOrderSlips, fetchShortages, activeMainTab]);
 
+  // --- EDIT PRODUCT SEARCH DEBOUNCE ---
   useEffect(() => {
     if (editProductSearch.trim().length < 2) {
       setEditSearchResults([]);
+      setEditSelectedIndex(-1);
       return;
     }
     const handler = setTimeout(async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${encodeURIComponent(selectedCompany)}&q=${encodeURIComponent(editProductSearch)}`);
-        if (res.ok) setEditSearchResults(await res.json());
+        if (res.ok) {
+          setEditSearchResults(await res.json());
+          setEditSelectedIndex(-1);
+        }
       } catch (e) { console.warn(e); }
     }, 400);
     return () => clearTimeout(handler);
   }, [editProductSearch, selectedCompany, API_BASE_URL]);
+
+  // --- EDIT PRODUCT SEARCH KEYBOARD NAVIGATION ---
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showEditSearch || editSearchResults.length === 0) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setEditSelectedIndex(prev => (prev < editSearchResults.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setEditSelectedIndex(prev => (prev > 0 ? prev - 1 : -1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (editSelectedIndex >= 0 && editSelectedIndex < editSearchResults.length) {
+        handleAddEditProduct(editSearchResults[editSelectedIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      setShowEditSearch(false);
+    }
+  };
 
   const applyQuickDate = (type: 'today' | 'week' | 'month' | 'clear') => {
     const now = new Date();
@@ -229,7 +267,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const handleShortageStatusChange = async (shortageId: string, newStatus: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/shortages/${shortageId}/status`, {
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/shortages/${shortageId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -262,10 +300,12 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       productName: p.name,
       requestedQty: 1,
       unitPrice: p.sellingPrice || 0,
-      lineTotal: p.sellingPrice || 0
+      lineTotal: p.sellingPrice || 0,
+      officeStock: p.officeStock || 0
     }]);
     setEditProductSearch('');
     setShowEditSearch(false);
+    setEditSelectedIndex(-1);
   };
 
   const handleEditUpdateQty = (index: number, val: string) => {
@@ -366,13 +406,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       
+      {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
 
-      {/* GLOBAL HEADER */}
+     {/* GLOBAL HEADER */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| O.S. Management</span></h2></div>
         <div className="flex gap-3">
@@ -676,6 +717,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     value={editProductSearch}
                     onChange={e => { setEditProductSearch(e.target.value); setShowEditSearch(true); }}
                     onFocus={() => setShowEditSearch(true)}
+                    onKeyDown={handleEditKeyDown}
                     onBlur={() => setTimeout(() => setShowEditSearch(false), 200)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all"
                   />
@@ -684,11 +726,19 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                       {editSearchResults.length === 0 ? (
                         <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching products found.</div>
                       ) : (
-                        editSearchResults.map(p => (
-                          <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddEditProduct(p); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center">
+                        editSearchResults.map((p, idx) => (
+                          <div 
+                            key={p.id} 
+                            onMouseDown={(e) => { e.preventDefault(); handleAddEditProduct(p); }} 
+                            onMouseEnter={() => setEditSelectedIndex(idx)}
+                            className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${editSelectedIndex === idx ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
+                          >
                             <div>
                               <span className="font-bold text-slate-900">{p.name}</span>
-                              <span className="text-[10px] font-mono text-slate-400 block mt-0.5">{p.sku}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Stock: {p.officeStock || 0}</span>
+                              </div>
                             </div>
                             <span className="font-black text-indigo-700">₱{(p.sellingPrice || 0).toLocaleString()}</span>
                           </div>
@@ -721,6 +771,11 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                             onChange={e => handleEditUpdateQty(idx, e.target.value)} 
                             className="w-full px-2 py-1.5 text-center font-black text-indigo-700 bg-white border-2 border-indigo-200 rounded outline-none focus:border-indigo-500 shadow-sm" 
                           />
+                          {item.officeStock !== undefined && Number(item.requestedQty) > item.officeStock && (
+                            <div className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded mt-1 w-full text-center uppercase tracking-widest">
+                              Short {Number(item.requestedQty) - item.officeStock}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-right font-bold text-slate-700 border border-slate-100 font-mono">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                         <td className="py-3 px-4 text-right font-black text-slate-900 border border-slate-100 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
@@ -786,6 +841,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       {viewOs && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
           
+          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
           <style type="text/css" media="print">
             {`@page { size: auto; margin: 0; }`}
           </style>
@@ -803,8 +859,10 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </div>
             </div>
 
+            {/* PRINT CONTAINER (Adds margins back inside the document to compensate for @page margin: 0) */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
               
+              {/* PRINT ONLY HEADER */}
               <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
                 {selectedCompany}
               </h2>
