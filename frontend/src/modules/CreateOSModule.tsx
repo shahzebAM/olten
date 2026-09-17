@@ -28,6 +28,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   // Editable OS Number
   const [osNumber, setOsNumber] = useState<string>('');
 
+  // NEW: State to hold the successfully finalized Order Slip for printing
+  const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
+
   // --- WORKFLOW STATES ---
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
@@ -337,14 +340,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         throw new Error(errorData.message || "Failed to create Order Slip.");
       }
 
+      const newlyCreatedOs = await res.json();
       showToast("Order Slip generated successfully.", "success");
-      setDraftItems([]);
-      setSelectedCustomer(null);
-      setCustomerSearch('');
-      setIsVatApplied(false);
       
-      fetchNextOsNumber();
-      
+      // Instead of clearing the form immediately, pop open the Print Modal
+      setFinalizedOs(newlyCreatedOs);
+
     } catch (e: any) {
       showToast(e.message || "Network error. Please try again.", "error");
     } finally {
@@ -352,16 +353,28 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // Called when the user clicks "Close & Start New" on the Print Modal
+  const handleClosePrintModal = () => {
+    setFinalizedOs(null);
+    setDraftItems([]);
+    setSelectedCustomer(null);
+    setCustomerSearch('');
+    setIsVatApplied(false);
+    fetchNextOsNumber();
+  };
+
+  const handlePrint = () => window.print();
+
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'} print:hidden`}>
           {toast.message}
         </div>
       )}
 
       {/* HEADER WITH NEW BUTTON */}
-      <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20">
+      <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
           
@@ -386,7 +399,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden">
+      <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden print:hidden">
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
@@ -516,10 +529,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                           type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
                           className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
                         />
-                        {/* 
-                          UPDATED: The SHORT warning now STRICTLY compares the 
-                          requested quantity against the OFF QTY (item.officeStock) only.
-                        */}
+                        {/* THE SHORT WARNING STRICTLY AGAINST OFFICE STOCK */}
                         {item.officeStock !== undefined && reqQty > item.officeStock && (
                           <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">
                             Short {reqQty - item.officeStock}
@@ -639,6 +649,104 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
         </div>
       </main>
+
+      {/* FINALIZED PRINT MODAL */}
+      {finalizedOs && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-y-auto print:p-0 print:bg-white print:block">
+          
+          {/* MAGIC PRINT STYLE - FORCES BROWSER TO HIDE URLS/HEADERS */}
+          <style type="text/css" media="print">
+            {`@page { size: auto; margin: 0; }`}
+          </style>
+
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col">
+            
+            <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
+              <div>
+                <h3 className="text-xl font-black text-emerald-900 tracking-tight">O.S. Generated Successfully!</h3>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
+                  Print O.S.
+                </button>
+                <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">
+                  Close & Start New
+                </button>
+              </div>
+            </div>
+
+            {/* PRINT CONTAINER */}
+            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1">
+              
+              <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">
+                {selectedCompany}
+              </h2>
+
+              <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
+                <div>
+                  <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
+                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Order Slip</p>
+                </div>
+                <div className="text-right">
+                  <h2 className="text-2xl font-mono font-black text-indigo-700">{finalizedOs.osNumber}</h2>
+                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
+                <div className="font-black text-lg text-slate-900">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
+                <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {finalizedOs.customerId.slice(0,8)}</div>
+              </div>
+
+              <table className="w-full text-left text-sm mb-12 border-collapse">
+                <thead className="border-y-2 border-slate-900 bg-slate-50/50">
+                  <tr>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
+                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {finalizedOs.items.map((item: any, idx: number) => (
+                    <tr key={idx}>
+                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700">{item.sku}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200">{item.productName}</td>
+                      <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
+                      <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                      <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="flex justify-end border-t-2 border-slate-900 pt-6">
+                <div className="w-72 space-y-3">
+                  <div className="flex justify-between text-sm font-bold text-slate-600">
+                    <span>Subtotal:</span>
+                    <span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3">
+                    <span>VAT (12%):</span>
+                    <span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                  </div>
+                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1">
+                    <span>Total:</span>
+                    <span className="font-mono text-indigo-700">₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {finalizedOs.createdBy}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
