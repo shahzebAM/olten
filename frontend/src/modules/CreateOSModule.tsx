@@ -35,6 +35,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [osNumber, setOsNumber] = useState<string>('');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
+  const [loadedOsStatus, setLoadedOsStatus] = useState<string>('Generated');
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
 
   // --- WORKFLOW STATES ---
@@ -46,6 +47,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const [loadSlipSearch, setLoadSlipSearch] = useState('');
   const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
+  const [loadSlipHighlightedIndex, setLoadSlipHighlightedIndex] = useState(-1);
+  const loadSlipDropdownRef = useRef<HTMLDivElement>(null);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -179,7 +182,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setOsNumber(slip.osNumber);
     setReferenceOs(slip.osNumber);
     setIsVatApplied(slip.vatApplied || false);
-    setFinalizedOs(slip); // Set this so we retain its status during updates
+    setLoadedOsStatus(slip.status || 'Generated');
     
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
@@ -195,6 +198,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setDraftItems(mappedItems);
     setShowLoadSlipDropdown(false);
     setLoadSlipSearch('');
+    setLoadSlipHighlightedIndex(-1);
     
     if (mappedItems.length > 0) {
       const productIds = mappedItems.map(i => i.productId);
@@ -210,6 +214,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       }).catch(() => {});
     }
     showToast(`Loaded ${slip.osNumber} successfully. Ready to update.`, "success");
+  };
+
+  const handleLoadSlipKeyDown = (e: React.KeyboardEvent) => {
+    if (!showLoadSlipDropdown || filteredSlips.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setLoadSlipHighlightedIndex(prev => (prev < filteredSlips.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setLoadSlipHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (loadSlipHighlightedIndex >= 0 && loadSlipHighlightedIndex < filteredSlips.length) { handleLoadSlip(filteredSlips[loadSlipHighlightedIndex]); } } 
+    else if (e.key === 'Escape') { setShowLoadSlipDropdown(false); setLoadSlipHighlightedIndex(-1); }
   };
 
   const handleCustomerKeyDown = (e: React.KeyboardEvent) => {
@@ -299,6 +311,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setFinalizedOs(newlyCreatedOs);
       setFinalOrderGenerated(false);
       setLoadedOsId(null);
+      setLoadedOsStatus('Generated');
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
@@ -309,7 +322,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername,
-        status: finalizedOs?.status || 'Generated', // Preserve original status
+        status: loadedOsStatus, // Preserves the correct status
         isVatApplied,
         vatRate,
         subtotal,
@@ -375,7 +388,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null);
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
     fetchNextOsNumber();
   };
 
@@ -418,15 +431,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 type="text" 
                 placeholder="Search OS/FO..." 
                 value={loadSlipSearch}
-                onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); }}
+                onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); setLoadSlipHighlightedIndex(-1); }}
                 onFocus={() => setShowLoadSlipDropdown(true)}
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
+                onKeyDown={handleLoadSlipKeyDown}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
-                <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
-                  {filteredSlips.map((slip) => (
-                    <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
+                <div ref={loadSlipDropdownRef} className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                  {filteredSlips.map((slip, idx) => (
+                    <div 
+                      key={slip.id} 
+                      onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} 
+                      onMouseEnter={() => setLoadSlipHighlightedIndex(idx)}
+                      className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${loadSlipHighlightedIndex === idx ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
+                    >
                       <div>
                         <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
                         <span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span>
@@ -474,7 +493,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
