@@ -182,7 +182,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setShowCustomerDropdown(false);
   };
 
-  const handleLoadSlip = async (slip: any) => {
+ const handleLoadSlip = async (slip: any) => {
+    setOsNumber(slip.osNumber); // <-- ADD THIS LINE
     setReferenceOs(slip.osNumber);
     if (slip.customer) {
       setSelectedCustomer(slip.customer);
@@ -361,7 +362,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         const deductedQty = -Math.abs(Number(item.requestedQty));
         
         concurrentUpdates.push(
-          fetch(`${API_BASE_URL}/inventory/products/${item.productId}/adjust-stock`, {
+          fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
             method: 'PATCH', 
             headers: { 'Content-Type': 'application/json' }, 
             body: JSON.stringify({ 
