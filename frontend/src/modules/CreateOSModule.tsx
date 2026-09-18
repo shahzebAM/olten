@@ -50,6 +50,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const [loadSlipSearch, setLoadSlipSearch] = useState('');
   const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
+  const [loadSlipHighlightedIndex, setLoadSlipHighlightedIndex] = useState(-1);
+  const loadSlipDropdownRef = useRef<HTMLDivElement>(null);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -172,7 +174,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     return allSlips.filter(s => s.osNumber.toLowerCase().includes(query) || s.customer?.name.toLowerCase().includes(query));
   }, [allSlips, loadSlipSearch]);
 
-  // SEPARATING OS AND FO FOR DROPDOWN UI
   const filteredOsSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('OS')), [filteredSlips]);
   const filteredFoSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('FO')), [filteredSlips]);
 
@@ -201,10 +202,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }));
     
     setDraftItems(mappedItems);
-    
-    // TRACE ORIGINAL QUANTITIES FOR INVENTORY RECONCILIATION
     setOriginalItems(slip.items.map((i: any) => ({ productId: i.productId, requestedQty: Number(i.requestedQty) })));
-
     setShowLoadSlipDropdown(false);
     setLoadSlipSearch('');
     
@@ -289,15 +287,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
-
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
-  // --- 🆕 CASCADE CANCEL/RETURN WITH AUTOMATIC STOCK RESTORE ---
+  // --- CASCADE CANCEL/RETURN WITH AUTOMATIC STOCK RESTORE ---
   const handleStatusChangeWithStockRestore = async (newStatus: 'Cancelled' | 'Returned') => {
     if (!loadedOsId) return;
     
     const isFO = osNumber.startsWith('FO');
-    // Find if there is a generated FO linked to this OS
     const linkedFo = allSlips.find(s => s.referenceOs === osNumber && s.osNumber.startsWith('FO') && s.status !== 'Cancelled' && s.status !== 'Returned');
 
     let confirmMsg = `Are you sure you want to mark this as ${newStatus}?`;
@@ -306,22 +302,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } else if (isFO) {
         confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock. Proceed?`;
     }
-
     if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
     try {
-      // 1. Update current loaded record
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { 
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
       });
       if (!res.ok) throw new Error(`Failed to mark as ${newStatus}.`);
 
       const concurrentStockUpdates: any[] = [];
 
-      // 2. If it's an FO, restore stock directly
       if (isFO) {
         originalItems.forEach(item => {
           const restoreQty = Math.abs(item.requestedQty);
@@ -331,8 +322,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             }).catch(err => console.warn(`Stock Restore Fail for FO item ${item.productId}:`, err))
           );
         });
-        
-        // Also cascade cancel the parent OS to keep records clean
         const parentOs = allSlips.find(s => s.osNumber === referenceOs);
         if (parentOs) {
           concurrentStockUpdates.push(
@@ -342,15 +331,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           );
         }
       } 
-      // 3. If it's an OS with a linked FO, cascade cancel the FO and restore the FO's stock
       else if (linkedFo) {
-        // Cancel the FO
         concurrentStockUpdates.push(
           fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
           })
         );
-        // Restore stock based on the FO's items
         linkedFo.items.forEach((item: any) => {
           const restoreQty = Math.abs(Number(item.requestedQty));
           concurrentStockUpdates.push(
@@ -362,17 +348,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       }
 
       await Promise.all(concurrentStockUpdates);
-
       showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
       handleClosePrintModal(); 
-    } catch (e: any) { 
-      showToast(e.message || "Failed to process cancellation.", "error"); 
-    } finally { 
-      setIsProcessing(false); 
-    }
+    } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- CREATING A NEW OS ---
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
@@ -382,12 +362,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
-      // Stock is NOT deducted on OS creation
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to create Order Slip."); }
+      if (!res.ok) throw new Error("Failed to create Order Slip.");
       const newlyCreatedOs = await res.json();
       
       showToast("Order Slip generated successfully.", "success");
@@ -399,32 +378,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- UPDATING AN OS/FO ---
   const handleUpdateOrder = async () => {
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
-      const targetStatus = loadedOsStatus;
-
       const payload = {
-        user: loginUsername,
-        status: targetStatus,
-        isVatApplied,
-        vatRate,
-        subtotal,
-        vatAmount,
-        grandTotal,
+        user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
+      if (!res.ok) throw new Error("Failed to update Order Slip.");
       const updatedOs = await res.json();
       
-      // --- CRITICAL RULE: STOCK ONLY CHANGES IF WE ARE UPDATING A FINAL ORDER ---
-      const isFO = osNumber.startsWith('FO');
-      
-      if (isFO) {
+      // Stock updates ONLY if this is a Final Order
+      if (osNumber.startsWith('FO')) {
         const concurrentStockUpdates: any[] = [];
         const allProductIds = Array.from(new Set([...originalItems.map(i => i.productId), ...draftItems.map(i => i.productId)]));
 
@@ -434,7 +402,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           
           const oldQty = oldItem ? oldItem.requestedQty : 0;
           const newQty = newItem ? Number(newItem.requestedQty) : 0;
-          
           const qtyDifference = newQty - oldQty; 
           
           if (qtyDifference !== 0) {
@@ -456,7 +423,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- GENERATING FO FROM OS ---
+  // --- FINAL ORDER GENERATOR ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -465,17 +432,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         osNumber: finalOrderNumber.trim(), 
-        referenceOs: finalizedOs.osNumber, // Linking OS inside FO
+        referenceOs: finalizedOs.osNumber, 
         company: selectedCompany,
         customerId: finalizedOs.customerId,
         isVatApplied: finalizedOs.vatApplied,
         vatRate: finalizedOs.vatRate,
+        subtotal: finalizedOs.subtotal,
+        vatAmount: finalizedOs.vatAmount,
+        grandTotal: finalizedOs.grandTotal,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
+      // Create new FO Record
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to generate Final Order."); }
+      if (!res.ok) throw new Error("Failed to generate Final Order.");
       const newFo = await res.json();
 
       const concurrentUpdates = [];
@@ -487,8 +458,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         })
       );
 
-      // --- CRITICAL RULE: STOCK ONLY CHANGES ON FO GENERATION ---
-      finalizedOs.items.forEach((item: any) => {
+      // Deduct stock for the FO
+      newFo.items.forEach((item: any) => {
         const deductedQty = -Math.abs(Number(item.requestedQty));
         concurrentUpdates.push(
           fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
@@ -500,7 +471,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       await Promise.all(concurrentUpdates);
       
       showToast("Final Order logged & Stock Deducted instantly!", "success");
+      setFinalizedOs(newFo); // Swaps the view so they can immediately print the FO!
       setFinalOrderGenerated(true); 
+      setOsNumber(newFo.osNumber);
+      setLoadedOsId(newFo.id);
       
     } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
   };
@@ -631,8 +605,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <input 
                 type="text" 
                 value={osNumber}
+                readOnly={loadedOsId !== null} 
                 onChange={e => setOsNumber(e.target.value.toUpperCase())}
-                className={`w-full bg-transparent font-mono font-black text-sm sm:text-base outline-none transition-colors uppercase ${osNumber.startsWith('FO') ? 'text-teal-600 focus:text-teal-500' : 'text-indigo-700 focus:text-indigo-500'}`}
+                className={`w-full bg-transparent font-mono font-black text-sm sm:text-base outline-none transition-colors uppercase ${osNumber.startsWith('FO') ? 'text-teal-600 focus:text-teal-500' : 'text-indigo-700 focus:text-indigo-500'} ${loadedOsId !== null ? 'opacity-70 cursor-not-allowed' : ''}`}
                 placeholder="OS-000000"
               />
             </div>
@@ -814,7 +789,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">
-                  {loadedOsId ? (osNumber.startsWith('FO') ? 'F.O. Updated Successfully!' : 'O.S. Updated Successfully!') : 'O.S. Generated Successfully!'}
+                  {loadedOsId ? (finalizedOs.osNumber.startsWith('FO') ? 'F.O. Updated Successfully!' : 'O.S. Updated Successfully!') : 'O.S. Generated Successfully!'}
                 </h3>
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">
                   Ready for immediate printing.
@@ -822,7 +797,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <div className="flex gap-3">
                 {/* SHOW FO GENERATION BUTTON ONLY IF THIS IS AN OS, AND NOT ALREADY LOGGED */}
-                {!finalOrderGenerated && !loadedOsId && osNumber.startsWith('OS') ? (
+                {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
@@ -832,59 +807,75 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 ) : finalOrderGenerated ? (
                   <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER LOGGED</span>
                 ) : null}
-                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print {osNumber.startsWith('FO') ? 'F.O.' : 'O.S.'}</button>
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print {finalizedOs.osNumber.startsWith('FO') ? 'F.O.' : 'O.S.'}</button>
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
               </div>
             </div>
 
             {/* PRINT CONTAINER */}
-            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible">
-              <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
-              <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
-                <div>
-                  <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
-                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">{finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}</p>
+            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
+              
+              {/* WATERMARKS FOR CANCELLED/RETURNED */}
+              {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
+                  <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">
+                    {finalizedOs.status}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
-                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
+              )}
+
+              <div className="relative z-10">
+                <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
+                <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
+                  <div>
+                    <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
+                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">{finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}</p>
+                  </div>
+                  <div className="text-right">
+                    <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
+                    {/* THIS LINE SHOWS THE EXACT OS REFERENCE UNDER THE FO NUMBER */}
+                    {finalizedOs.osNumber.startsWith('FO') && finalizedOs.referenceOs && (
+                      <p className="text-[11px] font-bold text-slate-500 mt-1 uppercase tracking-widest">REF OS: {finalizedOs.referenceOs}</p>
+                    )}
+                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="mb-8">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
-                <div className="font-black text-lg text-slate-900 uppercase">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
-                <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {finalizedOs.customerId.slice(0,8)}</div>
-              </div>
+                <div className="mb-8">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
+                  <div className="font-black text-lg text-slate-900 uppercase">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
+                  <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {finalizedOs.customerId.slice(0,8)}</div>
+                </div>
 
-              <table className="w-full text-left text-sm mb-12 border-collapse">
-                <thead className="border-y-2 border-slate-900 bg-slate-50/50">
-                  <tr>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
-                    <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {finalizedOs.items.map((item: any, idx: number) => (
-                    <tr key={idx}>
-                      <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
-                      <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">{item.productName}</td>
-                      <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
-                      <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
-                      <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                <table className="w-full text-left text-sm mb-12 border-collapse bg-white">
+                  <thead className="border-y-2 border-slate-900 bg-slate-50/50">
+                    <tr>
+                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
+                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
+                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
+                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
+                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {finalizedOs.items.map((item: any, idx: number) => (
+                      <tr key={idx}>
+                        <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
+                        <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">{item.productName}</td>
+                        <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
+                        <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                        <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
 
-              <div className="flex justify-end border-t-2 border-slate-900 pt-6">
-                <div className="w-72 space-y-3">
-                  <div className="flex justify-between text-sm font-bold text-slate-600"><span>Subtotal:</span><span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
-                  <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3"><span>VAT (12%):</span><span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
-                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className={`font-mono ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                <div className="flex justify-end border-t-2 border-slate-900 pt-6">
+                  <div className="w-72 space-y-3">
+                    <div className="flex justify-between text-sm font-bold text-slate-600"><span>Subtotal:</span><span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                    <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3"><span>VAT (12%):</span><span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                    <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className={`font-mono ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                  </div>
                 </div>
               </div>
             </div>
