@@ -1,9 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
-import Tesseract from 'tesseract.js';
-
-// Setup PDF.js worker (Required for react-pdf to function)
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 interface DriveItem {
   id: string;
@@ -31,12 +26,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
   const [previewHighlightTerms, setPreviewHighlightTerms] = useState<string[]>([]);
   const [rawTextContent, setRawTextContent] = useState<string | null>(null);
-  const [fileBlobUrl, setFileBlobUrl] = useState<string | null>(null);
-  const [isExtracting, setIsExtracting] = useState(false);
-  
-  // OCR & Image States
-  const [ocrBoxes, setOcrBoxes] = useState<any[]>([]);
-  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
+  const [isLoadingRawText, setIsLoadingRawText] = useState(false);
 
   // Upload/New Folder States
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -69,11 +59,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [selectedCompany, API_BASE_URL]);
 
   useEffect(() => { fetchDirectory(); }, [fetchDirectory]);
-
-  // Clean up Blob URLs to prevent memory leaks
-  useEffect(() => {
-    return () => { if (fileBlobUrl) URL.revokeObjectURL(fileBlobUrl); };
-  }, [fileBlobUrl]);
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!selectedFile) return;
@@ -120,47 +105,30 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const openSmartViewer = async (file: DriveItem, fromAiSearch: boolean = false) => {
     setPreviewItem(file);
     setRawTextContent(null);
-    setFileBlobUrl(null);
-    setOcrBoxes([]);
-    setImageDims(null);
     
-    const keywords = (fromAiSearch && aiAnswer) ? extractKeywordsFromAi(aiAnswer) : [];
-    setPreviewHighlightTerms(keywords);
+    if (fromAiSearch && aiAnswer) {
+      setPreviewHighlightTerms(extractKeywordsFromAi(aiAnswer));
+    } else {
+      setPreviewHighlightTerms([]);
+    }
 
-    setIsExtracting(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
-      if (!res.ok) throw new Error("Could not fetch file bytes");
-
-      const mime = file.mimeType || '';
-      if (mime.includes('text') || mime.includes('csv') || file.name.endsWith('.md')) {
-        const text = await res.text();
-        setRawTextContent(text);
-        setIsExtracting(false);
-      } else {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        setFileBlobUrl(url);
-
-        if (mime.includes('image') && keywords.length > 0) {
-          const img = new Image();
-          img.onload = () => {
-            setImageDims({ w: img.width, h: img.height });
-            // FIXED: Explicitly typed 'data', 'w', and 'k' to resolve TypeScript strict mode errors
-            Tesseract.recognize(url, 'eng').then(({ data: { words } }: any) => {
-              const matches = words.filter((w: any) => keywords.some((k: string) => w.text.toLowerCase().includes(k.toLowerCase())));
-              setOcrBoxes(matches);
-              setIsExtracting(false);
-            });
-          };
-          img.src = url;
+    const isTextFile = file.mimeType?.includes('text') || file.mimeType?.includes('csv') || file.name.endsWith('.md');
+    
+    if (isTextFile) {
+      setIsLoadingRawText(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
+        if (res.ok) {
+          const text = await res.text();
+          setRawTextContent(text);
         } else {
-          setIsExtracting(false);
+          setRawTextContent("Could not load raw text. File might be too large or restricted.");
         }
+      } catch (e) {
+        setRawTextContent("Failed to proxy raw text due to network error.");
+      } finally {
+        setIsLoadingRawText(false);
       }
-    } catch (e) {
-      console.warn("Falling back to Drive standard preview. Ensure your backend proxy is running.");
-      setIsExtracting(false);
     }
   };
 
@@ -174,15 +142,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       </span>
     );
   };
-
-  const customTextRenderer = useCallback((textItem: any) => {
-    if (!previewHighlightTerms.length) return textItem.str;
-    const regex = new RegExp(`(${previewHighlightTerms.join('|')})`, 'gi');
-    const parts = textItem.str.split(regex);
-    return parts.map((part: string, index: number) => 
-      regex.test(part) ? <mark key={index} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded">{part}</mark> : part
-    );
-  }, [previewHighlightTerms]);
 
   const renderFormattedAiText = (text: string) => {
     const lines = text.split('\n');
@@ -374,45 +333,32 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <span>Drive Native</span><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                   </a>
                 )}
-                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); setFileBlobUrl(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
               </div>
             </div>
 
-            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex justify-center">
-              {isExtracting ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
-                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Bytes & Running OCR...</span>
-                </div>
-              ) : rawTextContent !== null ? (
-                // TEXT FILE RENDERER
+            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex">
+              {rawTextContent !== null ? (
                 <div className="w-full h-full p-8 overflow-y-auto bg-white mx-auto max-w-4xl shadow-inner text-left font-mono">
                   {renderHighlightedText(rawTextContent, previewHighlightTerms)}
                 </div>
-              ) : fileBlobUrl && previewItem.mimeType?.includes('pdf') ? (
-                // REACT-PDF RENDERER
-                <div className="w-full h-full overflow-y-auto bg-slate-300 flex flex-col items-center py-8">
-                   <Document file={fileBlobUrl} loading={<div className="text-slate-500 font-bold uppercase tracking-widest text-sm">Rendering PDF...</div>}>
-                     <Page pageNumber={1} renderTextLayer={true} customTextRenderer={customTextRenderer} className="shadow-2xl" />
-                   </Document>
-                </div>
-              ) : fileBlobUrl && previewItem.mimeType?.includes('image') ? (
-                // TESSERACT IMAGE RENDERER WITH ABSOLUTE BOUNDING BOXES
-                <div className="relative max-h-full overflow-auto inline-block bg-slate-900 shadow-2xl m-auto border border-slate-700">
-                  <img src={fileBlobUrl} alt={previewItem.name} className="block max-w-full object-contain" />
-                  {imageDims && ocrBoxes.map((box, i) => {
-                    const left = (box.bbox.x0 / imageDims.w) * 100;
-                    const top = (box.bbox.y0 / imageDims.h) * 100;
-                    const width = ((box.bbox.x1 - box.bbox.x0) / imageDims.w) * 100;
-                    const height = ((box.bbox.y1 - box.bbox.y0) / imageDims.h) * 100;
-                    return (
-                      <div key={i} className="absolute border-2 border-yellow-400 bg-yellow-400/30 shadow-[0_0_8px_rgba(250,204,21,0.8)] pointer-events-none" style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }} />
-                    );
-                  })}
+              ) : isLoadingRawText ? (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
+                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Text...</span>
                 </div>
               ) : (
-                // FALLBACK TO GOOGLE DRIVE
-                <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white" allow="autoplay" title={previewItem.name} />
+                <div className="w-full h-full relative">
+                  {previewHighlightTerms.length > 0 && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-top-4 max-w-md border border-slate-700">
+                      <span className="text-2xl mb-2">⚠️</span>
+                      <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-amber-400">Advanced OCR Required</h4>
+                      <p className="text-xs text-slate-300 font-medium">To physically highlight AI keywords inside PDFs or Images, advanced OCR processing is required.</p>
+                      <p className="text-[10px] text-slate-500 mt-3 font-bold uppercase tracking-widest">Falling back to Drive standard preview...</p>
+                    </div>
+                  )}
+                  <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
+                </div>
               )}
             </div>
 
