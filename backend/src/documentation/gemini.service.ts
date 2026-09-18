@@ -1,13 +1,25 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 @Injectable()
 export class GeminiService {
   private ai: GoogleGenAI;
   private readonly logger = new Logger(GeminiService.name);
 
+  // STRICT ERP INSTRUCTIONS
+  private readonly systemInstruction = `You are an elite corporate ERP AI Document Search Assistant.
+CRITICAL RULES:
+1. Base your answer STRICTLY and EXCLUSIVELY on the provided documents. Do NOT invent or guess information.
+2. If the user asks for a document, a file, or a link, you MUST provide the exact Google Drive link from the Reference Directory.
+3. Format links cleanly in Markdown: [Document Name](URL).
+4. Always cite your source document at the end of your answer.`;
+
   constructor() {
-    this.ai = new GoogleGenAI(); 
+    // Explicitly pass the API key so Vercel doesn't crash if implicit env reading fails
+    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); 
   }
 
   async uploadFileToGemini(filePath: string, mimeType: string, displayName: string) {
@@ -32,21 +44,19 @@ export class GeminiService {
     await this.ai.files.delete({ name: fileId });
   }
 
-  // UPDATED: Now accepts name and driveLink
   async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[]): Promise<string | null> {
     try {
-      // Create a text directory for Gemini to reference
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
 
       const cache = await this.ai.caches.create({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-1.5-flash',
         config: {
-          systemInstruction: "You are an ERP assistant. Base answers ONLY on provided documents. If the user asks for a document link or file, provide the exact Google Drive link from the Reference Directory. Always cite the exact source document name and page number if available in format [Source: filename, Page: X].",
+          systemInstruction: this.systemInstruction,
           contents: [
             {
               role: 'user',
               parts: [
-                { text: directoryText }, // Inject the links first
+                { text: directoryText },
                 ...filesData.map(file => ({
                   fileData: { fileUri: file.uri, mimeType: file.mimeType }
                 }))
@@ -59,35 +69,34 @@ export class GeminiService {
       
       return cache.name || null;
     } catch (error: any) {
-      this.logger.warn(`Context Cache skipped (likely below token minimum): ${error.message}`);
-      return null;
+      this.logger.warn(`Context Cache skipped (likely below 32k token minimum): ${error.message}`);
+      return null; // Safe fallback for free-tier users with small documents
     }
   }
 
-  // UPDATED: Now accepts name and driveLink for the fallback path
   async askQuestion(query: string, filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], cacheName?: string | null) {
-    let config: any = { temperature: 0.1 };
+    // Temperature 0.0 guarantees exact, robotic precision without hallucinating
+    let config: any = { temperature: 0.0 }; 
     let parts: any[] = [];
     
     if (cacheName) {
       config.cachedContent = cacheName;
       parts = [{ text: query }];
     } else {
-      config.systemInstruction = "You are an ERP assistant. Base answers ONLY on provided documents. If the user asks for a document link or file, provide the exact Google Drive link from the Reference Directory. Always cite the exact source document name and page number if available in format [Source: filename, Page: X].";
-      
+      config.systemInstruction = this.systemInstruction;
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
       
       parts = [
-        { text: directoryText }, // Inject the links
+        { text: directoryText },
         ...filesData.map(file => ({
           fileData: { fileUri: file.uri, mimeType: file.mimeType }
         })),
-        { text: query } // Append the user query at the end
+        { text: query }
       ];
     }
 
     const response = await this.ai.models.generateContent({
-      model: 'gemini-3.6-flash', 
+      model: 'gemini-1.5-flash', 
       contents: [{ role: 'user', parts: parts }],
       config: config
     });

@@ -11,8 +11,6 @@ const prisma = new PrismaClient();
 @Injectable()
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
-  
-  // Maps each company to its active Google Cache Session
   private companyCache: Map<string, { cacheName: string, expiresAt: number }> = new Map();
 
   constructor(
@@ -29,27 +27,27 @@ export class DocumentService {
   }
 
   async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
-    const driveLink = await this.driveService.uploadFileToDrive(
-      file.buffer, 
-      file.mimetype, 
-      file.originalname, 
-      company, 
-      targetFolderId
-    );
-
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
+    let driveLink;
     let geminiData;
+
     try {
-      geminiData = await this.geminiService.uploadFileToGemini(
-        tempFilePath,
-        file.mimetype,
-        file.originalname
-      );
+      // PARALLEL UPLOAD: Upload to Drive and Gemini at the exact same time to beat Vercel's 10-second timeout
+      const [driveResponse, geminiResponse] = await Promise.all([
+        this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
+        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname)
+      ]);
+      
+      driveLink = driveResponse;
+      geminiData = geminiResponse;
+    } catch (error: any) {
+      this.logger.error(`Upload Process Failed: ${error.message}`);
+      throw new BadRequestException(`Upload failed: ${error.message}`);
     } finally {
       if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
+        fs.unlinkSync(tempFilePath); // Always clean up temporary Vercel storage
       }
     }
 
@@ -69,13 +67,9 @@ export class DocumentService {
       },
     });
 
-    // IMPORTANT: Clear the old cache so the new document gets included in the next search!
     this.companyCache.delete(company);
-
     return doc;
   }
-
-  // NOTE: routeQuery has been deleted entirely to eliminate double-call lag
 
   async searchDocuments(query: string, company: string, username: string) {
     // @ts-ignore
@@ -103,10 +97,8 @@ export class DocumentService {
     let cacheName: string | null = null;
     let cacheInfo = this.companyCache.get(company);
 
-    // If cache does not exist or expired (after 55 mins), create a fresh one
     if (!cacheInfo || Date.now() > cacheInfo.expiresAt) {
       this.logger.log(`Attempting to generate global Context Cache for ${company}...`);
-      
       const newCacheName = await this.geminiService.createDocumentCache(filesData);
       
       if (newCacheName) {
@@ -118,7 +110,7 @@ export class DocumentService {
       cacheName = cacheInfo.cacheName;
     }
 
-    const targetModel = 'gemini-3.6-flash';
+    const targetModel = 'gemini-1.5-flash'; 
     const answer = await this.geminiService.askQuestion(query, filesData, cacheName);
     const responseText = answer.text || 'No response generated.';
 
