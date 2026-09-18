@@ -386,7 +386,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
           {/* ALWAYS VISIBLE DELETION CONTROLS */}
           <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-3 rounded-xl mb-6">
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
+            <label className="flex items-center gap-3 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
               <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer" />
               Select All
             </label>
@@ -413,7 +413,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
                   {folders.map((folder) => (
                     <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                      <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer z-10" />
+                      <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer z-10" />
                       <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center">
                         <div className="text-4xl mb-2">📁</div>
                         <span className="font-bold text-sm text-slate-800 truncate max-w-full">{folder.name}</span>
@@ -427,39 +427,44 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   {currentFolderFiles.length === 0 && <div className="col-span-full text-center py-10 text-slate-400">Empty folder</div>}
                   {currentFolderFiles.map(file => (
                     <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
-                      <div 
-                        onClick={() => setPreviewItem(file)}
-                        className="flex items-center gap-3 truncate cursor-pointer flex-1"
-                        title="Click to view in modal"
-                      >
+                      
+                      {/* Checkbox and File Name (Separated from View Click) */}
+                      <div className="flex items-center gap-3 truncate flex-1">
                         <input 
                           type="checkbox" 
                           checked={selectedItemIds.includes(file.id)} 
-                          onChange={(e) => { e.stopPropagation(); handleToggleSelect(file.id); }} 
-                          className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" 
+                          onChange={() => handleToggleSelect(file.id)} 
+                          className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer shrink-0" 
                         />
                         <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">
                           {file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : '📄'}
                         </span>
-                        <span className="text-xs font-bold text-slate-700 group-hover:text-indigo-600 transition-colors truncate">{file.name}</span>
+                        <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
                       </div>
                       
-                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      {/* Interactive Buttons (Eye and Link) */}
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
                         <button 
                           onClick={() => setPreviewItem(file)}
-                          className="text-[10px] text-indigo-700 font-bold bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors shadow-2xs"
+                          className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
+                          title="Preview Document"
                         >
-                          View
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
                         </button>
                         {file.webViewLink && (
                           <a 
                             href={file.webViewLink} 
                             target="_blank" 
                             rel="noreferrer" 
-                            className="text-[10px] text-slate-500 hover:text-slate-800 p-1.5 rounded hover:bg-slate-100 transition-colors"
+                            className="text-slate-400 hover:text-sky-600 p-1.5 rounded-lg hover:bg-sky-50 transition-colors"
                             title="Open in new Google Drive tab"
                           >
-                            ↗
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
                           </a>
                         )}
                       </div>
