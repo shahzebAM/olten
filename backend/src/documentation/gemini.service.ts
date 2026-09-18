@@ -46,9 +46,12 @@ CRITICAL RULES:
   async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], modelName: string = 'gemini-1.5-flash'): Promise<string | null> {
     try {
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
+      
+      // CRITICAL FIX: Google requires the string to be "models/gemini-1.5-flash"
+      const formattedModel = modelName.startsWith('models/') ? modelName : `models/${modelName}`;
 
       const cache = await this.ai.caches.create({
-        model: modelName,
+        model: formattedModel,
         config: {
           systemInstruction: this.systemInstruction,
           contents: [
@@ -77,6 +80,9 @@ CRITICAL RULES:
     let config: any = { temperature: 0.0 }; 
     let parts: any[] = [];
     
+    // CRITICAL FIX: Google requires the string to be "models/gemini-1.5-flash"
+    const formattedModel = modelName.startsWith('models/') ? modelName : `models/${modelName}`;
+
     if (cacheName) {
       config.cachedContent = cacheName;
       parts = [{ text: query }];
@@ -94,7 +100,7 @@ CRITICAL RULES:
     }
 
     const response = await this.ai.models.generateContent({
-      model: modelName, 
+      model: formattedModel, 
       contents: [{ role: 'user', parts: parts }],
       config: config
     });
