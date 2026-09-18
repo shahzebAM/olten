@@ -232,7 +232,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
           )}
 
      {/* MODEL SELECTOR CHIPS */}
-          {/* MODEL SELECTOR CHIPS */}
+         {/* MODEL SELECTOR CHIPS */}
           <div className="flex items-center justify-center gap-3 mt-5">
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Engine:</span>
             
@@ -241,14 +241,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
               onClick={() => setSelectedModel('gemini-3.6-flash')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-flash' ? 'bg-indigo-50 text-indigo-700 border-2 border-indigo-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
             >
-              ⚡ 3.6 Flash (Efficient)
+              ⚡ 3.6 Flash (Fast)
             </button>
             <button
               type="button"
-              onClick={() => setSelectedModel('gemini-3.6-pro')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-pro' ? 'bg-purple-50 text-purple-700 border-2 border-purple-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
+              onClick={() => setSelectedModel('gemini-3.5-flash-lite')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.5-flash-lite' ? 'bg-emerald-50 text-emerald-700 border-2 border-emerald-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
             >
-              🧠 3.6 Pro (Deep Reasoning)
+              🪙 3.5 Flash-Lite (Credit Saver)
             </button>
           </div>
         </form>
