@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 interface DriveItem {
   id: string;
@@ -112,7 +112,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setPreviewHighlightTerms([]);
     }
 
-    const isTextFile = file.mimeType?.includes('text') || file.mimeType?.includes('csv') || file.name.endsWith('.md');
+    // EXPLICITLY filter out CSV and Excel files. 
+    // They will bypass raw text extraction and perfectly load the Drive native spreadsheet viewer.
+    const isTextFile = file.mimeType?.includes('text/plain') || file.name.endsWith('.txt') || file.name.endsWith('.md');
     
     if (isTextFile) {
       setIsLoadingRawText(true);
@@ -122,10 +124,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           const text = await res.text();
           setRawTextContent(text);
         } else {
-          setRawTextContent("Could not load raw text. File might be too large or restricted.");
+          // Silent fail: Setting to null smoothly triggers the Drive iframe fallback
+          setRawTextContent(null);
         }
       } catch (e) {
-        setRawTextContent("Failed to proxy raw text due to network error.");
+        // Silent fail
+        setRawTextContent(null);
       } finally {
         setIsLoadingRawText(false);
       }
@@ -295,7 +299,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
                       <div className="flex items-center gap-3 truncate flex-1">
                         <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer shrink-0" />
-                        <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : '📄'}</span>
+                        <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : file.mimeType?.includes('spreadsheet') || file.mimeType?.includes('csv') ? '📊' : '📄'}</span>
                         <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
@@ -318,7 +322,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             
             <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0 shadow-sm relative z-10">
               <div className="flex items-center gap-3 truncate">
-                <span className="text-3xl shrink-0">{previewItem.mimeType?.includes('image') ? '🖼️' : previewItem.mimeType?.includes('pdf') ? '📕' : '📄'}</span>
+                <span className="text-3xl shrink-0">{previewItem.mimeType?.includes('image') ? '🖼️' : previewItem.mimeType?.includes('pdf') ? '📕' : previewItem.mimeType?.includes('spreadsheet') || previewItem.mimeType?.includes('csv') ? '📊' : '📄'}</span>
                 <div className="truncate">
                   <h3 className="font-black text-slate-900 text-lg truncate tracking-tight">{previewItem.name}</h3>
                   <div className="flex items-center gap-2 mt-0.5">
@@ -350,11 +354,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               ) : (
                 <div className="w-full h-full relative">
                   {previewHighlightTerms.length > 0 && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-top-4 max-w-md border border-slate-700">
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-top-4 max-w-md border border-slate-700 pointer-events-none">
                       <span className="text-2xl mb-2">⚠️</span>
-                      <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-amber-400">Advanced OCR Required</h4>
-                      <p className="text-xs text-slate-300 font-medium">To physically highlight AI keywords inside PDFs or Images, advanced OCR processing is required.</p>
-                      <p className="text-[10px] text-slate-500 mt-3 font-bold uppercase tracking-widest">Falling back to Drive standard preview...</p>
+                      <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-amber-400">Native Preview Active</h4>
+                      <p className="text-xs text-slate-300 font-medium">Physical keyword highlighting is only available for simple text documents. Complex files (PDFs, Images, Spreadsheets) are safely rendered in native mode.</p>
                     </div>
                   )}
                   <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
