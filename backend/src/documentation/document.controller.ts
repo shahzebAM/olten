@@ -48,4 +48,4 @@ export class DocumentController {
     if (!query) throw new BadRequestException('Query cannot be empty');
     return this.documentService.searchDocuments(query, company, username, targetModel);
   }
-}
+} 
