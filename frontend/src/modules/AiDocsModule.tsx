@@ -129,7 +129,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
     setIsExtracting(true);
     try {
-      // CRITICAL: Your backend must have this route setup to download the raw file bytes
       const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
       if (!res.ok) throw new Error("Could not fetch file bytes");
 
@@ -139,19 +138,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         setRawTextContent(text);
         setIsExtracting(false);
       } else {
-        // Handle PDF and Images via Blob
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         setFileBlobUrl(url);
 
         if (mime.includes('image') && keywords.length > 0) {
-          // Get Image Dimensions for relative bounding boxes
           const img = new Image();
           img.onload = () => {
             setImageDims({ w: img.width, h: img.height });
-            // Run Tesseract OCR
-            Tesseract.recognize(url, 'eng').then(({ data: { words } }) => {
-              const matches = words.filter(w => keywords.some(k => w.text.toLowerCase().includes(k.toLowerCase())));
+            // FIXED: Explicitly typed 'data', 'w', and 'k' to resolve TypeScript strict mode errors
+            Tesseract.recognize(url, 'eng').then(({ data: { words } }: any) => {
+              const matches = words.filter((w: any) => keywords.some((k: string) => w.text.toLowerCase().includes(k.toLowerCase())));
               setOcrBoxes(matches);
               setIsExtracting(false);
             });
@@ -178,7 +175,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     );
   };
 
-  // react-pdf custom text renderer
   const customTextRenderer = useCallback((textItem: any) => {
     if (!previewHighlightTerms.length) return textItem.str;
     const regex = new RegExp(`(${previewHighlightTerms.join('|')})`, 'gi');
