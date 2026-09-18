@@ -22,6 +22,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [loading, setLoading] = useState(true);
   const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
 
+  // In-App Document Preview Modal
+  const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
+
   // Upload/New Folder States
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -31,13 +34,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
-  // Search & AI States
+  // Search & AI States (Defaulted to 3.5 Flash-Lite)
   const [searchQuery, setSearchQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearching, setIsSearching] = useState(false);
 
-  // --- BULK DELETION STATES ---
+  // Bulk Deletion States
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -145,6 +148,59 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
+  // Format AI Response to parse links and bold formatting
+  const renderFormattedAiText = (text: string) => {
+    const lines = text.split('\n');
+    return lines.map((line, lineIndex) => {
+      const parts: React.ReactNode[] = [];
+      let remaining = line;
+      const regex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*/g;
+      let match: RegExpExecArray | null;
+      let lastIndex = 0;
+
+      while ((match = regex.exec(line)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push(line.substring(lastIndex, match.index));
+        }
+        if (match[1] && match[2]) {
+          // Markdown Link: [Title](URL)
+          parts.push(
+            <a
+              key={`${lineIndex}-${match.index}`}
+              href={match[2]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/60 px-1.5 py-0.5 rounded"
+            >
+              <span>{match[1]}</span>
+              <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          );
+        } else if (match[3]) {
+          // Markdown Bold: **Text**
+          parts.push(
+            <strong key={`${lineIndex}-${match.index}`} className="font-bold text-slate-900">
+              {match[3]}
+            </strong>
+          );
+        }
+        lastIndex = regex.lastIndex;
+      }
+
+      if (lastIndex < line.length) {
+        parts.push(line.substring(lastIndex));
+      }
+
+      return (
+        <span key={lineIndex} className="block min-h-[1.35rem] leading-relaxed">
+          {parts.length > 0 ? parts : ' '}
+        </span>
+      );
+    });
+  };
+
   // Helper variables for UI rendering
   const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
   const currentFolderFiles = currentFolder && currentFolder.id !== 'root' 
@@ -153,18 +209,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const totalSelectable = currentFolder ? currentFolderFiles.length : (folders.length + rootFiles.length);
 
-  // --- BULK DELETION LOGIC ---
+  // Bulk Deletion Logic
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
       let idsToSelect: string[] = [];
       if (!currentFolder) {
-        // At root level, select all folders and root files
         idsToSelect = [
           ...folders.map(f => f.id),
           ...rootFiles.map(f => f.id)
         ];
       } else {
-        // Inside a subfolder, select all files
         idsToSelect = currentFolderFiles.map(f => f.id);
       }
       setSelectedItemIds(idsToSelect);
@@ -179,7 +233,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleDeleteSelected = async () => {
     if (selectedItemIds.length === 0) return;
-    if (!window.confirm(`Permanently wipe ${selectedItemIds.length} items from Drive and Database?`)) return;
+    if (!window.confirm(`Permanently delete ${selectedItemIds.length} items from Drive and Database?`)) return;
 
     setIsDeleting(true);
     try {
@@ -202,7 +256,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
-      <header className="border-b border-slate-100 px-8 py-4 flex items-center justify-between">
+      {/* HEADER */}
+      <header className="border-b border-slate-100 px-6 sm:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
@@ -217,28 +272,53 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           <button onClick={() => setIsNewFolderModalOpen(true)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
             + New Folder
           </button>
-          <button onClick={() => setIsUploadModalOpen(true)} className="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-sm font-bold tracking-wide transition-colors shadow-sm">
+          <button onClick={() => setIsUploadModalOpen(true)} className="px-5 sm:px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold tracking-wide transition-colors shadow-sm">
             Upload Document
           </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-8 py-10 flex flex-col items-center">
-        <form onSubmit={handleSearchSubmit} className="w-full max-w-2xl mb-12">
-          <div className="relative flex items-center">
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={`Search ${selectedCompany} documents with Gemini...`} className="w-full pl-14 pr-24 py-4 bg-white border-2 border-slate-300 focus:border-indigo-600 rounded-full text-base font-medium shadow-sm outline-none transition-all placeholder:text-slate-400" />
-            <div className="absolute left-5 text-slate-400">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8 flex flex-col items-center">
+        {/* RESPONSIVE SEARCH BAR */}
+        <form onSubmit={handleSearchSubmit} className="w-full max-w-3xl mb-10">
+          <div className="relative flex items-center w-full bg-white border-2 border-slate-300 focus-within:border-indigo-600 focus-within:ring-4 focus-within:ring-indigo-50 rounded-full shadow-sm transition-all p-1.5 pl-4 sm:pl-5">
+            <div className="text-slate-400 shrink-0 mr-2 sm:mr-3">
+              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
-            <button type="submit" disabled={isSearching} className="absolute right-3 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50">
+            <input 
+              type="text" 
+              value={searchQuery} 
+              onChange={(e) => setSearchQuery(e.target.value)} 
+              placeholder={`Search ${selectedCompany} documents with Gemini...`} 
+              className="w-full py-2.5 sm:py-3 bg-transparent text-sm sm:text-base font-medium outline-none placeholder:text-slate-400 min-w-0 pr-2" 
+            />
+            <button 
+              type="submit" 
+              disabled={isSearching || !searchQuery.trim()} 
+              className="shrink-0 px-5 sm:px-7 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-50 whitespace-nowrap shadow-sm"
+            >
               {isSearching ? 'Scanning...' : 'Search'}
             </button>
           </div>
 
-          <div className="flex items-center justify-center gap-3 mt-4">
+          <div className="flex items-center justify-center gap-2 sm:gap-3 mt-4 flex-wrap">
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Engine:</span>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.6-flash')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-flash' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>⚡ 3.6 Flash (Fast)</button>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.5-flash-lite')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.5-flash-lite' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>🪙 3.5 Flash-Lite (Credit Saver)</button>
+            <button 
+              type="button" 
+              onClick={() => setSelectedModel('gemini-3.6-flash')} 
+              className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-flash' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 ring-2 ring-indigo-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
+            >
+              ⚡ 3.6 Flash (Fast)
+            </button>
+            <button 
+              type="button" 
+              onClick={() => setSelectedModel('gemini-3.5-flash-lite')} 
+              className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.5-flash-lite' ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 ring-2 ring-emerald-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
+            >
+              🪙 3.5 Flash-Lite (Credit Saver)
+            </button>
           </div>
 
           {isSearching && (
@@ -248,16 +328,23 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           )}
         </form>
 
+        {/* AI ANSWER DISPLAY */}
         {aiAnswer && (
-          <div className="w-full max-w-3xl mb-10 p-6 bg-slate-50 border border-indigo-100 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
-              <span className="text-xs font-black tracking-widest text-indigo-700 uppercase">Gemini AI Answer</span>
+          <div className="w-full max-w-3xl mb-10 p-6 bg-slate-50 border border-indigo-100 rounded-2xl shadow-sm animate-in fade-in">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
+              <span className="text-xs font-black tracking-widest text-indigo-700 uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+                Gemini AI Answer
+              </span>
               <button onClick={() => setAiAnswer(null)} className="text-xs font-bold text-slate-400 hover:text-slate-600">Close</button>
             </div>
-            <p className="text-sm leading-relaxed text-slate-700 font-medium whitespace-pre-wrap">{aiAnswer}</p>
+            <div className="text-sm text-slate-700 font-medium space-y-1">
+              {renderFormattedAiText(aiAnswer)}
+            </div>
           </div>
         )}
 
+        {/* DRIVE DIRECTORY */}
         <div className="w-full">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 text-sm">
@@ -300,7 +387,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <div className="space-y-8">
               {!currentFolder ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {/* The Protect Root Block */}
+                  {/* Master Root Folder */}
                   <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
                     {isDeleteMode && (
                        <input type="checkbox" disabled title="Root folder cannot be deleted" className="absolute top-2 left-2 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
@@ -329,17 +416,45 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   {currentFolderFiles.length === 0 && <div className="col-span-full text-center py-10 text-slate-400">Empty folder</div>}
                   {currentFolderFiles.map(file => (
-                    <div key={file.id} className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-sm transition-all">
-                      <div className="flex items-center gap-3 truncate">
+                    <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
+                      <div 
+                        onClick={() => setPreviewItem(file)}
+                        className="flex items-center gap-3 truncate cursor-pointer flex-1"
+                        title="Click to view in modal"
+                      >
                         {isDeleteMode && (
-                           <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" />
+                           <input 
+                            type="checkbox" 
+                            checked={selectedItemIds.includes(file.id)} 
+                            onChange={(e) => { e.stopPropagation(); handleToggleSelect(file.id); }} 
+                            className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" 
+                           />
                         )}
-                        <span className="text-xl shrink-0">
-                          {file.mimeType?.includes('image') ? '🖼️' : '📄'}
+                        <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">
+                          {file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : '📄'}
                         </span>
-                        <span className="text-xs font-semibold text-slate-700 truncate">{file.name}</span>
+                        <span className="text-xs font-bold text-slate-700 group-hover:text-indigo-600 transition-colors truncate">{file.name}</span>
                       </div>
-                      <a href={file.webViewLink} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 font-bold shrink-0 ml-2 bg-indigo-50 px-2 py-1 rounded">Open ↗</a>
+                      
+                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                        <button 
+                          onClick={() => setPreviewItem(file)}
+                          className="text-[10px] text-indigo-700 font-bold bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors shadow-2xs"
+                        >
+                          View
+                        </button>
+                        {file.webViewLink && (
+                          <a 
+                            href={file.webViewLink} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-[10px] text-slate-500 hover:text-slate-800 p-1.5 rounded hover:bg-slate-100 transition-colors"
+                            title="Open in new Google Drive tab"
+                          >
+                            ↗
+                          </a>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -349,15 +464,61 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         </div>
       </main>
 
-      {/* MODALS */}
+      {/* IN-APP DOCUMENT PREVIEW MODAL */}
+      {previewItem && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-[200] flex justify-center items-center p-3 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[88vh] flex flex-col overflow-hidden border border-slate-100">
+            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3 truncate">
+                <span className="text-2xl shrink-0">
+                  {previewItem.mimeType?.includes('image') ? '🖼️' : previewItem.mimeType?.includes('pdf') ? '📕' : '📄'}
+                </span>
+                <div className="truncate">
+                  <h3 className="font-bold text-slate-900 text-sm sm:text-base truncate">{previewItem.name}</h3>
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Workspace Document Viewer</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {previewItem.webViewLink && (
+                  <a
+                    href={previewItem.webViewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+                  >
+                    <span>New Tab</span>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                )}
+                <button
+                  onClick={() => setPreviewItem(null)}
+                  className="px-3 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl text-sm font-black transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-100 relative">
+              <iframe
+                src={`https://drive.google.com/file/d/${previewItem.id}/preview`}
+                className="w-full h-full border-0"
+                allow="autoplay"
+                title={previewItem.name}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPLOAD MODAL */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-slate-100">
             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-2">Upload Document</h3>
             <p className="text-xs font-bold text-slate-500 mb-2">Gemini Supports: PDF, TXT, CSV, MD, PNG, JPEG, WEBP.</p>
             <form onSubmit={handleUploadSubmit} className="space-y-6 mt-4">
-              
-              {/* UPDATED ACCEPT ATTRIBUTE */}
               <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-slate-400 p-6 rounded-2xl cursor-pointer">
                 <span className="text-xs font-bold text-slate-600 text-center">{selectedFile ? selectedFile.name : 'Click to select Document or Image'}</span>
                 <input 
@@ -395,6 +556,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         </div>
       )}
 
+      {/* NEW FOLDER MODAL */}
       {isNewFolderModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl">
