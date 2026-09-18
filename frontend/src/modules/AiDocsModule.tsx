@@ -158,7 +158,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     if (e.target.checked) {
       let idsToSelect: string[] = [];
       if (!currentFolder) {
-        // At root level, select all folders (ignoring the protected master root) and root files
+        // At root level, select all folders and root files
         idsToSelect = [
           ...folders.map(f => f.id),
           ...rootFiles.map(f => f.id)
@@ -334,7 +334,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         {isDeleteMode && (
                            <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" />
                         )}
-                        <span className="text-xl shrink-0">📄</span>
+                        <span className="text-xl shrink-0">
+                          {file.mimeType?.includes('image') ? '🖼️' : '📄'}
+                        </span>
                         <span className="text-xs font-semibold text-slate-700 truncate">{file.name}</span>
                       </div>
                       <a href={file.webViewLink} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 font-bold shrink-0 ml-2 bg-indigo-50 px-2 py-1 rounded">Open ↗</a>
@@ -352,10 +354,18 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-slate-100">
             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-2">Upload Document</h3>
+            <p className="text-xs font-bold text-slate-500 mb-2">Gemini Supports: PDF, TXT, CSV, MD, PNG, JPEG, WEBP.</p>
             <form onSubmit={handleUploadSubmit} className="space-y-6 mt-4">
+              
+              {/* UPDATED ACCEPT ATTRIBUTE */}
               <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-slate-400 p-6 rounded-2xl cursor-pointer">
-                <span className="text-xs font-bold text-slate-600">{selectedFile ? selectedFile.name : 'Click to select PDF document'}</span>
-                <input type="file" accept="application/pdf" className="hidden" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
+                <span className="text-xs font-bold text-slate-600 text-center">{selectedFile ? selectedFile.name : 'Click to select Document or Image'}</span>
+                <input 
+                  type="file" 
+                  accept=".pdf, .txt, .csv, .md, image/jpeg, image/png, image/webp" 
+                  className="hidden" 
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
+                />
               </label>
 
               <div className="space-y-3">
