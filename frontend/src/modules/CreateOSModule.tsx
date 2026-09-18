@@ -67,14 +67,25 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
+      // 1. Fetch exact live stock to prevent math conflicts
+      const productIds = adjustments.map(a => a.productId);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      });
+      if (!res.ok) return;
+      const stockMap = await res.json();
+
+      // 2. Safely apply mathematical adjustments to standard Product API
       const updatePromises = adjustments.map(adj => {
-        return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
+        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const newStock = currentStock + adj.qty; // Note: adj.qty is NEGATIVE when deducting, POSITIVE when restoring
+        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          // Send exact adjustment value. Negative deducts, positive restores.
-          body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty }) 
+          body: JSON.stringify({ officeStock: newStock })
         });
       });
+
       await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
@@ -375,14 +386,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || "Failed to create Order Slip.");
-      }
+      if (!res.ok) throw new Error("Failed to create Order Slip.");
       const newlyCreatedOs = await res.json();
       
       showToast("Order Slip generated successfully.", "success");
@@ -395,13 +403,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- AUTOMATIC STOCK ADJUSTMENT ON FO UPDATE ---
   const handleUpdateOrder = async () => {
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        referenceOs: referenceOs || null,
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -418,6 +428,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           
           const oldQty = oldItem ? oldItem.requestedQty : 0;
           const newQty = newItem ? Number(newItem.requestedQty) : 0;
+          
           const qtyDifference = newQty - oldQty; 
           
           if (qtyDifference !== 0) {
@@ -435,6 +446,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- FINAL ORDER DEDUCTION ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -452,19 +464,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         vatAmount: finalizedOs.vatAmount,
         grandTotal: finalizedOs.grandTotal,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to generate Final Order.");
       const newFo = await res.json();
 
-      // Update Parent OS Status
       await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION VIA SECURE ENDPOINT ---
+      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION ---
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))
@@ -526,6 +537,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               />
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                  
                   {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
                   {filteredOsSlips.map((slip) => (
                     <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
