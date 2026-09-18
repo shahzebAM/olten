@@ -145,19 +145,27 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
+  // Helper variables for UI rendering
+  const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
+  const currentFolderFiles = currentFolder && currentFolder.id !== 'root' 
+    ? files.filter(f => f.parents?.includes(currentFolder.id)) 
+    : rootFiles;
+
+  const totalSelectable = currentFolder ? currentFolderFiles.length : (folders.length + rootFiles.length);
+
   // --- BULK DELETION LOGIC ---
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
       let idsToSelect: string[] = [];
       if (!currentFolder) {
-        // At root level, select all folders/files EXCEPT the root block itself
+        // At root level, select all folders (ignoring the protected master root) and root files
         idsToSelect = [
           ...folders.map(f => f.id),
-          ...files.filter(f => !folders.some(folder => f.parents?.includes(folder.id))).map(f => f.id)
+          ...rootFiles.map(f => f.id)
         ];
       } else {
         // Inside a subfolder, select all files
-        idsToSelect = files.filter(f => f.parents?.includes(currentFolder.id)).map(f => f.id);
+        idsToSelect = currentFolderFiles.map(f => f.id);
       }
       setSelectedItemIds(idsToSelect);
     } else {
@@ -171,7 +179,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleDeleteSelected = async () => {
     if (selectedItemIds.length === 0) return;
-    if (!window.confirm(`Permanently wipe ${selectedItemIds.length} items from Drive and Gemini?`)) return;
+    if (!window.confirm(`Permanently wipe ${selectedItemIds.length} items from Drive and Database?`)) return;
 
     setIsDeleting(true);
     try {
@@ -191,12 +199,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setIsDeleting(false);
     }
   };
-
-  // Helper variables for root UI
-  const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
-  const currentFolderFiles = currentFolder && currentFolder.id !== 'root' 
-    ? files.filter(f => f.parents?.includes(currentFolder.id)) 
-    : rootFiles;
 
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
@@ -282,7 +284,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             {isDeleteMode && (
               <div className="flex items-center gap-4 animate-in fade-in slide-in-from-left-4">
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
-                  <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === (currentFolder ? currentFolderFiles.length : (folders.length + rootFiles.length))} className="w-4 h-4 rounded text-indigo-600 border-slate-300 cursor-pointer" />
+                  <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-4 h-4 rounded text-indigo-600 border-slate-300 cursor-pointer" />
                   Select All
                 </label>
                 <button onClick={handleDeleteSelected} disabled={selectedItemIds.length === 0 || isDeleting} className="px-5 py-2 bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">
