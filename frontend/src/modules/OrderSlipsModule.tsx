@@ -41,7 +41,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGeneratingFo, setIsGeneratingFo] = useState(false);
   
   // --- DATA STATES ---
   const [allSlips, setAllSlips] = useState<OrderSlip[]>([]);
@@ -50,28 +49,10 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   // --- MODAL STATES ---
   const [viewSlip, setViewSlip] = useState<OrderSlip | null>(null);
-  const [foNumberInput, setFoNumberInput] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => { 
     setToast({ message: msg, type }); 
     setTimeout(() => setToast(null), 3500); 
-  };
-
-  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
-  const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
-    if (adjustments.length === 0) return;
-    try {
-      const updatePromises = adjustments.map(adj => {
-        return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty })
-        });
-      });
-      await Promise.all(updatePromises);
-    } catch (err) {
-      console.warn("Bulk stock adjustment failed", err);
-    }
   };
 
   const fetchOrderSlips = useCallback(async () => {
@@ -92,29 +73,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     fetchOrderSlips();
   }, [fetchOrderSlips]);
 
-  // PRE-CALCULATE NEXT FO NUMBER WHEN VIEWING AN OS
-  useEffect(() => {
-    if (viewSlip && viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned') {
-      const foSlips = allSlips.filter(s => s.osNumber.startsWith('FO'));
-      foSlips.sort((a, b) => parseInt(b.osNumber.replace(/\D/g, '') || '0') - parseInt(a.osNumber.replace(/\D/g, '') || '0'));
-      
-      const lastFo = foSlips.length > 0 ? foSlips[0] : null;
-      if (lastFo) {
-        const match = lastFo.osNumber.match(/(\d+)$/); 
-        if (match) {
-          const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastFo.osNumber.substring(0, match.index);
-          const padding = match[0].length;
-          setFoNumberInput(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else {
-          setFoNumberInput('FO-000001');
-        }
-      } else {
-        setFoNumberInput('FO-000001');
-      }
-    }
-  }, [viewSlip, allSlips]);
-
   // --- FILTERING LOGIC ---
   const filteredSlips = useMemo(() => {
     let filtered = allSlips.filter(s => 
@@ -129,58 +87,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         (s.customer && s.customer.name.toLowerCase().includes(q))
       );
     }
+
     return filtered;
   }, [allSlips, activeTab, searchQuery]);
 
-  // --- GENERATE FO DIRECTLY FROM LEDGER ---
-  const handleGenerateFoFromLedger = async () => {
-    if (!viewSlip || !foNumberInput.trim()) return;
-    setIsGeneratingFo(true);
-    try {
-      const payload = {
-        osNumber: foNumberInput.trim(),
-        referenceOs: viewSlip.osNumber,
-        company: selectedCompany,
-        customerId: viewSlip.customerId,
-        isVatApplied: viewSlip.vatApplied,
-        vatRate: viewSlip.vatRate,
-        subtotal: viewSlip.subtotal,
-        vatAmount: viewSlip.vatAmount,
-        grandTotal: viewSlip.grandTotal,
-        user: loginUsername,
-        items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
-      };
-
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to generate FO");
-      const newFo = await res.json();
-
-      await fetch(`${API_BASE_URL}/sales/order-slips/${viewSlip.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
-      });
-
-      // EXACT DEDUCTION ENGINE
-      const adjustments = newFo.items.map((item: any) => ({
-        productId: item.productId,
-        qty: -Math.abs(Number(item.requestedQty))
-      }));
-      await safelyAdjustStockBulk(adjustments);
-
-      showToast("Final Order Generated & Stock Deducted!", "success");
-      setViewSlip(null);
-      fetchOrderSlips();
-    } catch(e: any) {
-      showToast(e.message || "Failed to generate Final Order", "error");
-    } finally {
-      setIsGeneratingFo(false);
-    }
-  };
-
-  // --- CASCADE CANCEL / RETURN ENGINE ---
+  // --- CASCADE CANCEL / RETURN / DELETE ENGINE ---
   const processStatusChange = async (slip: OrderSlip, newStatus: 'Cancelled' | 'Returned') => {
     const isFO = slip.osNumber.startsWith('FO');
     const linkedFo = allSlips.find(s => s.referenceOs === slip.osNumber && s.osNumber.startsWith('FO') && s.status !== 'Cancelled' && s.status !== 'Returned');
-    const parentOs = isFO && slip.referenceOs ? allSlips.find(s => s.osNumber === slip.referenceOs) : null;
 
     let confirmMsg = `Are you sure you want to mark this document as ${newStatus}?`;
     if (!isFO && linkedFo) {
@@ -193,35 +107,66 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
     setIsLoading(true);
     try {
-      await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { 
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+      // 1. Update the clicked record
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ status: newStatus, user: loginUsername }) 
       });
+      if (!res.ok) throw new Error(`Failed to update status.`);
 
-      // 1. If it's an FO, restore stock directly and cancel parent OS
+      const concurrentStockUpdates: any[] = [];
+
+      // 2. If it's an FO, restore stock directly
       if (isFO) {
-        const adjustments = slip.items.map(item => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
+        slip.items.forEach(item => {
+          const restoreQty = Math.abs(Number(item.requestedQty));
+          concurrentStockUpdates.push(
+            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+            }).catch(err => console.warn(`Stock Restore Fail for FO item:`, err))
+          );
+        });
 
-        if (parentOs && parentOs.status !== 'Cancelled' && parentOs.status !== 'Returned') {
-          await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-          });
+        // Cascade cancel parent OS
+        if (slip.referenceOs) {
+          const parentOs = allSlips.find(s => s.osNumber === slip.referenceOs);
+          if (parentOs) {
+            concurrentStockUpdates.push(
+              fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+              })
+            );
+          }
         }
       } 
-      // 2. If OS with a linked FO, cascade cancel the FO and restore its stock
+      // 3. If OS with a linked FO, cascade cancel the FO and restore its stock
       else if (linkedFo) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+        concurrentStockUpdates.push(
+          fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+          })
+        );
+        linkedFo.items.forEach((item: any) => {
+          const restoreQty = Math.abs(Number(item.requestedQty));
+          concurrentStockUpdates.push(
+            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+            }).catch(err => console.warn(`Stock Restore Fail for linked FO item:`, err))
+          );
         });
-        
-        const adjustments = linkedFo.items.map((item: any) => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
       }
+
+      await Promise.all(concurrentStockUpdates);
 
       showToast(`Document marked as ${newStatus} & Stock Restored!`, "success");
       setViewSlip(null);
       fetchOrderSlips(); 
-    } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsLoading(false); }
+    } catch (e: any) { 
+      showToast(e.message || "Failed to process cancellation.", "error"); 
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const handleHardDelete = async (slip: OrderSlip) => {
@@ -229,38 +174,41 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     
     const isFO = slip.osNumber.startsWith('FO');
     const linkedFo = allSlips.find(s => s.referenceOs === slip.osNumber && s.osNumber.startsWith('FO'));
-    const parentOs = isFO && slip.referenceOs ? allSlips.find(s => s.osNumber === slip.referenceOs) : null;
 
     let confirmMsg = "CRITICAL WARNING: This will permanently wipe this record from the database. Are you sure?";
     if (!isFO && linkedFo) {
-      confirmMsg = `WARNING: This OS has a linked Final Order (${linkedFo.osNumber}). Deleting this OS will ALSO permanently wipe the Final Order and safely restore the warehouse stock! Proceed?`;
-    } else if (isFO) {
-      confirmMsg = `CRITICAL WARNING: You are deleting a Final Order. This will permanently wipe the record, safely restore the stock, AND ALSO permanently wipe its parent OS (${slip.referenceOs}). Proceed?`;
+      confirmMsg = `WARNING: This OS has a linked Final Order (${linkedFo.osNumber}). You must delete the Final Order first to safely restore stock!`;
+      window.alert(confirmMsg);
+      return;
+    } else if (isFO && slip.status !== 'Cancelled' && slip.status !== 'Returned') {
+      confirmMsg = "CRITICAL WARNING: You are hard-deleting an ACTIVE Final Order. This will permanently wipe the record AND attempt to safely restore the stock. Proceed with extreme caution.";
     }
 
     if (!window.confirm(confirmMsg)) return;
 
     setIsLoading(true);
     try {
-      const foToRestore = isFO ? slip : linkedFo;
-      if (foToRestore && foToRestore.status !== 'Cancelled' && foToRestore.status !== 'Returned') {
-        const adjustments = foToRestore.items.map(item => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
+      // Restore stock if deleting an active FO
+      if (isFO && slip.status !== 'Cancelled' && slip.status !== 'Returned') {
+        const concurrentStockUpdates = slip.items.map(item => {
+          const restoreQty = Math.abs(Number(item.requestedQty));
+          return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+          }).catch(err => console.warn(`Stock Restore Fail:`, err));
+        });
+        await Promise.all(concurrentStockUpdates);
       }
 
-      if (!isFO && linkedFo) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { method: 'DELETE' });
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-      } else if (isFO && parentOs) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-        await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { method: 'DELETE' });
-      } else {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-      }
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Failed to delete record.");
 
-      showToast("Records permanently deleted and stock restored.", "success");
+      showToast("Record permanently deleted.", "success");
       fetchOrderSlips();
-    } catch (e: any) { showToast(e.message || "Failed to delete record.", "error"); } finally { setIsLoading(false); }
+    } catch (e: any) {
+      showToast(e.message || "Failed to delete record.", "error");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handlePrint = () => window.print();
@@ -376,7 +324,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         </div>
       </main>
 
-      {/* VIEW & PRINT MODAL WITH GENERATE FO CAPABILITY */}
+      {/* VIEW & PRINT MODAL */}
       {viewSlip && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
           
@@ -389,26 +337,16 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Document View: {viewSlip.osNumber}</h3>
                 <p className="text-xs font-mono uppercase text-slate-500 tracking-widest mt-1">Status: {viewSlip.status}</p>
               </div>
-              <div className="flex gap-3 items-center">
-                
-                {/* NEW FO GENERATION EMBEDDED DIRECTLY IN THE LEDGER MODAL */}
-                {viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned' && (
-                  <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100 mr-2">
-                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
-                    <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
-                      {isGeneratingFo ? 'Gen...' : 'Gen Final Order'}
-                    </button>
-                  </div>
-                )}
-
+              <div className="flex gap-3">
                 <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print Document</button>
                 <button onClick={() => setViewSlip(null)} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close</button>
               </div>
             </div>
 
-            {/* PRINT CONTAINER */}
+            {/* PRINT CONTAINER WITH ALL CAPS */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
               
+              {/* WATERMARKS FOR CANCELLED/RETURNED */}
               {(viewSlip.status === 'Cancelled' || viewSlip.status === 'Returned') && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">
@@ -426,14 +364,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   </div>
                   <div className="text-right">
                     <h2 className={`text-2xl font-mono font-black ${viewSlip.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{viewSlip.osNumber}</h2>
-                    
-                    {viewSlip.osNumber.startsWith('FO') && viewSlip.referenceOs && (
-                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">
-                        GENERATED FROM: {viewSlip.referenceOs}
-                      </div>
-                    )}
-
-                    <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">Date: {new Date(viewSlip.createdAt).toLocaleDateString()}</p>
+                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(viewSlip.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
 
