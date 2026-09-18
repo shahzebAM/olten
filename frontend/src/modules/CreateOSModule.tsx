@@ -50,8 +50,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const [loadSlipSearch, setLoadSlipSearch] = useState('');
   const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
-  const [loadSlipHighlightedIndex, setLoadSlipHighlightedIndex] = useState(-1);
-  const loadSlipDropdownRef = useRef<HTMLDivElement>(null);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -74,7 +72,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       setAllSlips(slips);
 
-      const lastOs = slips.find((s: any) => s.status !== 'Finalized Order');
+      const lastOs = slips.find((s: any) => s.status !== 'Finalized Order' && s.osNumber.startsWith('OS'));
       
       if (lastOs && lastOs.osNumber) {
         const match = lastOs.osNumber.match(/(\d+)$/); 
@@ -99,7 +97,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=200`);
       const data = await res.json();
       const slips = data.data || [];
-      const lastFo = slips.find((s: any) => s.status === 'Finalized Order');
+      const lastFo = slips.find((s: any) => s.osNumber.startsWith('FO'));
       
       if (lastFo && lastFo.osNumber) {
         const match = lastFo.osNumber.match(/(\d+)$/); 
@@ -174,6 +172,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     return allSlips.filter(s => s.osNumber.toLowerCase().includes(query) || s.customer?.name.toLowerCase().includes(query));
   }, [allSlips, loadSlipSearch]);
 
+  // SEPARATING OS AND FO FOR DROPDOWN UI
+  const filteredOsSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('OS')), [filteredSlips]);
+  const filteredFoSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('FO')), [filteredSlips]);
+
   const handleSelectCustomer = (c: Customer) => {
     setSelectedCustomer(c);
     setCustomerSearch(c.name);
@@ -183,7 +185,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const handleLoadSlip = async (slip: any) => {
     setLoadedOsId(slip.id);
     setOsNumber(slip.osNumber);
-    setReferenceOs(slip.osNumber);
+    setReferenceOs(slip.referenceOs || null);
     setIsVatApplied(slip.vatApplied || false);
     setLoadedOsStatus(slip.status || 'Generated');
     
@@ -205,7 +207,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
     setShowLoadSlipDropdown(false);
     setLoadSlipSearch('');
-    setLoadSlipHighlightedIndex(-1);
     
     if (mappedItems.length > 0) {
       const productIds = mappedItems.map(i => i.productId);
@@ -221,14 +222,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       }).catch(() => {});
     }
     showToast(`Loaded ${slip.osNumber} successfully. Ready to edit.`, "success");
-  };
-
-  const handleLoadSlipKeyDown = (e: React.KeyboardEvent) => {
-    if (!showLoadSlipDropdown || filteredSlips.length === 0) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); setLoadSlipHighlightedIndex(prev => (prev < filteredSlips.length - 1 ? prev + 1 : prev)); } 
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setLoadSlipHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
-    else if (e.key === 'Enter') { e.preventDefault(); if (loadSlipHighlightedIndex >= 0 && loadSlipHighlightedIndex < filteredSlips.length) { handleLoadSlip(filteredSlips[loadSlipHighlightedIndex]); } } 
-    else if (e.key === 'Escape') { setShowLoadSlipDropdown(false); setLoadSlipHighlightedIndex(-1); }
   };
 
   const handleCustomerKeyDown = (e: React.KeyboardEvent) => {
@@ -299,14 +292,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
-  // --- 🆕 RETURN / CANCEL WITH AUTOMATIC STOCK RESTORE ---
+  // --- 🆕 CASCADE CANCEL/RETURN WITH AUTOMATIC STOCK RESTORE ---
   const handleStatusChangeWithStockRestore = async (newStatus: 'Cancelled' | 'Returned') => {
     if (!loadedOsId) return;
-    if (!window.confirm(`Are you sure you want to mark this order as ${newStatus}? This will safely restore deducted stock.`)) return;
+    
+    const isFO = osNumber.startsWith('FO');
+    // Find if there is a generated FO linked to this OS
+    const linkedFo = allSlips.find(s => s.referenceOs === osNumber && s.osNumber.startsWith('FO') && s.status !== 'Cancelled' && s.status !== 'Returned');
+
+    let confirmMsg = `Are you sure you want to mark this as ${newStatus}?`;
+    if (!isFO && linkedFo) {
+        confirmMsg = `This OS has a linked Final Order (${linkedFo.osNumber}). Marking this OS as ${newStatus} will ALSO cancel the Final Order and safely restore the warehouse stock. Proceed?`;
+    } else if (isFO) {
+        confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock. Proceed?`;
+    }
+
+    if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
     try {
-      // 1. Update status in the Database
+      // 1. Update current loaded record
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { 
         method: 'PATCH', 
         headers: { 'Content-Type': 'application/json' }, 
@@ -314,26 +319,52 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       });
       if (!res.ok) throw new Error(`Failed to mark as ${newStatus}.`);
 
-      // 2. ONLY restore stock if this order previously deducted it (Finalized or Updated)
-      if (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') {
-        const concurrentStockUpdates: any[] = [];
-        
-        // Loop over the EXACT items and quantities that were originally loaded from the database
+      const concurrentStockUpdates: any[] = [];
+
+      // 2. If it's an FO, restore stock directly
+      if (isFO) {
         originalItems.forEach(item => {
-          const restoreQty = Math.abs(item.requestedQty); // Positive number to add back to stock
+          const restoreQty = Math.abs(item.requestedQty);
           concurrentStockUpdates.push(
             fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
-              method: 'PATCH', 
-              headers: { 'Content-Type': 'application/json' }, 
-              body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
-            }).catch(err => console.warn(`Silent Stock Restore Fail for ID ${item.productId}:`, err))
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+            }).catch(err => console.warn(`Stock Restore Fail for FO item ${item.productId}:`, err))
           );
         });
-        await Promise.all(concurrentStockUpdates);
+        
+        // Also cascade cancel the parent OS to keep records clean
+        const parentOs = allSlips.find(s => s.osNumber === referenceOs);
+        if (parentOs) {
+          concurrentStockUpdates.push(
+            fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+            })
+          );
+        }
+      } 
+      // 3. If it's an OS with a linked FO, cascade cancel the FO and restore the FO's stock
+      else if (linkedFo) {
+        // Cancel the FO
+        concurrentStockUpdates.push(
+          fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+          })
+        );
+        // Restore stock based on the FO's items
+        linkedFo.items.forEach((item: any) => {
+          const restoreQty = Math.abs(Number(item.requestedQty));
+          concurrentStockUpdates.push(
+            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
+            }).catch(err => console.warn(`Stock Restore Fail for linked FO item ${item.productId}:`, err))
+          );
+        });
       }
 
+      await Promise.all(concurrentStockUpdates);
+
       showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
-      handleClosePrintModal(); // Instantly clears the workspace
+      handleClosePrintModal(); 
     } catch (e: any) { 
       showToast(e.message || "Failed to process cancellation.", "error"); 
     } finally { 
@@ -341,6 +372,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // --- CREATING A NEW OS ---
   const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
@@ -352,6 +384,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
+      
+      // Stock is NOT deducted on OS creation
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to create Order Slip."); }
       const newlyCreatedOs = await res.json();
@@ -365,12 +399,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- UPDATING AN OS/FO ---
   const handleUpdateOrder = async () => {
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
-      // Force status to 'Order Updated' if it previously impacted stock
-      const targetStatus = (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') ? 'Order Updated' : loadedOsStatus;
+      const targetStatus = loadedOsStatus;
 
       const payload = {
         user: loginUsername,
@@ -387,8 +421,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) { const errorData = await res.json(); throw new Error(errorData.message || "Failed to update Order Slip."); }
       const updatedOs = await res.json();
       
-      // --- CRITICAL STOCK RECONCILIATION FOR UPDATES ---
-      if (loadedOsStatus === 'Finalized Order' || loadedOsStatus === 'Order Updated') {
+      // --- CRITICAL RULE: STOCK ONLY CHANGES IF WE ARE UPDATING A FINAL ORDER ---
+      const isFO = osNumber.startsWith('FO');
+      
+      if (isFO) {
         const concurrentStockUpdates: any[] = [];
         const allProductIds = Array.from(new Set([...originalItems.map(i => i.productId), ...draftItems.map(i => i.productId)]));
 
@@ -413,13 +449,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         await Promise.all(concurrentStockUpdates);
       }
 
-      showToast("Order updated and stock reconciled successfully.", "success");
+      showToast("Order updated successfully.", "success");
       setFinalizedOs(updatedOs);
-      setFinalOrderGenerated(updatedOs.status === 'Finalized Order' || updatedOs.status === 'Order Updated');
+      setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
       fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- GENERATING FO FROM OS ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -428,7 +465,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         osNumber: finalOrderNumber.trim(), 
-        referenceOs: finalizedOs.osNumber, 
+        referenceOs: finalizedOs.osNumber, // Linking OS inside FO
         company: selectedCompany,
         customerId: finalizedOs.customerId,
         isVatApplied: finalizedOs.vatApplied,
@@ -443,12 +480,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
       const concurrentUpdates = [];
 
+      // Update Parent OS Status
       concurrentUpdates.push(
-        fetch(`${API_BASE_URL}/sales/order-slips/${newFo.id}`, { 
+        fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
         })
       );
 
+      // --- CRITICAL RULE: STOCK ONLY CHANGES ON FO GENERATION ---
       finalizedOs.items.forEach((item: any) => {
         const deductedQty = -Math.abs(Number(item.requestedQty));
         concurrentUpdates.push(
@@ -487,7 +526,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
           <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
-            O.S. Records
+            Records Ledger
           </button>
           <button onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
             Back to Gateway
@@ -506,28 +545,37 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 type="text" 
                 placeholder="Search OS/FO..." 
                 value={loadSlipSearch}
-                onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); setLoadSlipHighlightedIndex(-1); }}
+                onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); }}
                 onFocus={() => setShowLoadSlipDropdown(true)}
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
-                onKeyDown={handleLoadSlipKeyDown}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
+              {/* DROPDOWN SEPARATING OS AND FO */}
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
-                <div ref={loadSlipDropdownRef} className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
-                  {filteredSlips.map((slip, idx) => (
-                    <div 
-                      key={slip.id} 
-                      onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} 
-                      onMouseEnter={() => setLoadSlipHighlightedIndex(idx)}
-                      className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${loadSlipHighlightedIndex === idx ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
-                    >
+                <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
+                  
+                  {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
+                  {filteredOsSlips.map((slip) => (
+                    <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
                       <div>
                         <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
                         <span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span>
                       </div>
-                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' || slip.status === 'Order Updated' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
                     </div>
                   ))}
+
+                  {filteredFoSlips.length > 0 && <div className="px-4 py-2 bg-teal-50 text-[10px] font-black text-teal-700 uppercase tracking-widest sticky top-0 border-b border-teal-100">Final Orders</div>}
+                  {filteredFoSlips.map((slip) => (
+                    <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-teal-50/50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
+                      <div>
+                        <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
+                        <span className="text-[10px] text-slate-500 uppercase font-bold">Ref: {slip.referenceOs}</span>
+                      </div>
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-teal-100 text-teal-800">{slip.status}</span>
+                    </div>
+                  ))}
+
                 </div>
               )}
             </div>
@@ -579,12 +627,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
 
             <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">O.S. Number</span>
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{osNumber.startsWith('FO') ? 'F.O. Number' : 'O.S. Number'}</span>
               <input 
                 type="text" 
                 value={osNumber}
                 onChange={e => setOsNumber(e.target.value.toUpperCase())}
-                className="w-full bg-transparent font-mono font-black text-indigo-700 text-sm sm:text-base outline-none placeholder:text-slate-300 focus:text-indigo-500 transition-colors uppercase"
+                className={`w-full bg-transparent font-mono font-black text-sm sm:text-base outline-none transition-colors uppercase ${osNumber.startsWith('FO') ? 'text-teal-600 focus:text-teal-500' : 'text-indigo-700 focus:text-indigo-500'}`}
                 placeholder="OS-000000"
               />
             </div>
@@ -729,7 +777,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 Total: <span className="font-mono text-xl ml-2">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
               </div>
               
-              {/* ACTION BUTTONS */}
+              {/* CANCEL / RETURN BUTTONS */}
               {loadedOsId && loadedOsStatus !== 'Cancelled' && loadedOsStatus !== 'Returned' && (
                 <>
                   <button onClick={() => handleStatusChangeWithStockRestore('Returned')} disabled={isProcessing} className="px-5 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
@@ -743,7 +791,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
               {loadedOsId ? (
                 <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing || loadedOsStatus === 'Cancelled' || loadedOsStatus === 'Returned'} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                  {isProcessing ? 'Updating...' : 'Update O.S.'}
+                  {isProcessing ? 'Updating...' : (osNumber.startsWith('FO') ? 'Update F.O.' : 'Update O.S.')}
                 </button>
               ) : (
                 <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
@@ -766,14 +814,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">
-                  {loadedOsId ? 'O.S. Updated Successfully!' : 'O.S. Generated Successfully!'}
+                  {loadedOsId ? (osNumber.startsWith('FO') ? 'F.O. Updated Successfully!' : 'O.S. Updated Successfully!') : 'O.S. Generated Successfully!'}
                 </h3>
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">
                   Ready for immediate printing.
                 </p>
               </div>
               <div className="flex gap-3">
-                {!finalOrderGenerated && !loadedOsId ? (
+                {/* SHOW FO GENERATION BUTTON ONLY IF THIS IS AN OS, AND NOT ALREADY LOGGED */}
+                {!finalOrderGenerated && !loadedOsId && osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
@@ -783,21 +832,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 ) : finalOrderGenerated ? (
                   <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER LOGGED</span>
                 ) : null}
-                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print O.S.</button>
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print {osNumber.startsWith('FO') ? 'F.O.' : 'O.S.'}</button>
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
               </div>
             </div>
 
-            {/* PRINT CONTAINER WITH ALL CAPS */}
+            {/* PRINT CONTAINER */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible">
               <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
               <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
                 <div>
                   <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
-                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Order Slip</p>
+                  <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">{finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}</p>
                 </div>
                 <div className="text-right">
-                  <h2 className="text-2xl font-mono font-black text-indigo-700">{finalizedOs.osNumber}</h2>
+                  <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
                   <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
                 </div>
               </div>
@@ -835,7 +884,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <div className="w-72 space-y-3">
                   <div className="flex justify-between text-sm font-bold text-slate-600"><span>Subtotal:</span><span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
                   <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3"><span>VAT (12%):</span><span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
-                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className="font-mono text-indigo-700">₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                  <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className={`font-mono ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
                 </div>
               </div>
             </div>
