@@ -425,7 +425,7 @@ export class OrderSlipsController {
       }
 
       const updatedStatusOs = await tx.orderSlip.update({
-        where: { id },
+        where: { id }, 
         data: { 
           status, 
           customerId: customerId || existing.customerId, 
