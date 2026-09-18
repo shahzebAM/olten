@@ -139,30 +139,38 @@ export class DocumentService {
     }
   }
 
-  async deleteDocument(id: string) {
-    // @ts-ignore
-    const doc = await prisma.document.findUnique({ where: { id } });
-    if (!doc) throw new BadRequestException('Document not found');
-
-    // 1. Delete from Gemini
-    if (doc.geminiFileId) {
-      try { await this.geminiService.deleteGeminiFile(doc.geminiFileId); } catch (e) { this.logger.warn(`Gemini file inaccessible`); }
+async deleteDocument(driveId: string) {
+    // 1. Delete from Google Drive FIRST (Handles both folders and files)
+    try {
+      await this.driveService.deleteFile(driveId);
+    } catch (e) { 
+      this.logger.warn(`Drive file inaccessible or already deleted.`); 
     }
 
-    // 2. Delete from Google Drive
-    if (doc.googleDriveLink) {
-      try {
-        const match = doc.googleDriveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-        if (match && match[1]) {
-          await this.driveService.deleteFile(match[1]);
+    // 2. Look up the document in the Prisma DB using the Drive ID
+    // @ts-ignore
+    const docs = await prisma.document.findMany({
+      where: { 
+        googleDriveLink: { contains: driveId } 
+      }
+    });
+
+    // 3. If it's a file that exists in the database, wipe it from Gemini and Prisma
+    if (docs && docs.length > 0) {
+      const doc = docs[0];
+
+      if (doc.geminiFileId) {
+        try { 
+          await this.geminiService.deleteGeminiFile(doc.geminiFileId); 
+        } catch (e) { 
+          this.logger.warn(`Gemini file inaccessible`); 
         }
-      } catch (e) { this.logger.warn(`Drive file inaccessible`); }
-    }
+      }
 
-    // 3. Delete from Prisma
-    // @ts-ignore
-    await prisma.document.delete({ where: { id } });
+      // @ts-ignore
+      await prisma.document.delete({ where: { id: doc.id } });
+    }
     
-    return { success: true, message: 'Document permanently deleted' };
+    return { success: true, message: 'Item permanently deleted from Drive, Gemini, and Database' };
   }
 }
