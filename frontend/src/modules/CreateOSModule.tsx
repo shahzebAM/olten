@@ -71,7 +71,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          // Send exact adjustment value. Negative deducts, positive restores.
           body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty }) 
         });
       });
@@ -179,6 +178,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       return;
     }
 
+    // REDUCED TO 50ms FOR INSTANT SEARCH RESULTS
     const handler = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
@@ -191,7 +191,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       } catch (e) {} finally {
         setIsSearchingProducts(false);
       }
-    }, 400);
+    }, 50);
 
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
@@ -375,7 +375,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -401,7 +401,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -452,7 +452,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         vatAmount: finalizedOs.vatAmount,
         grandTotal: finalizedOs.grandTotal,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -524,6 +524,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
+              {/* DROPDOWN SEPARATING OS AND FO */}
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
                   {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
@@ -705,20 +706,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         className="w-full h-full px-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30 focus:bg-indigo-50/30 transition-colors uppercase"
                       />
                     </div>
+                    {/* INSTANT CLEAN DROPDOWN WITH ONLY NAME AND SKU */}
                     {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
-                      <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[600px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
+                      <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[400px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
                         {productSearchResults.map((p, i) => (
                           <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} onMouseEnter={() => setHighlightedIndex(i)} className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
                             <div>
-                              <span className="font-bold text-slate-900 uppercase">{p.name}</span>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-[10px] font-mono text-slate-400 uppercase">{p.sku}</span>
-                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Off: {p.officeStock || 0}</span>
-                                <span className="text-[9px] font-black uppercase tracking-widest text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Whse: {p.warehouseQty ?? (p as any).totalWarehouseQty ?? 0}</span>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-black text-slate-700">₱{(p.sellingPrice || 0).toLocaleString()}</div>
+                              <span className="font-bold text-slate-900 uppercase block">{p.name}</span>
+                              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{p.sku}</span>
                             </div>
                           </div>
                         ))}

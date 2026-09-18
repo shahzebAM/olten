@@ -34,9 +34,10 @@ interface OrderSlipsModuleProps {
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
+  onCreateNew?: () => void; // Added for OS Gen Button
 }
 
-export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: OrderSlipsModuleProps) {
+export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -148,7 +149,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         vatAmount: viewSlip.vatAmount,
         grandTotal: viewSlip.grandTotal,
         user: loginUsername,
-        items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -274,14 +275,21 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         </div>
       )}
 
-      {/* HEADER */}
+      {/* HEADER WITH OS GEN BUTTON */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Document Ledger</span></h2>
         </div>
-        <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
-          Back to Gateway
-        </button>
+        <div className="flex gap-3">
+          {onCreateNew && (
+            <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
+              OS Gen
+            </button>
+          )}
+          <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
+            Back to Gateway
+          </button>
+        </div>
       </header>
 
       {/* NAVIGATION TABS & SEARCH */}
