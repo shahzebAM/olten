@@ -18,7 +18,6 @@ CRITICAL RULES:
 4. Always cite your source document at the end of your answer.`;
 
   constructor() {
-    // Explicitly pass the API key so Vercel doesn't crash if implicit env reading fails
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); 
   }
 
@@ -44,12 +43,12 @@ CRITICAL RULES:
     await this.ai.files.delete({ name: fileId });
   }
 
-  async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[]): Promise<string | null> {
+  async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], modelName: string = 'gemini-3.8-flash'): Promise<string | null> {
     try {
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
 
       const cache = await this.ai.caches.create({
-        model: 'gemini-1.5-flash',
+        model: modelName,
         config: {
           systemInstruction: this.systemInstruction,
           contents: [
@@ -69,13 +68,12 @@ CRITICAL RULES:
       
       return cache.name || null;
     } catch (error: any) {
-      this.logger.warn(`Context Cache skipped (likely below 32k token minimum): ${error.message}`);
-      return null; // Safe fallback for free-tier users with small documents
+      this.logger.warn(`Context Cache skipped: ${error.message}`);
+      return null;
     }
   }
 
-  async askQuestion(query: string, filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], cacheName?: string | null) {
-    // Temperature 0.0 guarantees exact, robotic precision without hallucinating
+  async askQuestion(query: string, filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], cacheName?: string | null, modelName: string = 'gemini-3.8-flash') {
     let config: any = { temperature: 0.0 }; 
     let parts: any[] = [];
     
@@ -96,7 +94,7 @@ CRITICAL RULES:
     }
 
     const response = await this.ai.models.generateContent({
-      model: 'gemini-1.5-flash', 
+      model: modelName, 
       contents: [{ role: 'user', parts: parts }],
       config: config
     });

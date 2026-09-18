@@ -25,7 +25,7 @@ export class DocumentController {
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(), // Completely eliminates the local 'uploads' folder!
+      storage: memoryStorage(), 
     }),
   )
   async uploadFile(
@@ -41,10 +41,11 @@ export class DocumentController {
   @Post('search')
   async search(
     @Body('query') query: string,
+    @Body('model') targetModel: string, // NEW: Accepts selected model from UI
     @Headers('x-company') company: string,
     @Headers('x-username') username: string,
   ) {
     if (!query) throw new BadRequestException('Query cannot be empty');
-    return this.documentService.searchDocuments(query, company, username);
+    return this.documentService.searchDocuments(query, company, username, targetModel);
   }
 }
