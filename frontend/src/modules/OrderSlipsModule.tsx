@@ -58,7 +58,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setTimeout(() => setToast(null), 3500); 
   };
 
-  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
+  // --- BULLETPROOF BULK STOCK ADJUSTMENT ENGINE ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
@@ -70,12 +70,12 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
       const stockMap = await res.json();
 
       const updatePromises = adjustments.map(adj => {
-        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
-        const newStock = currentStock + adj.qty;
+        const currentLiveStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const updatedStock = currentLiveStock + adj.qty;
         return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStock: newStock })
+          body: JSON.stringify({ currentStock: updatedStock }) // FIXED: currentStock
         });
       });
 

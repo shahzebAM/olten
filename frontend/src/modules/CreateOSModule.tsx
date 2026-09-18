@@ -63,11 +63,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- ABSOLUTE BULK STOCK ADJUSTMENT ENGINE ---
+  // --- BULLETPROOF BULK STOCK ADJUSTMENT ENGINE ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
       const productIds = adjustments.map(a => a.productId);
+      
+      // 1. Always fetch live stock to avoid race conditions
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
       });
@@ -75,12 +77,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const stockMap = await res.json();
 
       const updatePromises = adjustments.map(adj => {
-        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
-        const newStock = currentStock + adj.qty;
+        const currentLiveStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const updatedStock = currentLiveStock + adj.qty; // adj.qty is negative for FO deductions
+        
         return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStock: newStock }) 
+          // FIXED: Changed 'officeStock' to 'currentStock' to perfectly match the Prisma schema
+          body: JSON.stringify({ currentStock: updatedStock }) 
         });
       });
 
@@ -368,7 +372,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         await safelyAdjustStockBulk(adjustments);
       }
 
-      await handleRefreshStock();
+      await handleRefreshStock(); // VISUAL SYNC
       showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
       handleClosePrintModal(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
@@ -433,7 +437,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         await safelyAdjustStockBulk(adjustments);
       }
 
-      await handleRefreshStock(); // INSTANT SYNC
+      await handleRefreshStock(); // VISUAL SYNC
       showToast("Order updated successfully.", "success");
       setFinalizedOs(updatedOs);
       setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
@@ -470,12 +474,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
+      // --- EXECUTE DEDUCTION ---
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))
       }));
       await safelyAdjustStockBulk(adjustments);
-      await handleRefreshStock(); // INSTANT SYNC
+      
+      // --- FORCE UI TO SYNC NEW STOCK NUMBERS INSTANTLY ---
+      await handleRefreshStock(); 
       
       showToast("Final Order logged & Stock Deducted instantly!", "success");
       setFinalizedOs(newFo); 
