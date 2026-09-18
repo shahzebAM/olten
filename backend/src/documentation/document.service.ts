@@ -89,7 +89,8 @@ export class DocumentService {
 
     if (filesData.length === 0) throw new BadRequestException('Documents exist, but have not finished indexing.');
 
-    const targetModel = requestedModel || 'gemini-3.8-flash';
+    // Change this line (around line 77)
+const targetModel = requestedModel || 'gemini-1.5-flash';
     let cacheName: string | null = null;
     let cacheInfo = this.companyCache.get(company);
 
