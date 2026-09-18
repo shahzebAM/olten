@@ -63,27 +63,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- LIVE BULK STOCK ADJUSTMENT ENGINE ---
+  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
-      const productIds = adjustments.map(a => a.productId);
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
-      });
-      if (!res.ok) return;
-      const stockMap = await res.json();
-
       const updatePromises = adjustments.map(adj => {
-        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
-        const newStock = currentStock + adj.qty;
-        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
+        return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStock: newStock })
+          // Send exact adjustment value. Negative deducts, positive restores.
+          body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty }) 
         });
       });
-
       await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
@@ -99,12 +90,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       setAllSlips(slips);
 
-      // Filter and heavily sort to guarantee we always get the absolute highest OS number, regardless of status
       const osSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith('OS'));
       osSlips.sort((a: any, b: any) => {
         const numA = parseInt(a.osNumber.replace(/\D/g, '') || '0', 10);
         const numB = parseInt(b.osNumber.replace(/\D/g, '') || '0', 10);
-        return numB - numA; // Descending
+        return numB - numA; 
       });
 
       const lastOs = osSlips.length > 0 ? osSlips[0] : null;
@@ -137,7 +127,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       foSlips.sort((a: any, b: any) => {
         const numA = parseInt(a.osNumber.replace(/\D/g, '') || '0', 10);
         const numB = parseInt(b.osNumber.replace(/\D/g, '') || '0', 10);
-        return numB - numA; // Descending
+        return numB - numA; 
       });
 
       const lastFo = foSlips.length > 0 ? foSlips[0] : null;
@@ -385,8 +375,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        // Removed LineTotal mapping to prevent backend DTO whitelisting errors
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -412,7 +401,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -463,7 +452,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         vatAmount: finalizedOs.vatAmount,
         grandTotal: finalizedOs.grandTotal,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -475,7 +464,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION ---
+      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION VIA SECURE ENDPOINT ---
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))
@@ -535,10 +524,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
-              {/* DROPDOWN SEPARATING OS AND FO */}
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
-                  
                   {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
                   {filteredOsSlips.map((slip) => (
                     <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
@@ -792,9 +779,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       {/* FINALIZED PRINT MODAL */}
       {finalizedOs && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
-          
           <style type="text/css" media="print">{`@page { size: auto; margin: 0; }`}</style>
-
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
             
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
@@ -802,9 +787,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <h3 className="text-xl font-black text-emerald-900 tracking-tight">
                   {loadedOsId ? (finalizedOs.osNumber.startsWith('FO') ? 'F.O. Updated Successfully!' : 'O.S. Updated Successfully!') : 'O.S. Generated Successfully!'}
                 </h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">
-                  Ready for immediate printing.
-                </p>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
               </div>
               <div className="flex gap-3">
                 {/* SHOW FO GENERATION BUTTON ONLY IF THIS IS AN OS, AND NOT ALREADY LOGGED */}
@@ -825,8 +808,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
             {/* PRINT CONTAINER */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
-              
-              {/* WATERMARKS FOR CANCELLED/RETURNED */}
               {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">
