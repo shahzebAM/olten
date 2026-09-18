@@ -58,28 +58,15 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setTimeout(() => setToast(null), 3500); 
   };
 
-  // --- BULLETPROOF BULK STOCK ADJUSTMENT ENGINE ---
+  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
-      const productIds = adjustments.map(a => a.productId);
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      await fetch(`${API_BASE_URL}/sales/order-slips/adjust-bulk-stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, adjustments })
       });
-      if (!res.ok) return;
-      const stockMap = await res.json();
-
-      const updatePromises = adjustments.map(adj => {
-        const currentLiveStock = stockMap[adj.productId]?.officeStock ?? 0;
-        const updatedStock = currentLiveStock + adj.qty;
-        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ currentStock: updatedStock }) // FIXED: currentStock
-        });
-      });
-
-      await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
     }
@@ -170,6 +157,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
 
+      // EXACT DEDUCTION ENGINE HIT
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))

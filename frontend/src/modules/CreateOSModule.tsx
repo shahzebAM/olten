@@ -63,32 +63,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- BULLETPROOF BULK STOCK ADJUSTMENT ENGINE ---
+  // --- GUARANTEED BULK STOCK ADJUSTMENT HITTER ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
-      const productIds = adjustments.map(a => a.productId);
-      
-      // 1. Always fetch live stock to avoid race conditions
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      await fetch(`${API_BASE_URL}/sales/order-slips/adjust-bulk-stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, adjustments })
       });
-      if (!res.ok) return;
-      const stockMap = await res.json();
-
-      const updatePromises = adjustments.map(adj => {
-        const currentLiveStock = stockMap[adj.productId]?.officeStock ?? 0;
-        const updatedStock = currentLiveStock + adj.qty; // adj.qty is negative for FO deductions
-        
-        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          // FIXED: Changed 'officeStock' to 'currentStock' to perfectly match the Prisma schema
-          body: JSON.stringify({ currentStock: updatedStock }) 
-        });
-      });
-
-      await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
     }
@@ -474,7 +457,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      // --- EXECUTE DEDUCTION ---
+      // --- GUARANTEED DEDUCTION HIT ---
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))
