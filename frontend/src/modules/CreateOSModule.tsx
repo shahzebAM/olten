@@ -50,8 +50,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const [loadSlipSearch, setLoadSlipSearch] = useState('');
   const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
-  const [loadSlipHighlightedIndex, setLoadSlipHighlightedIndex] = useState(-1);
-  const loadSlipDropdownRef = useRef<HTMLDivElement>(null);
 
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -64,6 +62,33 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const vatRate = 0.12;
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
+
+  // --- LIVE BULK STOCK ADJUSTMENT ENGINE ---
+  const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
+    if (adjustments.length === 0) return;
+    try {
+      const productIds = adjustments.map(a => a.productId);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      });
+      if (!res.ok) return;
+      const stockMap = await res.json();
+
+      const updatePromises = adjustments.map(adj => {
+        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const newStock = currentStock + adj.qty;
+        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officeStock: newStock })
+        });
+      });
+
+      await Promise.all(updatePromises);
+    } catch (err) {
+      console.warn("Bulk stock adjustment failed", err);
+    }
+  };
 
   // --- INTELLIGENT NUMBER FETCHERS ---
   const fetchNextOsNumber = useCallback(async () => {
@@ -289,7 +314,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
 
-  // --- CASCADE CANCEL/RETURN WITH AUTOMATIC STOCK RESTORE ---
   const handleStatusChangeWithStockRestore = async (newStatus: 'Cancelled' | 'Returned') => {
     if (!loadedOsId) return;
     
@@ -311,43 +335,25 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       });
       if (!res.ok) throw new Error(`Failed to mark as ${newStatus}.`);
 
-      const concurrentStockUpdates: any[] = [];
-
       if (isFO) {
-        originalItems.forEach(item => {
-          const restoreQty = Math.abs(item.requestedQty);
-          concurrentStockUpdates.push(
-            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
-            }).catch(err => console.warn(`Stock Restore Fail for FO item ${item.productId}:`, err))
-          );
-        });
+        const adjustments = originalItems.map(item => ({ productId: item.productId, qty: Math.abs(item.requestedQty) }));
+        await safelyAdjustStockBulk(adjustments);
+        
         const parentOs = allSlips.find(s => s.osNumber === referenceOs);
         if (parentOs) {
-          concurrentStockUpdates.push(
-            fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-            })
-          );
+          await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+          });
         }
       } 
       else if (linkedFo) {
-        concurrentStockUpdates.push(
-          fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-          })
-        );
-        linkedFo.items.forEach((item: any) => {
-          const restoreQty = Math.abs(Number(item.requestedQty));
-          concurrentStockUpdates.push(
-            fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: restoreQty, quantity: restoreQty }) 
-            }).catch(err => console.warn(`Stock Restore Fail for linked FO item ${item.productId}:`, err))
-          );
+        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
         });
+        const adjustments = linkedFo.items.map((item: any) => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
+        await safelyAdjustStockBulk(adjustments);
       }
 
-      await Promise.all(concurrentStockUpdates);
       showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
       handleClosePrintModal(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
@@ -362,6 +368,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
+        // Restored complete lineTotal payload to prevent backend rejection
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
@@ -391,9 +398,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) throw new Error("Failed to update Order Slip.");
       const updatedOs = await res.json();
       
-      // Stock updates ONLY if this is a Final Order
       if (osNumber.startsWith('FO')) {
-        const concurrentStockUpdates: any[] = [];
+        const adjustments: any[] = [];
         const allProductIds = Array.from(new Set([...originalItems.map(i => i.productId), ...draftItems.map(i => i.productId)]));
 
         allProductIds.forEach(productId => {
@@ -405,15 +411,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           const qtyDifference = newQty - oldQty; 
           
           if (qtyDifference !== 0) {
-            const stockAdjustment = -qtyDifference; 
-            concurrentStockUpdates.push(
-              fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${productId}`, {
-                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: stockAdjustment, quantity: stockAdjustment }) 
-              }).catch(err => console.warn(`Stock Adjust Fail for ID ${productId}:`, err))
-            );
+            adjustments.push({ productId, qty: -qtyDifference });
           }
         });
-        await Promise.all(concurrentStockUpdates);
+        await safelyAdjustStockBulk(adjustments);
       }
 
       showToast("Order updated successfully.", "success");
@@ -423,7 +424,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- FINAL ORDER GENERATOR ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -444,34 +444,24 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
-      // Create new FO Record
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to generate Final Order.");
       const newFo = await res.json();
 
-      const concurrentUpdates = [];
-
       // Update Parent OS Status
-      concurrentUpdates.push(
-        fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
-        })
-      );
-
-      // Deduct stock for the FO
-      newFo.items.forEach((item: any) => {
-        const deductedQty = -Math.abs(Number(item.requestedQty));
-        concurrentUpdates.push(
-          fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${item.productId}`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ officeStockAdjustment: deductedQty, quantity: deductedQty }) 
-          }).catch(err => console.warn(`Silent Stock Deduction Fail for ${item.sku}:`, err))
-        );
+      await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      await Promise.all(concurrentUpdates);
+      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION ---
+      const adjustments = newFo.items.map((item: any) => ({
+        productId: item.productId,
+        qty: -Math.abs(Number(item.requestedQty))
+      }));
+      await safelyAdjustStockBulk(adjustments);
       
       showToast("Final Order logged & Stock Deducted instantly!", "success");
-      setFinalizedOs(newFo); // Swaps the view so they can immediately print the FO!
+      setFinalizedOs(newFo); 
       setFinalOrderGenerated(true); 
       setOsNumber(newFo.osNumber);
       setLoadedOsId(newFo.id);
@@ -495,7 +485,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         </div>
       )}
 
-      {/* HEADER */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
@@ -512,7 +501,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
-            
             <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
               <input 
@@ -524,7 +512,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
-              {/* DROPDOWN SEPARATING OS AND FO */}
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
                   
@@ -833,11 +820,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   </div>
                   <div className="text-right">
                     <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
-                    {/* THIS LINE SHOWS THE EXACT OS REFERENCE UNDER THE FO NUMBER */}
+                    
+                    {/* BOLD GENERATED FROM REFERENCE */}
                     {finalizedOs.osNumber.startsWith('FO') && finalizedOs.referenceOs && (
-                      <p className="text-[11px] font-bold text-slate-500 mt-1 uppercase tracking-widest">REF OS: {finalizedOs.referenceOs}</p>
+                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">
+                        GENERATED FROM: {finalizedOs.referenceOs}
+                      </div>
                     )}
-                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
+                    
+                    <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
 
