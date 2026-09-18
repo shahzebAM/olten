@@ -231,7 +231,6 @@ model Customer {
 model OrderSlip {
   id          String         @id @default(uuid())
   osNumber    String         @unique
-  referenceOs  String?
   company     String
   
   customerId  String

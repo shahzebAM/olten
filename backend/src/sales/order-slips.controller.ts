@@ -5,7 +5,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 export class OrderSlipsController {
   private readonly prisma = new PrismaClient();
 
-  // --- CUSTOMER SEARCH ENDPOINT TO SUPPORT KEYBOARD NAV ---
+  // --- NEW: CUSTOMER SEARCH ENDPOINT TO SUPPORT KEYBOARD NAV ---
   @Get('search-customers')
   async searchCustomers(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
@@ -95,21 +95,6 @@ export class OrderSlipsController {
     return stockMap;
   }
 
-  // --- INSTANT STOCK ADJUSTMENT (DEDUCT & RESTORE) ---
-  @Patch('adjust-stock/:productId')
-  async adjustStock(@Param('productId') productId: string, @Body() data: any) {
-    const adjustment = Number(data.officeStockAdjustment) || 0;
-    
-    return await this.prisma.product.update({
-      where: { id: Number(productId) },
-      data: { 
-        currentStock: { 
-          increment: adjustment 
-        } 
-      }
-    });
-  }
-
   @Get('shortages/all')
   async getShortages(@Query('company') company: string) {
      if (!company) throw new BadRequestException("Company is required");
@@ -130,8 +115,7 @@ export class OrderSlipsController {
 
   @Post()
   async createOrderSlip(@Body() data: any) {
-    // --- ADDED referenceOs EXTRACTION HERE ---
-    const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber, referenceOs } = data;
+    const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber } = data;
 
     if (!company || !customerId || !items || items.length === 0) {
       throw new BadRequestException('Missing required fields: company, customerId, or items.');
@@ -196,7 +180,6 @@ export class OrderSlipsController {
       const newOs = await tx.orderSlip.create({
         data: {
           osNumber,
-          referenceOs, // --- SAVING REFERENCE OS TO DATABASE ---
           company,
           customerId,
           status: 'Generated', 
@@ -359,8 +342,8 @@ export class OrderSlipsController {
 
   @Patch(':id')
   async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
-    // --- ADDED referenceOs EXTRACTION HERE ---
-    const { status, user, items, isVatApplied, vatRate = 0.12, customerId, referenceOs } = data;
+    // --- ADDED customerId extraction to support frontend customer editing ---
+    const { status, user, items, isVatApplied, vatRate = 0.12, customerId } = data;
     
     const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Order Slip not found.');
@@ -406,8 +389,7 @@ export class OrderSlipsController {
           where: { id },
           data: { 
             status: status || existing.status, 
-            customerId: customerId || existing.customerId, 
-            referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, // --- SAVING EDITED REFERENCE ---
+            customerId: customerId || existing.customerId, // Saves new customer
             updatedBy: user,
             subtotal: calculatedSubtotal,
             vatApplied: applyVat,
@@ -425,11 +407,10 @@ export class OrderSlipsController {
       }
 
       const updatedStatusOs = await tx.orderSlip.update({
-        where: { id }, 
+        where: { id },
         data: { 
           status, 
-          customerId: customerId || existing.customerId, 
-          referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, // --- SAVING EDITED REFERENCE ---
+          customerId: customerId || existing.customerId, // Saves new customer
           updatedBy: user 
         },
         include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
