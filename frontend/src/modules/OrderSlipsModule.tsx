@@ -34,7 +34,7 @@ interface OrderSlipsModuleProps {
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
-  onCreateNew?: () => void; // Added for OS Gen Button
+  onCreateNew?: () => void; 
 }
 
 export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
@@ -62,13 +62,23 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
+      const productIds = adjustments.map(a => a.productId);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      });
+      if (!res.ok) return;
+      const stockMap = await res.json();
+
       const updatePromises = adjustments.map(adj => {
-        return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
+        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const newStock = currentStock + adj.qty;
+        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty })
+          body: JSON.stringify({ officeStock: newStock })
         });
       });
+
       await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
@@ -149,7 +159,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         vatAmount: viewSlip.vatAmount,
         grandTotal: viewSlip.grandTotal,
         user: loginUsername,
-        items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -160,7 +170,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
 
-      // EXACT DEDUCTION ENGINE
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))

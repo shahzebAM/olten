@@ -63,24 +63,33 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
+  // --- ABSOLUTE BULK STOCK ADJUSTMENT ENGINE ---
   const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
     if (adjustments.length === 0) return;
     try {
+      const productIds = adjustments.map(a => a.productId);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
+      });
+      if (!res.ok) return;
+      const stockMap = await res.json();
+
       const updatePromises = adjustments.map(adj => {
-        return fetch(`${API_BASE_URL}/sales/order-slips/adjust-stock/${adj.productId}`, {
+        const currentStock = stockMap[adj.productId]?.officeStock ?? 0;
+        const newStock = currentStock + adj.qty;
+        return fetch(`${API_BASE_URL}/sales/products/${adj.productId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officeStockAdjustment: adj.qty, quantity: adj.qty }) 
+          body: JSON.stringify({ officeStock: newStock }) 
         });
       });
+
       await Promise.all(updatePromises);
     } catch (err) {
       console.warn("Bulk stock adjustment failed", err);
     }
   };
 
-  // --- BULLETPROOF NUMBER FETCHERS ---
   const fetchNextOsNumber = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
@@ -178,7 +187,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       return;
     }
 
-    // REDUCED TO 50ms FOR INSTANT SEARCH RESULTS
     const handler = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
@@ -312,8 +320,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setDraftItems(prev => prev.map(item => ({
         ...item, officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock, warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown
       })));
-      showToast("Live stock validated with backend.", "success");
-    } catch (e) { showToast("Failed to refresh stock.", "error"); } finally { setIsRefreshingStock(false); }
+    } catch (e) { console.warn("Failed to refresh stock.", e); } finally { setIsRefreshingStock(false); }
   };
 
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
@@ -361,6 +368,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         await safelyAdjustStockBulk(adjustments);
       }
 
+      await handleRefreshStock();
       showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
       handleClosePrintModal(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
@@ -375,14 +383,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername,
         referenceOs: referenceOs || null,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || "Failed to create Order Slip.");
-      }
+      if (!res.ok) throw new Error("Failed to create Order Slip.");
+      
       const newlyCreatedOs = await res.json();
       
       showToast("Order Slip generated successfully.", "success");
@@ -401,7 +407,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     try {
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -427,6 +433,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         await safelyAdjustStockBulk(adjustments);
       }
 
+      await handleRefreshStock(); // INSTANT SYNC
       showToast("Order updated successfully.", "success");
       setFinalizedOs(updatedOs);
       setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
@@ -452,24 +459,23 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         vatAmount: finalizedOs.vatAmount,
         grandTotal: finalizedOs.grandTotal,
         user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice) }))
+        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to generate Final Order.");
       const newFo = await res.json();
 
-      // Update Parent OS Status
       await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      // --- STOCK DEDUCTED EXCLUSIVELY ON FO GENERATION VIA SECURE ENDPOINT ---
       const adjustments = newFo.items.map((item: any) => ({
         productId: item.productId,
         qty: -Math.abs(Number(item.requestedQty))
       }));
       await safelyAdjustStockBulk(adjustments);
+      await handleRefreshStock(); // INSTANT SYNC
       
       showToast("Final Order logged & Stock Deducted instantly!", "success");
       setFinalizedOs(newFo); 
@@ -524,7 +530,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
                 className="w-full bg-transparent font-mono font-bold text-slate-700 text-xs outline-none placeholder:text-slate-300 focus:text-indigo-600 transition-colors uppercase"
               />
-              {/* DROPDOWN SEPARATING OS AND FO */}
               {showLoadSlipDropdown && filteredSlips.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-[350px] bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-50">
                   {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
