@@ -1,4 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Document, Page, pdfjs } from 'react-pdf';
+import Tesseract from 'tesseract.js';
+
+// Setup PDF.js worker (Required for react-pdf to function)
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 interface DriveItem {
   id: string;
@@ -22,11 +27,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [loading, setLoading] = useState(true);
   const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
 
-  // In-App Document Preview Modal & Highlighting
+  // --- SMART VIEWER STATES ---
   const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
   const [previewHighlightTerms, setPreviewHighlightTerms] = useState<string[]>([]);
   const [rawTextContent, setRawTextContent] = useState<string | null>(null);
-  const [isLoadingRawText, setIsLoadingRawText] = useState(false);
+  const [fileBlobUrl, setFileBlobUrl] = useState<string | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  
+  // OCR & Image States
+  const [ocrBoxes, setOcrBoxes] = useState<any[]>([]);
+  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
 
   // Upload/New Folder States
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -50,104 +60,59 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const fetchDirectory = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/api/docs/directory`, {
-        headers: { 'x-company': selectedCompany },
-      });
+      const res = await fetch(`${API_BASE_URL}/api/docs/directory`, { headers: { 'x-company': selectedCompany }});
       const data = await res.json();
       setFolders(data.folders || []);
       setFiles(data.files || []);
       setCompanyFolderId(data.companyFolderId || '');
-    } catch (err) {
-      console.error('Failed to fetch directory', err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error('Failed to fetch directory', err); } finally { setLoading(false); }
   }, [selectedCompany, API_BASE_URL]);
 
+  useEffect(() => { fetchDirectory(); }, [fetchDirectory]);
+
+  // Clean up Blob URLs to prevent memory leaks
   useEffect(() => {
-    fetchDirectory();
-  }, [fetchDirectory]);
+    return () => { if (fileBlobUrl) URL.revokeObjectURL(fileBlobUrl); };
+  }, [fileBlobUrl]);
 
-  // Handle Document Upload
   const handleUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) return;
-
+    e.preventDefault(); if (!selectedFile) return;
     setIsUploading(true);
     const formData = new FormData();
     formData.append('file', selectedFile);
-
     const targetFolder = destinationChoice === 'subfolder' ? selectedSubfolderId : companyFolderId;
     if (targetFolder) formData.append('targetFolderId', targetFolder);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
-        method: 'POST',
-        headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
-        body: formData,
-      });
-
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || `Server Error: ${res.status}`);
-
+      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, { method: 'POST', headers: { 'x-company': selectedCompany, 'x-username': loginUsername }, body: formData });
+      if (!res.ok) throw new Error("Upload Failed");
       alert(`Document uploaded successfully!`);
-      setSelectedFile(null);
-      setIsUploadModalOpen(false);
-      fetchDirectory();
-    } catch (err: any) {
-      alert(`Failed to upload document: ${err.message}`);
-    } finally {
-      setIsUploading(false);
-    }
+      setSelectedFile(null); setIsUploadModalOpen(false); fetchDirectory();
+    } catch (err: any) { alert(`Failed to upload document: ${err.message}`); } finally { setIsUploading(false); }
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFolderName.trim()) return;
-
+    e.preventDefault(); if (!newFolderName.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-        body: JSON.stringify({ folderName: newFolderName }),
-      });
+      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany }, body: JSON.stringify({ folderName: newFolderName }) });
       if (!res.ok) throw new Error();
-      setNewFolderName('');
-      setIsNewFolderModalOpen(false);
-      fetchDirectory();
-    } catch {
-      alert('Could not create folder.');
-    }
+      setNewFolderName(''); setIsNewFolderModalOpen(false); fetchDirectory();
+    } catch { alert('Could not create folder.'); }
   };
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-
-    setIsSearching(true);
-    setAiAnswer(null);
-
+    e.preventDefault(); if (!searchQuery.trim()) return;
+    setIsSearching(true); setAiAnswer(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
-        body: JSON.stringify({ query: searchQuery, model: selectedModel }),
-      });
-
+      const res = await fetch(`${API_BASE_URL}/api/docs/search`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername }, body: JSON.stringify({ query: searchQuery, model: selectedModel }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Search failed');
-
       setAiAnswer(data.answer);
-    } catch (err: any) {
-      setAiAnswer(`Error: ${err.message}`);
-    } finally {
-      setIsSearching(false);
-    }
+    } catch (err: any) { setAiAnswer(`Error: ${err.message}`); } finally { setIsSearching(false); }
   };
 
-  // --- NEW SMART VIEWER ENGINE ---
+  // --- SMART VIEWER ENGINE ---
   const extractKeywordsFromAi = (answer: string) => {
-    // Highly simplified extraction: grab capitalized words or long words to act as highlight targets
     const words = answer.match(/\b[A-Z][a-z]{3,}\b|\b[a-zA-Z]{6,}\b/g) || [];
     return Array.from(new Set(words));
   };
@@ -155,51 +120,73 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const openSmartViewer = async (file: DriveItem, fromAiSearch: boolean = false) => {
     setPreviewItem(file);
     setRawTextContent(null);
+    setFileBlobUrl(null);
+    setOcrBoxes([]);
+    setImageDims(null);
     
-    if (fromAiSearch && aiAnswer) {
-      setPreviewHighlightTerms(extractKeywordsFromAi(aiAnswer));
-    } else {
-      setPreviewHighlightTerms([]);
-    }
+    const keywords = (fromAiSearch && aiAnswer) ? extractKeywordsFromAi(aiAnswer) : [];
+    setPreviewHighlightTerms(keywords);
 
-    // Natively fetch and read text-based files for direct highlighting
-    const isTextFile = file.mimeType?.includes('text') || file.mimeType?.includes('csv') || file.name.endsWith('.md');
-    
-    if (isTextFile) {
-      setIsLoadingRawText(true);
-      try {
-        // In a real production app, you need a backend proxy route like /api/docs/download/:id
-        // to bypass Google Drive's CORS restrictions and get the raw file bytes.
-        const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
-        if (res.ok) {
-          const text = await res.text();
-          setRawTextContent(text);
+    setIsExtracting(true);
+    try {
+      // CRITICAL: Your backend must have this route setup to download the raw file bytes
+      const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
+      if (!res.ok) throw new Error("Could not fetch file bytes");
+
+      const mime = file.mimeType || '';
+      if (mime.includes('text') || mime.includes('csv') || file.name.endsWith('.md')) {
+        const text = await res.text();
+        setRawTextContent(text);
+        setIsExtracting(false);
+      } else {
+        // Handle PDF and Images via Blob
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setFileBlobUrl(url);
+
+        if (mime.includes('image') && keywords.length > 0) {
+          // Get Image Dimensions for relative bounding boxes
+          const img = new Image();
+          img.onload = () => {
+            setImageDims({ w: img.width, h: img.height });
+            // Run Tesseract OCR
+            Tesseract.recognize(url, 'eng').then(({ data: { words } }) => {
+              const matches = words.filter(w => keywords.some(k => w.text.toLowerCase().includes(k.toLowerCase())));
+              setOcrBoxes(matches);
+              setIsExtracting(false);
+            });
+          };
+          img.src = url;
         } else {
-          setRawTextContent("Could not load raw text. File might be too large or restricted.");
+          setIsExtracting(false);
         }
-      } catch (e) {
-        setRawTextContent("Failed to proxy raw text due to network error.");
-      } finally {
-        setIsLoadingRawText(false);
       }
+    } catch (e) {
+      console.warn("Falling back to Drive standard preview. Ensure your backend proxy is running.");
+      setIsExtracting(false);
     }
   };
 
   const renderHighlightedText = (text: string, terms: string[]) => {
     if (!terms.length) return <span className="whitespace-pre-wrap">{text}</span>;
-    
-    // Create a safe regex from all extracted AI keywords
     const regex = new RegExp(`(${terms.join('|')})`, 'gi');
     const parts = text.split(regex);
-
     return (
       <span className="whitespace-pre-wrap text-slate-700 leading-relaxed text-sm">
-        {parts.map((part, i) => 
-          regex.test(part) ? <mark key={i} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded shadow-sm">{part}</mark> : <span key={i}>{part}</span>
-        )}
+        {parts.map((part, i) => regex.test(part) ? <mark key={i} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded shadow-sm">{part}</mark> : <span key={i}>{part}</span>)}
       </span>
     );
   };
+
+  // react-pdf custom text renderer
+  const customTextRenderer = useCallback((textItem: any) => {
+    if (!previewHighlightTerms.length) return textItem.str;
+    const regex = new RegExp(`(${previewHighlightTerms.join('|')})`, 'gi');
+    const parts = textItem.str.split(regex);
+    return parts.map((part: string, index: number) => 
+      regex.test(part) ? <mark key={index} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded">{part}</mark> : part
+    );
+  }, [previewHighlightTerms]);
 
   const renderFormattedAiText = (text: string) => {
     const lines = text.split('\n');
@@ -222,21 +209,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             const matchedFile = files.find(f => f.id === fileId) || { id: fileId, name: linkText, webViewLink: linkUrl, mimeType: 'unknown' };
 
             parts.push(
-              <button
-                key={`${lineIndex}-${match.index}`}
-                onClick={() => openSmartViewer(matchedFile, true)}
-                className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/80 px-2 py-0.5 rounded text-left shadow-sm"
-              >
+              <button key={`${lineIndex}-${match.index}`} onClick={() => openSmartViewer(matchedFile, true)} className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/80 px-2 py-0.5 rounded text-left shadow-sm">
                 <span>{linkText}</span>
                 <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
               </button>
             );
           } else {
             parts.push(
-              <a
-                key={`${lineIndex}-${match.index}`} href={linkUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-bold text-sky-600 hover:text-sky-800 underline decoration-sky-300 hover:decoration-sky-600 transition-colors break-all bg-sky-50/60 px-1.5 py-0.5 rounded"
-              >
+              <a key={`${lineIndex}-${match.index}`} href={linkUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-bold text-sky-600 hover:text-sky-800 underline decoration-sky-300 hover:decoration-sky-600 transition-colors break-all bg-sky-50/60 px-1.5 py-0.5 rounded">
                 <span>{linkText}</span>
                 <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
               </a>
@@ -257,11 +237,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const totalSelectable = currentFolder ? currentFolderFiles.length : (folders.length + rootFiles.length);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-      setSelectedItemIds(!currentFolder ? [...folders.map(f => f.id), ...rootFiles.map(f => f.id)] : currentFolderFiles.map(f => f.id));
-    } else {
-      setSelectedItemIds([]);
-    }
+    if (e.target.checked) setSelectedItemIds(!currentFolder ? [...folders.map(f => f.id), ...rootFiles.map(f => f.id)] : currentFolderFiles.map(f => f.id));
+    else setSelectedItemIds([]);
   };
 
   const handleToggleSelect = (id: string) => setSelectedItemIds(prev => prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]);
@@ -269,7 +246,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const handleDeleteSelected = async () => {
     if (selectedItemIds.length === 0) return;
     if (!window.confirm(`Permanently delete ${selectedItemIds.length} items from Drive and Database?`)) return;
-
     setIsDeleting(true);
     try {
       await Promise.all(selectedItemIds.map(id => fetch(`${API_BASE_URL}/api/docs/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })));
@@ -281,15 +257,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
       <header className="border-b border-slate-100 px-6 sm:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-          </button>
+          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg></button>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">{selectedCompany} Workspace</h1>
             <p className="text-xs text-slate-400 font-medium tracking-wide">Google Drive & Gemini Index</p>
           </div>
         </div>
-
         <div className="flex items-center gap-3">
           <button onClick={() => setIsNewFolderModalOpen(true)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">+ New Folder</button>
           <button onClick={() => setIsUploadModalOpen(true)} className="px-5 sm:px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold tracking-wide transition-colors shadow-sm">Upload Document</button>
@@ -346,7 +319,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               {!currentFolder ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                   <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                    <input type="checkbox" disabled title="Root folder cannot be deleted" className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
+                    <input type="checkbox" disabled className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
                     <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
                       <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{rootFiles.length} files</span>
                     </button>
@@ -395,9 +368,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   <h3 className="font-black text-slate-900 text-lg truncate tracking-tight">{previewItem.name}</h3>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded uppercase tracking-widest font-black">Smart Viewer Engine</span>
-                    {previewHighlightTerms.length > 0 && (
-                      <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>
-                    )}
+                    {previewHighlightTerms.length > 0 && <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>}
                   </div>
                 </div>
               </div>
@@ -407,36 +378,48 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <span>Drive Native</span><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                   </a>
                 )}
-                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); setFileBlobUrl(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
               </div>
             </div>
 
-            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex">
-              {/* If it's a natively highlighted text file */}
-              {rawTextContent !== null ? (
+            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex justify-center">
+              {isExtracting ? (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
+                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Bytes & Running OCR...</span>
+                </div>
+              ) : rawTextContent !== null ? (
+                // TEXT FILE RENDERER
                 <div className="w-full h-full p-8 overflow-y-auto bg-white mx-auto max-w-4xl shadow-inner text-left font-mono">
                   {renderHighlightedText(rawTextContent, previewHighlightTerms)}
                 </div>
-              ) : isLoadingRawText ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
-                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Text Coordinates...</span>
+              ) : fileBlobUrl && previewItem.mimeType?.includes('pdf') ? (
+                // REACT-PDF RENDERER
+                <div className="w-full h-full overflow-y-auto bg-slate-300 flex flex-col items-center py-8">
+                   <Document file={fileBlobUrl} loading={<div className="text-slate-500 font-bold uppercase tracking-widest text-sm">Rendering PDF...</div>}>
+                     <Page pageNumber={1} renderTextLayer={true} customTextRenderer={customTextRenderer} className="shadow-2xl" />
+                   </Document>
+                </div>
+              ) : fileBlobUrl && previewItem.mimeType?.includes('image') ? (
+                // TESSERACT IMAGE RENDERER WITH ABSOLUTE BOUNDING BOXES
+                <div className="relative max-h-full overflow-auto inline-block bg-slate-900 shadow-2xl m-auto border border-slate-700">
+                  <img src={fileBlobUrl} alt={previewItem.name} className="block max-w-full object-contain" />
+                  {imageDims && ocrBoxes.map((box, i) => {
+                    const left = (box.bbox.x0 / imageDims.w) * 100;
+                    const top = (box.bbox.y0 / imageDims.h) * 100;
+                    const width = ((box.bbox.x1 - box.bbox.x0) / imageDims.w) * 100;
+                    const height = ((box.bbox.y1 - box.bbox.y0) / imageDims.h) * 100;
+                    return (
+                      <div key={i} className="absolute border-2 border-yellow-400 bg-yellow-400/30 shadow-[0_0_8px_rgba(250,204,21,0.8)] pointer-events-none" style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }} />
+                    );
+                  })}
                 </div>
               ) : (
-                /* Fallback for PDFs/Images until react-pdf and tesseract.js are installed */
-                <div className="w-full h-full relative">
-                  {previewHighlightTerms.length > 0 && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-top-4 max-w-md border border-slate-700">
-                      <span className="text-2xl mb-2">⚠️</span>
-                      <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-amber-400">Advanced OCR Required</h4>
-                      <p className="text-xs text-slate-300 font-medium">To physically highlight AI keywords inside PDFs or Images, you must run <code className="bg-slate-800 px-1 py-0.5 rounded text-sky-300">npm install react-pdf tesseract.js</code> and deploy a raw byte proxy on your server.</p>
-                      <p className="text-[10px] text-slate-500 mt-3 font-bold uppercase tracking-widest">Falling back to Drive standard preview...</p>
-                    </div>
-                  )}
-                  <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
-                </div>
+                // FALLBACK TO GOOGLE DRIVE
+                <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white" allow="autoplay" title={previewItem.name} />
               )}
             </div>
+
           </div>
         </div>
       )}
