@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Headers, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Param, Body, Headers, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentService } from './document.service';
@@ -41,11 +41,16 @@ export class DocumentController {
   @Post('search')
   async search(
     @Body('query') query: string,
-    @Body('model') targetModel: string, // NEW: Accepts selected model from UI
+    @Body('model') targetModel: string,
     @Headers('x-company') company: string,
     @Headers('x-username') username: string,
   ) {
     if (!query) throw new BadRequestException('Query cannot be empty');
     return this.documentService.searchDocuments(query, company, username, targetModel);
   }
-} 
+
+  @Delete(':id')
+  async deleteDocument(@Param('id') id: string) {
+    return this.documentService.deleteDocument(id);
+  }
+}

@@ -35,8 +35,8 @@ export class DriveService {
         q: query,
         fields: 'files(id, name)',
         spaces: 'drive',
-        includeItemsFromAllDrives: true, // <--- CRITICAL FIX FOR SHARED DRIVES
-        supportsAllDrives: true,         // <--- CRITICAL FIX FOR SHARED DRIVES
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
       });
 
       if (searchRes.data.files && searchRes.data.files.length > 0) {
@@ -51,7 +51,7 @@ export class DriveService {
           parents: [rootFolderId],
         },
         fields: 'id',
-        supportsAllDrives: true, // <--- CRITICAL FIX
+        supportsAllDrives: true,
       });
 
       return createRes.data.id;
@@ -65,18 +65,16 @@ export class DriveService {
   async getCompanyDirectory(companyName: string) {
     const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
 
-    // 1. Fetch subfolders
     const folderQuery = `'${companyFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const folderRes = await this.drive.files.list({
       q: folderQuery,
       fields: 'files(id, name, mimeType, parents)',
       spaces: 'drive',
-      includeItemsFromAllDrives: true, // <--- CRITICAL FIX
-      supportsAllDrives: true,         // <--- CRITICAL FIX
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true,
     });
     const folders = folderRes.data.files || [];
 
-    // 2. Fetch files inside root AND subfolders
     const subfolderIds = folders.map((f: any) => `'${f.id}' in parents`).join(' or ');
     const parentQuery = subfolderIds 
       ? `('${companyFolderId}' in parents or ${subfolderIds})` 
@@ -88,8 +86,8 @@ export class DriveService {
       q: fileQuery,
       fields: 'files(id, name, mimeType, webViewLink, createdTime, size, parents)',
       spaces: 'drive',
-      includeItemsFromAllDrives: true, // <--- CRITICAL FIX
-      supportsAllDrives: true,         // <--- CRITICAL FIX
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true,
     });
     const files = fileRes.data.files || [];
 
@@ -105,7 +103,7 @@ export class DriveService {
         parents: [parentId],
       },
       fields: 'id, name',
-      supportsAllDrives: true, // <--- CRITICAL FIX
+      supportsAllDrives: true,
     });
     return createRes.data;
   }
@@ -128,7 +126,7 @@ export class DriveService {
         requestBody: fileMetadata,
         media: media,
         fields: 'id, webViewLink',
-        supportsAllDrives: true, // <--- CRITICAL FIX
+        supportsAllDrives: true,
       });
 
       return response.data.webViewLink;
@@ -136,6 +134,17 @@ export class DriveService {
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Google Drive Upload Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    try {
+      await this.drive.files.delete({ 
+        fileId,
+        supportsAllDrives: true 
+      });
+    } catch (error: any) {
+      this.logger.warn(`Could not delete file ${fileId} from Drive: ${error.message}`);
     }
   }
 }

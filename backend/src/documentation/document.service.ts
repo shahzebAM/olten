@@ -114,10 +114,6 @@ export class DocumentService {
       const answer = await this.geminiService.askQuestion(query, filesData, cacheName, targetModel);
       const responseText = answer.text || 'No response generated.';
 
-      // =================================================================
-      // CRITICAL FIX: We now safely ignore the database error if the 
-      // SearchHistory table does not exist in your Prisma schema!
-      // =================================================================
       try {
         // @ts-ignore
         await prisma.searchHistory.create({
@@ -138,10 +134,35 @@ export class DocumentService {
       return { answer: responseText, model: targetModel, sourcesSearched: filesData.length, cached: !!cacheName };
     
     } catch (error: any) {
-      // By using BadRequestException, the exact error string is sent back to your React app
-      // so you can see exactly what went wrong on the screen instead of a blind 500 error!
       this.logger.error(`Search Request Failed: ${error.message}`);
       throw new BadRequestException(error.message);
     }
+  }
+
+  async deleteDocument(id: string) {
+    // @ts-ignore
+    const doc = await prisma.document.findUnique({ where: { id } });
+    if (!doc) throw new BadRequestException('Document not found');
+
+    // 1. Delete from Gemini
+    if (doc.geminiFileId) {
+      try { await this.geminiService.deleteGeminiFile(doc.geminiFileId); } catch (e) { this.logger.warn(`Gemini file inaccessible`); }
+    }
+
+    // 2. Delete from Google Drive
+    if (doc.googleDriveLink) {
+      try {
+        const match = doc.googleDriveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          await this.driveService.deleteFile(match[1]);
+        }
+      } catch (e) { this.logger.warn(`Drive file inaccessible`); }
+    }
+
+    // 3. Delete from Prisma
+    // @ts-ignore
+    await prisma.document.delete({ where: { id } });
+    
+    return { success: true, message: 'Document permanently deleted' };
   }
 }
