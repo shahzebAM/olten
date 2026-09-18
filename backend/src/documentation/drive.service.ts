@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { Readable } from 'stream';
 import * as dotenv from 'dotenv';
 
-dotenv.config(); // 1. Force NestJS to load the .env variables!
+dotenv.config();
 
 @Injectable()
 export class DriveService {
@@ -11,7 +11,6 @@ export class DriveService {
   private drive: any;
 
   constructor() {
-    // 2. We use .trim() to automatically delete any accidental spaces copied from the browser
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID?.trim(),
       process.env.GOOGLE_CLIENT_SECRET?.trim(),
@@ -36,6 +35,8 @@ export class DriveService {
         q: query,
         fields: 'files(id, name)',
         spaces: 'drive',
+        includeItemsFromAllDrives: true, // <--- CRITICAL FIX FOR SHARED DRIVES
+        supportsAllDrives: true,         // <--- CRITICAL FIX FOR SHARED DRIVES
       });
 
       if (searchRes.data.files && searchRes.data.files.length > 0) {
@@ -50,31 +51,32 @@ export class DriveService {
           parents: [rootFolderId],
         },
         fields: 'id',
+        supportsAllDrives: true, // <--- CRITICAL FIX
       });
 
       return createRes.data.id;
     } catch (error: any) {
-      // 3. This stops the terminal crash and prints only the ACTUAL 1-sentence error!
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Folder Creation Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
     }
   }
 
-  // UPDATED: Now fetches subfolders and requests the 'parents' property
   async getCompanyDirectory(companyName: string) {
     const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
 
-    // 1. First, fetch all the subfolders inside the Company Root
+    // 1. Fetch subfolders
     const folderQuery = `'${companyFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const folderRes = await this.drive.files.list({
       q: folderQuery,
       fields: 'files(id, name, mimeType, parents)',
       spaces: 'drive',
+      includeItemsFromAllDrives: true, // <--- CRITICAL FIX
+      supportsAllDrives: true,         // <--- CRITICAL FIX
     });
     const folders = folderRes.data.files || [];
 
-    // 2. Build a query to search inside the Root AND inside all Subfolders simultaneously
+    // 2. Fetch files inside root AND subfolders
     const subfolderIds = folders.map((f: any) => `'${f.id}' in parents`).join(' or ');
     const parentQuery = subfolderIds 
       ? `('${companyFolderId}' in parents or ${subfolderIds})` 
@@ -82,11 +84,12 @@ export class DriveService {
       
     const fileQuery = `${parentQuery} and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
 
-    // 3. Fetch the files AND explicitly ask Google for the 'parents' field so React can sort them
     const fileRes = await this.drive.files.list({
       q: fileQuery,
       fields: 'files(id, name, mimeType, webViewLink, createdTime, size, parents)',
       spaces: 'drive',
+      includeItemsFromAllDrives: true, // <--- CRITICAL FIX
+      supportsAllDrives: true,         // <--- CRITICAL FIX
     });
     const files = fileRes.data.files || [];
 
@@ -102,6 +105,7 @@ export class DriveService {
         parents: [parentId],
       },
       fields: 'id, name',
+      supportsAllDrives: true, // <--- CRITICAL FIX
     });
     return createRes.data;
   }
@@ -124,11 +128,11 @@ export class DriveService {
         requestBody: fileMetadata,
         media: media,
         fields: 'id, webViewLink',
+        supportsAllDrives: true, // <--- CRITICAL FIX
       });
 
       return response.data.webViewLink;
     } catch (error: any) {
-      // This stops the terminal crash and prints only the ACTUAL 1-sentence error!
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Google Drive Upload Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
