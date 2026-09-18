@@ -34,7 +34,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   // Search & AI States
   const [searchQuery, setSearchQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.6-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearching, setIsSearching] = useState(false);
 
   // --- BULK DELETION STATES ---
