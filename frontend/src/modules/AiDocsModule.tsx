@@ -112,8 +112,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setPreviewHighlightTerms([]);
     }
 
-    // EXPLICITLY filter out CSV and Excel files. 
-    // They will bypass raw text extraction and perfectly load the Drive native spreadsheet viewer.
     const isTextFile = file.mimeType?.includes('text/plain') || file.name.endsWith('.txt') || file.name.endsWith('.md');
     
     if (isTextFile) {
@@ -124,11 +122,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           const text = await res.text();
           setRawTextContent(text);
         } else {
-          // Silent fail: Setting to null smoothly triggers the Drive iframe fallback
           setRawTextContent(null);
         }
       } catch (e) {
-        // Silent fail
         setRawTextContent(null);
       } finally {
         setIsLoadingRawText(false);
@@ -327,7 +323,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   <h3 className="font-black text-slate-900 text-lg truncate tracking-tight">{previewItem.name}</h3>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded uppercase tracking-widest font-black">Smart Viewer Engine</span>
-                    {previewHighlightTerms.length > 0 && <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>}
+                    {previewHighlightTerms.length > 0 && rawTextContent !== null && (
+                      <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -353,13 +351,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 </div>
               ) : (
                 <div className="w-full h-full relative">
-                  {previewHighlightTerms.length > 0 && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-top-4 max-w-md border border-slate-700 pointer-events-none">
-                      <span className="text-2xl mb-2">⚠️</span>
-                      <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-amber-400">Native Preview Active</h4>
-                      <p className="text-xs text-slate-300 font-medium">Physical keyword highlighting is only available for simple text documents. Complex files (PDFs, Images, Spreadsheets) are safely rendered in native mode.</p>
-                    </div>
-                  )}
                   <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
                 </div>
               )}
