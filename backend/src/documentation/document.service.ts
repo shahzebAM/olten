@@ -12,7 +12,6 @@ const prisma = new PrismaClient();
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
   
-  // UPDATED: Now tracks which model generated the cache
   private companyCache: Map<string, { cacheName: string, expiresAt: number, model: string }> = new Map();
 
   constructor(
@@ -71,60 +70,78 @@ export class DocumentService {
   }
 
   async searchDocuments(query: string, company: string, username: string, requestedModel?: string) {
-    // @ts-ignore
-    const docs = await prisma.document.findMany({
-      where: { company, status: 'ACTIVE' },
-    });
+    try {
+      // @ts-ignore
+      const docs = await prisma.document.findMany({
+        where: { company, status: 'ACTIVE' },
+      });
 
-    if (!docs || docs.length === 0) throw new BadRequestException(`No active documents found.`);
-
-    const filesData: { uri: string; mimeType: string; name: string; driveLink: string }[] = docs
-      .filter((d: any) => typeof d.geminiFileUri === 'string' && d.geminiFileUri.length > 0)
-      .map((d: any) => ({
-        uri: d.geminiFileUri,
-        mimeType: d.mimeType || 'application/pdf',
-        name: d.filename || 'Unknown Document',
-        driveLink: d.googleDriveLink || 'No link available',
-      }));
-
-    if (filesData.length === 0) throw new BadRequestException('Documents exist, but have not finished indexing.');
-
-    // Change this line (around line 77)
-const targetModel = requestedModel || 'gemini-1.5-flash';
-    let cacheName: string | null = null;
-    let cacheInfo = this.companyCache.get(company);
-
-    // If cache does not exist, expired, OR the model changed, create a fresh one
-    if (!cacheInfo || Date.now() > cacheInfo.expiresAt || cacheInfo.model !== targetModel) {
-      this.logger.log(`Generating Context Cache for ${company} using ${targetModel}...`);
-      
-      const newCacheName = await this.geminiService.createDocumentCache(filesData, targetModel);
-      
-      if (newCacheName) {
-        cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000), model: targetModel };
-        this.companyCache.set(company, cacheInfo);
-        cacheName = newCacheName;
+      if (!docs || docs.length === 0) {
+        throw new Error(`No active documents found for ${company}.`);
       }
-    } else {
-      cacheName = cacheInfo.cacheName;
+
+      const filesData = docs
+        .filter((d: any) => typeof d.geminiFileUri === 'string' && d.geminiFileUri.length > 0)
+        .map((d: any) => ({
+          uri: d.geminiFileUri,
+          mimeType: d.mimeType || 'application/pdf',
+          name: d.filename || 'Unknown Document',
+          driveLink: d.googleDriveLink || 'No link available',
+        }));
+
+      if (filesData.length === 0) {
+        throw new Error('Documents exist, but have not finished indexing in Gemini.');
+      }
+
+      const targetModel = requestedModel || 'gemini-1.5-flash';
+      let cacheName: string | null = null;
+      let cacheInfo = this.companyCache.get(company);
+
+      if (!cacheInfo || Date.now() > cacheInfo.expiresAt || cacheInfo.model !== targetModel) {
+        this.logger.log(`Generating Context Cache for ${company} using ${targetModel}...`);
+        
+        const newCacheName = await this.geminiService.createDocumentCache(filesData, targetModel);
+        
+        if (newCacheName) {
+          cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000), model: targetModel };
+          this.companyCache.set(company, cacheInfo);
+          cacheName = newCacheName;
+        }
+      } else {
+        cacheName = cacheInfo.cacheName;
+      }
+
+      const answer = await this.geminiService.askQuestion(query, filesData, cacheName, targetModel);
+      const responseText = answer.text || 'No response generated.';
+
+      // =================================================================
+      // CRITICAL FIX: We now safely ignore the database error if the 
+      // SearchHistory table does not exist in your Prisma schema!
+      // =================================================================
+      try {
+        // @ts-ignore
+        await prisma.searchHistory.create({
+          data: {
+            username: username || 'Anonymous',
+            company: company,
+            query: query,
+            response: responseText,
+            modelUsed: targetModel,
+            promptTokens: answer.usage?.promptTokenCount || 0,
+            completionTokens: answer.usage?.candidatesTokenCount || 0,
+          },
+        });
+      } catch (dbError) {
+        this.logger.warn('SearchHistory table not found in Prisma Schema. Skipping database logging.');
+      }
+
+      return { answer: responseText, model: targetModel, sourcesSearched: filesData.length, cached: !!cacheName };
+    
+    } catch (error: any) {
+      // By using BadRequestException, the exact error string is sent back to your React app
+      // so you can see exactly what went wrong on the screen instead of a blind 500 error!
+      this.logger.error(`Search Request Failed: ${error.message}`);
+      throw new BadRequestException(error.message);
     }
-
-    const answer = await this.geminiService.askQuestion(query, filesData, cacheName, targetModel);
-    const responseText = answer.text || 'No response generated.';
-
-    // @ts-ignore
-    await prisma.searchHistory.create({
-      data: {
-        username: username || 'Anonymous',
-        company: company,
-        query: query,
-        response: responseText,
-        modelUsed: targetModel,
-        promptTokens: answer.usage?.promptTokenCount || 0,
-        completionTokens: answer.usage?.candidatesTokenCount || 0,
-      },
-    });
-
-    return { answer: responseText, model: targetModel, sourcesSearched: filesData.length, cached: !!cacheName };
   }
 }
