@@ -58,20 +58,6 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setTimeout(() => setToast(null), 3500); 
   };
 
-  // --- SECURE BULK STOCK ADJUSTMENT ENGINE ---
-  const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
-    if (adjustments.length === 0) return;
-    try {
-      await fetch(`${API_BASE_URL}/sales/order-slips/adjust-bulk-stock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, adjustments })
-      });
-    } catch (err) {
-      console.warn("Bulk stock adjustment failed", err);
-    }
-  };
-
   const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -86,9 +72,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     }
   }, [selectedCompany, API_BASE_URL]);
 
-  useEffect(() => {
-    fetchOrderSlips();
-  }, [fetchOrderSlips]);
+  useEffect(() => { fetchOrderSlips(); }, [fetchOrderSlips]);
 
   // PRE-CALCULATE NEXT FO NUMBER WHEN VIEWING AN OS
   useEffect(() => {
@@ -115,16 +99,11 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   // --- FILTERING LOGIC ---
   const filteredSlips = useMemo(() => {
-    let filtered = allSlips.filter(s => 
-      activeTab === 'OS' ? s.osNumber.startsWith('OS') : s.osNumber.startsWith('FO')
-    );
-
+    let filtered = allSlips.filter(s => activeTab === 'OS' ? s.osNumber.startsWith('OS') : s.osNumber.startsWith('FO'));
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(s => 
-        s.osNumber.toLowerCase().includes(q) || 
-        (s.referenceOs && s.referenceOs.toLowerCase().includes(q)) ||
-        (s.customer && s.customer.name.toLowerCase().includes(q))
+        s.osNumber.toLowerCase().includes(q) || (s.referenceOs && s.referenceOs.toLowerCase().includes(q)) || (s.customer && s.customer.name.toLowerCase().includes(q))
       );
     }
     return filtered;
@@ -136,87 +115,47 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setIsGeneratingFo(true);
     try {
       const payload = {
-        osNumber: foNumberInput.trim(),
-        referenceOs: viewSlip.osNumber,
-        company: selectedCompany,
-        customerId: viewSlip.customerId,
-        isVatApplied: viewSlip.vatApplied,
-        vatRate: viewSlip.vatRate,
-        subtotal: viewSlip.subtotal,
-        vatAmount: viewSlip.vatAmount,
-        grandTotal: viewSlip.grandTotal,
-        user: loginUsername,
+        osNumber: foNumberInput.trim(), referenceOs: viewSlip.osNumber, company: selectedCompany, customerId: viewSlip.customerId,
+        isVatApplied: viewSlip.vatApplied, vatRate: viewSlip.vatRate, subtotal: viewSlip.subtotal, vatAmount: viewSlip.vatAmount, grandTotal: viewSlip.grandTotal, user: loginUsername,
         items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to generate FO");
-      const newFo = await res.json();
-
+      
       await fetch(`${API_BASE_URL}/sales/order-slips/${viewSlip.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
 
-      // EXACT DEDUCTION ENGINE HIT
-      const adjustments = newFo.items.map((item: any) => ({
-        productId: item.productId,
-        qty: -Math.abs(Number(item.requestedQty))
-      }));
-      await safelyAdjustStockBulk(adjustments);
-
-      showToast("Final Order Generated & Stock Deducted!", "success");
+      showToast("Final Order Generated & Stock Deducted by Backend!", "success");
       setViewSlip(null);
       fetchOrderSlips();
-    } catch(e: any) {
-      showToast(e.message || "Failed to generate Final Order", "error");
-    } finally {
-      setIsGeneratingFo(false);
-    }
+    } catch(e: any) { showToast(e.message || "Failed to generate Final Order", "error"); } finally { setIsGeneratingFo(false); }
   };
 
-  // --- CASCADE CANCEL / RETURN ENGINE ---
   const processStatusChange = async (slip: OrderSlip, newStatus: 'Cancelled' | 'Returned') => {
     const isFO = slip.osNumber.startsWith('FO');
-    const linkedFo = allSlips.find(s => s.referenceOs === slip.osNumber && s.osNumber.startsWith('FO') && s.status !== 'Cancelled' && s.status !== 'Returned');
-    const parentOs = isFO && slip.referenceOs ? allSlips.find(s => s.osNumber === slip.referenceOs) : null;
-
     let confirmMsg = `Are you sure you want to mark this document as ${newStatus}?`;
-    if (!isFO && linkedFo) {
-      confirmMsg = `This OS has a linked Final Order (${linkedFo.osNumber}). Marking this OS as ${newStatus} will ALSO cancel the Final Order and safely restore the warehouse stock. Proceed?`;
-    } else if (isFO && (newStatus === 'Cancelled' || newStatus === 'Returned')) {
-      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock. Proceed?`;
+
+    if (!isFO) {
+      confirmMsg = `Notice: Marking an OS as ${newStatus} is safe. However, if an active Final Order exists for this OS, the backend will strictly block this action. Proceed?`;
+    } else {
+      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office. Proceed?`;
     }
 
     if (!window.confirm(confirmMsg)) return;
 
     setIsLoading(true);
     try {
-      await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { 
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}/cancel`, { 
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername }) 
       });
-
-      // 1. If it's an FO, restore stock directly and cancel parent OS
-      if (isFO) {
-        const adjustments = slip.items.map(item => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
-
-        if (parentOs && parentOs.status !== 'Cancelled' && parentOs.status !== 'Returned') {
-          await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-          });
-        }
-      } 
-      // 2. If OS with a linked FO, cascade cancel the FO and restore its stock
-      else if (linkedFo) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-        });
-        
-        const adjustments = linkedFo.items.map((item: any) => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || `Failed to process cancellation.`);
       }
 
-      showToast(`Document marked as ${newStatus} & Stock Restored!`, "success");
+      showToast(`Document marked as ${newStatus}!`, "success");
       setViewSlip(null);
       fetchOrderSlips(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsLoading(false); }
@@ -224,39 +163,26 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
   const handleHardDelete = async (slip: OrderSlip) => {
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
-    
     const isFO = slip.osNumber.startsWith('FO');
-    const linkedFo = allSlips.find(s => s.referenceOs === slip.osNumber && s.osNumber.startsWith('FO'));
-    const parentOs = isFO && slip.referenceOs ? allSlips.find(s => s.osNumber === slip.referenceOs) : null;
-
     let confirmMsg = "CRITICAL WARNING: This will permanently wipe this record from the database. Are you sure?";
-    if (!isFO && linkedFo) {
-      confirmMsg = `WARNING: This OS has a linked Final Order (${linkedFo.osNumber}). Deleting this OS will ALSO permanently wipe the Final Order and safely restore the warehouse stock! Proceed?`;
-    } else if (isFO) {
-      confirmMsg = `CRITICAL WARNING: You are deleting a Final Order. This will permanently wipe the record, safely restore the stock, AND ALSO permanently wipe its parent OS (${slip.referenceOs}). Proceed?`;
+    
+    if (!isFO) {
+      confirmMsg = "Notice: Deleting this OS is safe. However, if a Final Order exists for this OS, the backend will strictly block this action. Proceed?";
+    } else {
+      confirmMsg = "CRITICAL WARNING: You are deleting a Final Order. The backend will restore the stock, and also permanently wipe its parent OS. Proceed?";
     }
 
     if (!window.confirm(confirmMsg)) return;
 
     setIsLoading(true);
     try {
-      const foToRestore = isFO ? slip : linkedFo;
-      if (foToRestore && foToRestore.status !== 'Cancelled' && foToRestore.status !== 'Returned') {
-        const adjustments = foToRestore.items.map(item => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Failed to delete record.");
       }
 
-      if (!isFO && linkedFo) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { method: 'DELETE' });
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-      } else if (isFO && parentOs) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-        await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { method: 'DELETE' });
-      } else {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
-      }
-
-      showToast("Records permanently deleted and stock restored.", "success");
+      showToast("Records permanently deleted.", "success");
       fetchOrderSlips();
     } catch (e: any) { showToast(e.message || "Failed to delete record.", "error"); } finally { setIsLoading(false); }
   };
@@ -274,44 +200,25 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
       {/* HEADER WITH OS GEN BUTTON */}
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10 print:hidden">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Document Ledger</span></h2>
-        </div>
+        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Document Ledger</span></h2></div>
         <div className="flex gap-3">
           {onCreateNew && (
-            <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">
-              OS Gen
-            </button>
+            <button onClick={onCreateNew} className="px-4 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm">OS Gen</button>
           )}
-          <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
-            Back to Gateway
-          </button>
+          <button onClick={onBack} className="px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">Back to Gateway</button>
         </div>
       </header>
 
       {/* NAVIGATION TABS & SEARCH */}
       <div className="bg-white border-b border-slate-200 px-6 sm:px-8 py-4 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4 print:hidden">
         <div className="flex bg-slate-100 p-1 rounded-xl shadow-inner w-full sm:w-auto">
-          <button 
-            onClick={() => setActiveTab('OS')} 
-            className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            Order Slips (Drafts)
-          </button>
-          <button 
-            onClick={() => setActiveTab('FO')} 
-            className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'FO' ? 'bg-white text-teal-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            Final Orders (Logged)
-          </button>
+          <button onClick={() => setActiveTab('OS')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Order Slips (Drafts)</button>
+          <button onClick={() => setActiveTab('FO')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'FO' ? 'bg-white text-teal-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Final Orders (Logged)</button>
         </div>
 
         <div className="w-full sm:w-72">
           <input 
-            type="text" 
-            placeholder="Search Doc or Customer..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            type="text" placeholder="Search Doc or Customer..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:bg-white focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all uppercase placeholder:normal-case"
           />
         </div>
@@ -432,6 +339,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   <div className="text-right">
                     <h2 className={`text-2xl font-mono font-black ${viewSlip.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{viewSlip.osNumber}</h2>
                     
+                    {/* BOLD GENERATED FROM REFERENCE */}
                     {viewSlip.osNumber.startsWith('FO') && viewSlip.referenceOs && (
                       <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">
                         GENERATED FROM: {viewSlip.referenceOs}

@@ -37,9 +37,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
   const [loadedOsStatus, setLoadedOsStatus] = useState<string>('Generated');
   const [finalizedOs, setFinalizedOs] = useState<any | null>(null);
-  
-  // --- INVENTORY RECONCILIATION STATE ---
-  const [originalItems, setOriginalItems] = useState<{productId: number, requestedQty: number}[]>([]);
 
   // --- WORKFLOW STATES ---
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -63,20 +60,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  // --- GUARANTEED BULK STOCK ADJUSTMENT HITTER ---
-  const safelyAdjustStockBulk = async (adjustments: {productId: number, qty: number}[]) => {
-    if (adjustments.length === 0) return;
-    try {
-      await fetch(`${API_BASE_URL}/sales/order-slips/adjust-bulk-stock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: selectedCompany, adjustments })
-      });
-    } catch (err) {
-      console.warn("Bulk stock adjustment failed", err);
-    }
-  };
-
   const fetchNextOsNumber = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
@@ -86,14 +69,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       setAllSlips(slips);
 
       const osSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith('OS'));
-      osSlips.sort((a: any, b: any) => {
-        const numA = parseInt(a.osNumber.replace(/\D/g, '') || '0', 10);
-        const numB = parseInt(b.osNumber.replace(/\D/g, '') || '0', 10);
-        return numB - numA; 
-      });
+      osSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
 
       const lastOs = osSlips.length > 0 ? osSlips[0] : null;
-      
       if (lastOs) {
         const match = lastOs.osNumber.match(/(\d+)$/); 
         if (match) {
@@ -101,15 +79,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           const prefix = lastOs.osNumber.substring(0, match.index);
           const padding = match[0].length;
           setOsNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else {
-          setOsNumber('OS-000001');
-        }
-      } else {
-        setOsNumber('OS-000001');
-      }
-    } catch (e) {
-      setOsNumber('OS-000001');
-    }
+        } else setOsNumber('OS-000001');
+      } else setOsNumber('OS-000001');
+    } catch (e) { setOsNumber('OS-000001'); }
   }, [selectedCompany, API_BASE_URL]);
 
   const fetchNextFoNumber = useCallback(async () => {
@@ -119,14 +91,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const slips = data.data || [];
       
       const foSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith('FO'));
-      foSlips.sort((a: any, b: any) => {
-        const numA = parseInt(a.osNumber.replace(/\D/g, '') || '0', 10);
-        const numB = parseInt(b.osNumber.replace(/\D/g, '') || '0', 10);
-        return numB - numA; 
-      });
+      foSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
 
       const lastFo = foSlips.length > 0 ? foSlips[0] : null;
-      
       if (lastFo) {
         const match = lastFo.osNumber.match(/(\d+)$/); 
         if (match) {
@@ -134,21 +101,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
           const prefix = lastFo.osNumber.substring(0, match.index);
           const padding = match[0].length;
           setFinalOrderNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else {
-          setFinalOrderNumber('FO-000001');
-        }
-      } else {
-        setFinalOrderNumber('FO-000001');
-      }
-    } catch (e) {
-      setFinalOrderNumber('FO-000001');
-    }
+        } else setFinalOrderNumber('FO-000001');
+      } else setFinalOrderNumber('FO-000001');
+    } catch (e) { setFinalOrderNumber('FO-000001'); }
   }, [selectedCompany, API_BASE_URL]);
 
-  useEffect(() => {
-    fetchNextOsNumber();
-    fetchNextFoNumber();
-  }, [fetchNextOsNumber, fetchNextFoNumber]);
+  useEffect(() => { fetchNextOsNumber(); fetchNextFoNumber(); }, [fetchNextOsNumber, fetchNextFoNumber]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
@@ -158,36 +116,20 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         setCustomers(list);
         if (initialCustomerId && list.length > 0) {
           const target = list.find((c: Customer) => c.id === initialCustomerId);
-          if (target) {
-            setSelectedCustomer(target);
-            setCustomerSearch(target.name);
-          }
+          if (target) { setSelectedCustomer(target); setCustomerSearch(target.name); }
         }
-      })
-      .catch(() => console.warn(`Silent skip: Failed to fetch customers`));
+      }).catch(() => {});
   }, [selectedCompany, API_BASE_URL, initialCustomerId]);
 
   useEffect(() => {
-    if (productSearch.trim().length < 2) {
-      setProductSearchResults([]);
-      setHighlightedIndex(-1);
-      return;
-    }
-
+    if (productSearch.trim().length < 2) { setProductSearchResults([]); setHighlightedIndex(-1); return; }
     const handler = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
         const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(productSearch)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setProductSearchResults(data);
-          setHighlightedIndex(-1); 
-        }
-      } catch (e) {} finally {
-        setIsSearchingProducts(false);
-      }
+        if (res.ok) { setProductSearchResults(await res.json()); setHighlightedIndex(-1); }
+      } catch (e) {} finally { setIsSearchingProducts(false); }
     }, 50);
-
     return () => clearTimeout(handler);
   }, [productSearch, selectedCompany, API_BASE_URL]);
 
@@ -204,47 +146,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const filteredOsSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('OS')), [filteredSlips]);
   const filteredFoSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('FO')), [filteredSlips]);
 
-  const handleSelectCustomer = (c: Customer) => {
-    setSelectedCustomer(c);
-    setCustomerSearch(c.name);
-    setShowCustomerDropdown(false);
-  };
+  const handleSelectCustomer = (c: Customer) => { setSelectedCustomer(c); setCustomerSearch(c.name); setShowCustomerDropdown(false); };
 
   const handleLoadSlip = async (slip: any) => {
-    setLoadedOsId(slip.id);
-    setOsNumber(slip.osNumber);
-    setReferenceOs(slip.referenceOs || null);
-    setIsVatApplied(slip.vatApplied || false);
-    setLoadedOsStatus(slip.status || 'Generated');
-    
-    if (slip.customer) {
-      setSelectedCustomer(slip.customer);
-      setCustomerSearch(slip.customer.name);
-    }
+    setLoadedOsId(slip.id); setOsNumber(slip.osNumber); setReferenceOs(slip.referenceOs || null); setIsVatApplied(slip.vatApplied || false); setLoadedOsStatus(slip.status || 'Generated');
+    if (slip.customer) { setSelectedCustomer(slip.customer); setCustomerSearch(slip.customer.name); }
     
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
-      productId: i.productId, sku: i.sku, productName: i.productName,
-      requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
+      productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
       officeStock: 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null
     }));
     
     setDraftItems(mappedItems);
-    setOriginalItems(slip.items.map((i: any) => ({ productId: i.productId, requestedQty: Number(i.requestedQty) })));
-    setShowLoadSlipDropdown(false);
-    setLoadSlipSearch('');
+    setShowLoadSlipDropdown(false); setLoadSlipSearch('');
     
     if (mappedItems.length > 0) {
       const productIds = mappedItems.map(i => i.productId);
-      fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds })
-      }).then(res => res.json()).then(stockMap => {
-        setDraftItems(prev => prev.map(item => ({
-          ...item,
-          officeStock: stockMap[item.productId]?.officeStock ?? 0,
-          warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0,
-          warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? []
-        })));
-      }).catch(() => {});
+      fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds }) })
+        .then(res => res.json()).then(stockMap => {
+          setDraftItems(prev => prev.map(item => ({ ...item, officeStock: stockMap[item.productId]?.officeStock ?? 0, warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? [] })));
+        }).catch(() => {});
     }
     showToast(`Loaded ${slip.osNumber} successfully. Ready to edit.`, "success");
   };
@@ -253,29 +174,22 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     if (!showCustomerDropdown || filteredCustomers.length === 0) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev < filteredCustomers.length - 1 ? prev + 1 : prev)); } 
     else if (e.key === 'ArrowUp') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
-    else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) { handleSelectCustomer(filteredCustomers[customerHighlightedIndex]); } } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) handleSelectCustomer(filteredCustomers[customerHighlightedIndex]); } 
     else if (e.key === 'Escape') { setShowCustomerDropdown(false); setCustomerHighlightedIndex(-1); }
   };
 
   const handleAddProduct = (p: SearchedProduct) => {
-    if (draftItems.some(i => i.productId === p.id)) { return showToast("Product already exists in the order.", "error"); }
-    setDraftItems([...draftItems, { 
-      productId: p.id, sku: p.sku, productName: p.name, officeStock: p.officeStock, warehouseQty: p.warehouseQty,
-      warehouseBreakdown: p.warehouseBreakdown || [], selectedWarehouseName: null, requestedQty: 1, unitPrice: p.sellingPrice || 0, lineTotal: p.sellingPrice || 0 
-    }]);
+    if (draftItems.some(i => i.productId === p.id)) return showToast("Product already exists in the order.", "error");
+    setDraftItems([...draftItems, { productId: p.id, sku: p.sku, productName: p.name, officeStock: p.officeStock, warehouseQty: p.warehouseQty, warehouseBreakdown: p.warehouseBreakdown || [], selectedWarehouseName: null, requestedQty: 1, unitPrice: p.sellingPrice || 0, lineTotal: p.sellingPrice || 0 }]);
     setProductSearch(''); setShowProductDropdown(false); setProductSearchResults([]); setHighlightedIndex(-1);
-
-    setTimeout(() => {
-      const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement;
-      if (input) { input.focus(); input.select(); }
-    }, 50);
+    setTimeout(() => { const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement; if (input) { input.focus(); input.select(); } }, 50);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (!showProductDropdown || productSearchResults.length === 0) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightedIndex(prev => (prev < productSearchResults.length - 1 ? prev + 1 : prev)); } 
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
-    else if (e.key === 'Enter') { e.preventDefault(); if (highlightedIndex >= 0 && highlightedIndex < productSearchResults.length) { handleAddProduct(productSearchResults[highlightedIndex]); } } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (highlightedIndex >= 0 && highlightedIndex < productSearchResults.length) handleAddProduct(productSearchResults[highlightedIndex]); } 
     else if (e.key === 'Escape') { setShowProductDropdown(false); setHighlightedIndex(-1); }
   };
 
@@ -304,9 +218,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds }) });
       if (!res.ok) throw new Error();
       const stockMap = await res.json();
-      setDraftItems(prev => prev.map(item => ({
-        ...item, officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock, warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown
-      })));
+      setDraftItems(prev => prev.map(item => ({ ...item, officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock, warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown })));
     } catch (e) { console.warn("Failed to refresh stock.", e); } finally { setIsRefreshingStock(false); }
   };
 
@@ -319,14 +231,14 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     if (!loadedOsId) return;
     
     const isFO = osNumber.startsWith('FO');
-    const linkedFo = allSlips.find(s => s.referenceOs === osNumber && s.osNumber.startsWith('FO') && s.status !== 'Cancelled' && s.status !== 'Returned');
+    let confirmMsg = `Are you sure you want to mark this document as ${newStatus}?`;
 
-    let confirmMsg = `Are you sure you want to mark this as ${newStatus}?`;
-    if (!isFO && linkedFo) {
-        confirmMsg = `This OS has a linked Final Order (${linkedFo.osNumber}). Marking this OS as ${newStatus} will ALSO cancel the Final Order and safely restore the warehouse stock. Proceed?`;
-    } else if (isFO) {
-        confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock. Proceed?`;
+    if (!isFO) {
+      confirmMsg = `Notice: Marking an OS as ${newStatus} is safe. However, if a Final Order was generated from this OS, the backend will strictly block this action until the Final Order is cancelled first. Proceed?`;
+    } else {
+      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office. Proceed?`;
     }
+
     if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
@@ -334,29 +246,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { 
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
       });
-      if (!res.ok) throw new Error(`Failed to mark as ${newStatus}.`);
-
-      if (isFO) {
-        const adjustments = originalItems.map(item => ({ productId: item.productId, qty: Math.abs(item.requestedQty) }));
-        await safelyAdjustStockBulk(adjustments);
-        
-        const parentOs = allSlips.find(s => s.osNumber === referenceOs);
-        if (parentOs) {
-          await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}`, { 
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-          });
-        }
-      } 
-      else if (linkedFo) {
-        await fetch(`${API_BASE_URL}/sales/order-slips/${linkedFo.id}`, { 
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
-        });
-        const adjustments = linkedFo.items.map((item: any) => ({ productId: item.productId, qty: Math.abs(Number(item.requestedQty)) }));
-        await safelyAdjustStockBulk(adjustments);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || `Failed to mark as ${newStatus}.`);
       }
 
-      await handleRefreshStock(); // VISUAL SYNC
-      showToast(`Order marked as ${newStatus} & Stock Restored!`, "success");
+      await handleRefreshStock(); 
+      showToast(`Order marked as ${newStatus}!`, "success");
       handleClosePrintModal(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
   };
@@ -366,10 +262,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       const payload = {
-        osNumber: osNumber.trim(), 
-        company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
-        subtotal, vatAmount, grandTotal, user: loginUsername,
-        referenceOs: referenceOs || null,
+        osNumber: osNumber.trim(), company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
+        subtotal, vatAmount, grandTotal, user: loginUsername, referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
@@ -377,14 +271,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) throw new Error("Failed to create Order Slip.");
       
       const newlyCreatedOs = await res.json();
-      
       showToast("Order Slip generated successfully.", "success");
-      setFinalizedOs(newlyCreatedOs);
-      setFinalOrderGenerated(false);
-      setLoadedOsId(null);
-      setLoadedOsStatus('Generated');
-      fetchNextOsNumber();
-      fetchNextFoNumber();
+      setFinalizedOs(newlyCreatedOs); setFinalOrderGenerated(false); setLoadedOsId(null); setLoadedOsStatus('Generated');
+      fetchNextOsNumber(); fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -399,33 +288,12 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to update Order Slip.");
-      const updatedOs = await res.json();
       
-      if (osNumber.startsWith('FO')) {
-        const adjustments: any[] = [];
-        const allProductIds = Array.from(new Set([...originalItems.map(i => i.productId), ...draftItems.map(i => i.productId)]));
-
-        allProductIds.forEach(productId => {
-          const oldItem = originalItems.find(i => i.productId === productId);
-          const newItem = draftItems.find(i => i.productId === productId);
-          
-          const oldQty = oldItem ? oldItem.requestedQty : 0;
-          const newQty = newItem ? Number(newItem.requestedQty) : 0;
-          const qtyDifference = newQty - oldQty; 
-          
-          if (qtyDifference !== 0) {
-            adjustments.push({ productId, qty: -qtyDifference });
-          }
-        });
-        await safelyAdjustStockBulk(adjustments);
-      }
-
-      await handleRefreshStock(); // VISUAL SYNC
+      const updatedOs = await res.json();
+      await handleRefreshStock(); 
       showToast("Order updated successfully.", "success");
-      setFinalizedOs(updatedOs);
-      setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
-      fetchNextOsNumber();
-      fetchNextFoNumber();
+      setFinalizedOs(updatedOs); setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
+      fetchNextOsNumber(); fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -436,16 +304,8 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setIsGeneratingFinalOrder(true);
     try {
       const payload = {
-        osNumber: finalOrderNumber.trim(), 
-        referenceOs: finalizedOs.osNumber, 
-        company: selectedCompany,
-        customerId: finalizedOs.customerId,
-        isVatApplied: finalizedOs.vatApplied,
-        vatRate: finalizedOs.vatRate,
-        subtotal: finalizedOs.subtotal,
-        vatAmount: finalizedOs.vatAmount,
-        grandTotal: finalizedOs.grandTotal,
-        user: loginUsername,
+        osNumber: finalOrderNumber.trim(), referenceOs: finalizedOs.osNumber, company: selectedCompany, customerId: finalizedOs.customerId,
+        isVatApplied: finalizedOs.vatApplied, vatRate: finalizedOs.vatRate, subtotal: finalizedOs.subtotal, vatAmount: finalizedOs.vatAmount, grandTotal: finalizedOs.grandTotal, user: loginUsername,
         items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
@@ -457,29 +317,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
       });
 
-      // --- GUARANTEED DEDUCTION HIT ---
-      const adjustments = newFo.items.map((item: any) => ({
-        productId: item.productId,
-        qty: -Math.abs(Number(item.requestedQty))
-      }));
-      await safelyAdjustStockBulk(adjustments);
-      
-      // --- FORCE UI TO SYNC NEW STOCK NUMBERS INSTANTLY ---
       await handleRefreshStock(); 
-      
       showToast("Final Order logged & Stock Deducted instantly!", "success");
-      setFinalizedOs(newFo); 
-      setFinalOrderGenerated(true); 
-      setOsNumber(newFo.osNumber);
-      setLoadedOsId(newFo.id);
+      setFinalizedOs(newFo); setFinalOrderGenerated(true); setOsNumber(newFo.osNumber); setLoadedOsId(newFo.id);
       fetchNextFoNumber();
-      
     } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
   };
 
   const handleClosePrintModal = () => {
     setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
-    setOriginalItems([]);
     fetchNextOsNumber();
   };
 
@@ -512,9 +358,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
               <input 
-                type="text" 
-                placeholder="Search OS/FO..." 
-                value={loadSlipSearch}
+                type="text" placeholder="Search OS/FO..." value={loadSlipSearch}
                 onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); }}
                 onFocus={() => setShowLoadSlipDropdown(true)}
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
@@ -525,25 +369,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   {filteredOsSlips.length > 0 && <div className="px-4 py-2 bg-slate-100 text-[10px] font-black text-slate-500 uppercase tracking-widest sticky top-0 border-b border-slate-200">Order Slips</div>}
                   {filteredOsSlips.map((slip) => (
                     <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-indigo-50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
-                      <div>
-                        <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
-                        <span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span>
-                      </div>
+                      <div><span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span><span className="text-[10px] text-slate-500 uppercase font-bold">{slip.customer?.name}</span></div>
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${slip.status === 'Finalized Order' ? 'bg-teal-100 text-teal-800' : 'bg-indigo-100 text-indigo-700'}`}>{slip.status}</span>
                     </div>
                   ))}
-
                   {filteredFoSlips.length > 0 && <div className="px-4 py-2 bg-teal-50 text-[10px] font-black text-teal-700 uppercase tracking-widest sticky top-0 border-b border-teal-100">Final Orders</div>}
                   {filteredFoSlips.map((slip) => (
                     <div key={slip.id} onMouseDown={(e) => { e.preventDefault(); handleLoadSlip(slip); }} className="px-5 py-3 hover:bg-teal-50/50 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors">
-                      <div>
-                        <span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span>
-                        <span className="text-[10px] text-slate-500 uppercase font-bold">Ref: {slip.referenceOs}</span>
-                      </div>
+                      <div><span className="font-bold text-slate-900 block font-mono">{slip.osNumber}</span><span className="text-[10px] text-slate-500 uppercase font-bold">Ref: {slip.referenceOs}</span></div>
                       <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-teal-100 text-teal-800">{slip.status}</span>
                     </div>
                   ))}
-
                 </div>
               )}
             </div>
@@ -552,9 +388,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               {!selectedCustomer ? (
                 <div className="w-full relative">
                   <input 
-                    type="text" 
-                    placeholder="Search customer..." 
-                    value={customerSearch}
+                    type="text" placeholder="Search customer..." value={customerSearch}
                     onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); setCustomerHighlightedIndex(-1); }}
                     onFocus={() => setShowCustomerDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
@@ -563,28 +397,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   />
                   {showCustomerDropdown && (
                     <div ref={customerDropdownRef} className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
-                      {filteredCustomers.length === 0 ? (
-                        <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div>
-                      ) : (
-                        filteredCustomers.map((c, i) => (
-                          <div 
-                            key={c.id} 
-                            onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} 
-                            onMouseEnter={() => setCustomerHighlightedIndex(i)}
-                            className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}
-                          >
-                            <div>
-                              <span className="font-bold text-slate-900 block uppercase">{c.name}</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
-                          </div>
-                        ))
-                      )}
+                      {filteredCustomers.length === 0 ? <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div> : filteredCustomers.map((c, i) => (
+                        <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} onMouseEnter={() => setCustomerHighlightedIndex(i)} className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
+                          <div><span className="font-bold text-slate-900 block uppercase">{c.name}</span></div>
+                          <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); setOriginalItems([]); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
                   <div className="flex flex-col items-center">
                     <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
@@ -597,9 +420,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{osNumber.startsWith('FO') ? 'F.O. Number' : 'O.S. Number'}</span>
               <input 
-                type="text" 
-                value={osNumber}
-                readOnly={loadedOsId !== null} 
+                type="text" value={osNumber} readOnly={loadedOsId !== null} 
                 onChange={e => setOsNumber(e.target.value.toUpperCase())}
                 className={`w-full bg-transparent font-mono font-black text-sm sm:text-base outline-none transition-colors uppercase ${osNumber.startsWith('FO') ? 'text-teal-600 focus:text-teal-500' : 'text-indigo-700 focus:text-indigo-500'} ${loadedOsId !== null ? 'opacity-70 cursor-not-allowed' : ''}`}
                 placeholder="OS-000000"
@@ -612,12 +433,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-40">SKU</th>
-                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-full">
-                    PRODUCT DESCRIPTION
-                    <button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="ml-3 text-indigo-500 hover:text-indigo-700 disabled:opacity-30">
-                      {isRefreshingStock ? '↻...' : '↻ SYNC'}
-                    </button>
-                  </th>
+                  <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-full">PRODUCT DESCRIPTION<button onClick={handleRefreshStock} disabled={isRefreshingStock || draftItems.length === 0} className="ml-3 text-indigo-500 hover:text-indigo-700 disabled:opacity-30">{isRefreshingStock ? '↻...' : '↻ SYNC'}</button></th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center w-24">OFF QTY</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-center w-32 bg-indigo-50/50">REQUESTED</th>
                   <th className="border border-slate-300 py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-36">UNIT PRICE</th>
@@ -638,21 +454,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                       
                       <td className="border border-slate-300 p-0 bg-indigo-50/20 relative">
-                        <input 
-                          id={`qty-input-${item.productId}`} type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} 
-                          className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
-                        />
-                        {item.officeStock !== undefined && reqQty > item.officeStock && (
-                          <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - item.officeStock}</span>
-                        )}
+                        <input id={`qty-input-${item.productId}`} type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
+                        {item.officeStock !== undefined && reqQty > item.officeStock && <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - item.officeStock}</span>}
                       </td>
 
                       <td className="border border-slate-300 p-0 relative bg-white">
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₱</div>
-                        <input 
-                          type="number" step="0.01" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} 
-                          className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" 
-                        />
+                        <input type="number" step="0.01" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
                       </td>
 
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
@@ -665,13 +473,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         {item.warehouseBreakdown && item.warehouseBreakdown.length > 0 && (
                           <div className="absolute top-full right-0 mt-0.5 w-48 bg-slate-900 text-white rounded-lg shadow-xl p-2 z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
                             <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                              <button onClick={() => handleSelectWarehouse(idx, null)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${!item.selectedWarehouseName ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
-                                <span className="truncate pr-2 font-medium">All Whse</span><span className="font-black shrink-0">{item.warehouseQty}</span>
-                              </button>
+                              <button onClick={() => handleSelectWarehouse(idx, null)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${!item.selectedWarehouseName ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}><span className="truncate pr-2 font-medium">All Whse</span><span className="font-black shrink-0">{item.warehouseQty}</span></button>
                               {item.warehouseBreakdown.map((wb, i) => (
-                                <button key={i} onClick={() => handleSelectWarehouse(idx, wb.name)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${item.selectedWarehouseName === wb.name ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}>
-                                  <span className="truncate pr-2 font-medium">{wb.name}</span><span className="font-black shrink-0">{wb.quantity}</span>
-                                </button>
+                                <button key={i} onClick={() => handleSelectWarehouse(idx, wb.name)} className={`w-full flex justify-between items-center text-xs px-2 py-1.5 rounded hover:bg-slate-800 transition-colors ${item.selectedWarehouseName === wb.name ? 'bg-slate-800 text-emerald-400' : 'text-slate-300'}`}><span className="truncate pr-2 font-medium">{wb.name}</span><span className="font-black shrink-0">{wb.quantity}</span></button>
                               ))}
                             </div>
                           </div>
@@ -690,9 +494,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <td className="border border-slate-300 relative p-0 h-[48px] w-full">
                     <div className="absolute inset-0 flex items-center">
                       <input 
-                        type="text" 
-                        placeholder={draftItems.length === 0 ? "Search to add first product..." : "Add another product..."}
-                        value={productSearch}
+                        type="text" placeholder={draftItems.length === 0 ? "Search to add first product..." : "Add another product..."} value={productSearch}
                         onChange={e => { setProductSearch(e.target.value); setShowProductDropdown(true); }}
                         onFocus={() => setShowProductDropdown(true)}
                         onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
@@ -701,15 +503,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                         className="w-full h-full px-4 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400 placeholder:italic disabled:opacity-30 focus:bg-indigo-50/30 transition-colors uppercase"
                       />
                     </div>
-                    {/* INSTANT CLEAN DROPDOWN WITH ONLY NAME AND SKU */}
                     {showProductDropdown && productSearch.trim().length >= 2 && !isSearchingProducts && (
                       <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[400px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
                         {productSearchResults.map((p, i) => (
                           <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} onMouseEnter={() => setHighlightedIndex(i)} className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
-                            <div>
-                              <span className="font-bold text-slate-900 uppercase block">{p.name}</span>
-                              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{p.sku}</span>
-                            </div>
+                            <div><span className="font-bold text-slate-900 uppercase block">{p.name}</span><span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{p.sku}</span></div>
                           </div>
                         ))}
                       </div>
@@ -740,15 +538,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 Total: <span className="font-mono text-xl ml-2">₱{grandTotal.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
               </div>
               
-              {/* CANCEL / RETURN BUTTONS */}
               {loadedOsId && loadedOsStatus !== 'Cancelled' && loadedOsStatus !== 'Returned' && (
                 <>
-                  <button onClick={() => handleStatusChangeWithStockRestore('Returned')} disabled={isProcessing} className="px-5 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                    Return
-                  </button>
-                  <button onClick={() => handleStatusChangeWithStockRestore('Cancelled')} disabled={isProcessing} className="px-5 py-3 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                    Cancel
-                  </button>
+                  <button onClick={() => handleStatusChangeWithStockRestore('Returned')} disabled={isProcessing} className="px-5 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">Return</button>
+                  <button onClick={() => handleStatusChangeWithStockRestore('Cancelled')} disabled={isProcessing} className="px-5 py-3 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">Cancel</button>
                 </>
               )}
 
@@ -780,7 +573,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
               </div>
               <div className="flex gap-3">
-                {/* SHOW FO GENERATION BUTTON ONLY IF THIS IS AN OS, AND NOT ALREADY LOGGED */}
                 {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
@@ -800,9 +592,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
               {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
-                  <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">
-                    {finalizedOs.status}
-                  </div>
+                  <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">{finalizedOs.status}</div>
                 </div>
               )}
 
@@ -815,14 +605,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   </div>
                   <div className="text-right">
                     <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
-                    
-                    {/* BOLD GENERATED FROM REFERENCE */}
                     {finalizedOs.osNumber.startsWith('FO') && finalizedOs.referenceOs && (
-                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">
-                        GENERATED FROM: {finalizedOs.referenceOs}
-                      </div>
+                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">GENERATED FROM: {finalizedOs.referenceOs}</div>
                     )}
-                    
                     <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
