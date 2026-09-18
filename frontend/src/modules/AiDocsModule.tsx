@@ -34,14 +34,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
-  // Search & AI States (Defaulted to 3.5 Flash-Lite)
+  // Search & AI States
   const [searchQuery, setSearchQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearching, setIsSearching] = useState(false);
 
-  // Bulk Deletion States
-  const [isDeleteMode, setIsDeleteMode] = useState(false);
+  // Bulk Deletion States (Always Enabled)
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -148,7 +147,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // Format AI Response to parse links and bold formatting
+  // Format AI Response to parse links and open them in the Preview Modal
   const renderFormattedAiText = (text: string) => {
     const lines = text.split('\n');
     return lines.map((line, lineIndex) => {
@@ -163,23 +162,48 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           parts.push(line.substring(lastIndex, match.index));
         }
         if (match[1] && match[2]) {
-          // Markdown Link: [Title](URL)
-          parts.push(
-            <a
-              key={`${lineIndex}-${match.index}`}
-              href={match[2]}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/60 px-1.5 py-0.5 rounded"
-            >
-              <span>{match[1]}</span>
-              <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </a>
-          );
+          const linkText = match[1];
+          const linkUrl = match[2];
+          const driveIdMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+
+          if (driveIdMatch && driveIdMatch[1]) {
+            // It's a Google Drive link, force it into the Preview Modal
+            const fileId = driveIdMatch[1];
+            // Try to find the exact file in our state to get the correct icon/mimeType
+            const matchedFile = files.find(f => f.id === fileId) || { id: fileId, name: linkText, webViewLink: linkUrl, mimeType: 'unknown' };
+
+            parts.push(
+              <button
+                key={`${lineIndex}-${match.index}`}
+                onClick={() => setPreviewItem(matchedFile)}
+                className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/80 px-2 py-0.5 rounded text-left shadow-sm"
+                title="Preview Document"
+              >
+                <span>{linkText}</span>
+                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </button>
+            );
+          } else {
+            // Standard external link fallback
+            parts.push(
+              <a
+                key={`${lineIndex}-${match.index}`}
+                href={linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-bold text-sky-600 hover:text-sky-800 underline decoration-sky-300 hover:decoration-sky-600 transition-colors break-all bg-sky-50/60 px-1.5 py-0.5 rounded"
+              >
+                <span>{linkText}</span>
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            );
+          }
         } else if (match[3]) {
-          // Markdown Bold: **Text**
           parts.push(
             <strong key={`${lineIndex}-${match.index}`} className="font-bold text-slate-900">
               {match[3]}
@@ -245,7 +269,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       ));
       
       setSelectedItemIds([]);
-      setIsDeleteMode(false);
       fetchDirectory(); 
     } catch (error) {
       alert("Failed to delete some items.");
@@ -361,24 +384,15 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             )}
           </div>
 
-          {/* DELETION CONTROLS */}
+          {/* ALWAYS VISIBLE DELETION CONTROLS */}
           <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-3 rounded-xl mb-6">
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <input type="checkbox" checked={isDeleteMode} onChange={(e) => { setIsDeleteMode(e.target.checked); setSelectedItemIds([]); }} className="w-5 h-5 text-rose-600 focus:ring-rose-500 rounded border-slate-300 cursor-pointer" />
-              <span className="text-xs font-black uppercase tracking-widest text-slate-700">Enable Deletion Mode</span>
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
+              <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer" />
+              Select All
             </label>
-            
-            {isDeleteMode && (
-              <div className="flex items-center gap-4 animate-in fade-in slide-in-from-left-4">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
-                  <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-4 h-4 rounded text-indigo-600 border-slate-300 cursor-pointer" />
-                  Select All
-                </label>
-                <button onClick={handleDeleteSelected} disabled={selectedItemIds.length === 0 || isDeleting} className="px-5 py-2 bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                  {isDeleting ? 'Deleting...' : `Delete Selected (${selectedItemIds.length})`}
-                </button>
-              </div>
-            )}
+            <button onClick={handleDeleteSelected} disabled={selectedItemIds.length === 0 || isDeleting} className="px-5 py-2.5 bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors shadow-sm">
+              {isDeleting ? 'Deleting...' : `Delete Selected (${selectedItemIds.length})`}
+            </button>
           </div>
 
           {loading ? (
@@ -389,9 +403,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                   {/* Master Root Folder */}
                   <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                    {isDeleteMode && (
-                       <input type="checkbox" disabled title="Root folder cannot be deleted" className="absolute top-2 left-2 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
-                    )}
+                    <input type="checkbox" disabled title="Root folder cannot be deleted" className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
                     <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
                       <div className="text-4xl mb-2">📁</div>
                       <span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span>
@@ -401,9 +413,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
                   {folders.map((folder) => (
                     <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                      {isDeleteMode && (
-                        <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-2 left-2 w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer z-10" />
-                      )}
+                      <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer z-10" />
                       <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center">
                         <div className="text-4xl mb-2">📁</div>
                         <span className="font-bold text-sm text-slate-800 truncate max-w-full">{folder.name}</span>
@@ -422,14 +432,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         className="flex items-center gap-3 truncate cursor-pointer flex-1"
                         title="Click to view in modal"
                       >
-                        {isDeleteMode && (
-                           <input 
-                            type="checkbox" 
-                            checked={selectedItemIds.includes(file.id)} 
-                            onChange={(e) => { e.stopPropagation(); handleToggleSelect(file.id); }} 
-                            className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" 
-                           />
-                        )}
+                        <input 
+                          type="checkbox" 
+                          checked={selectedItemIds.includes(file.id)} 
+                          onChange={(e) => { e.stopPropagation(); handleToggleSelect(file.id); }} 
+                          className="w-5 h-5 rounded text-rose-600 border-slate-300 cursor-pointer shrink-0" 
+                        />
                         <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">
                           {file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : '📄'}
                         </span>
