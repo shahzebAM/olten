@@ -5,6 +5,26 @@ import { PrismaClient, Prisma } from '@prisma/client';
 export class OrderSlipsController {
   private readonly prisma = new PrismaClient();
 
+  // --- NEW: DEDICATED BULK STOCK ADJUSTER ---
+  @Post('adjust-bulk-stock')
+  async adjustBulkStock(@Body() data: { company: string, adjustments: { productId: number, qty: number }[] }) {
+    if (!data.adjustments || data.adjustments.length === 0) return { success: true };
+    
+    return await this.prisma.$transaction(async (tx) => {
+      for (const adj of data.adjustments) {
+        const product = await tx.product.findUnique({ where: { id: adj.productId } });
+        if (product) {
+          // adj.qty is negative for deductions (FO creation) and positive for restorations (Cancellations)
+          await tx.product.update({
+            where: { id: adj.productId },
+            data: { currentStock: (product.currentStock || 0) + adj.qty }
+          });
+        }
+      }
+      return { success: true };
+    });
+  }
+
   // --- CUSTOMER SEARCH ENDPOINT TO SUPPORT KEYBOARD NAV ---
   @Get('search-customers')
   async searchCustomers(@Query('company') company: string, @Query('q') q: string) {
@@ -115,7 +135,6 @@ export class OrderSlipsController {
 
   @Post()
   async createOrderSlip(@Body() data: any) {
-    // EXTRACTED referenceOs HERE
     const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber, referenceOs } = data;
 
     if (!company || !customerId || !items || items.length === 0) {
@@ -181,7 +200,7 @@ export class OrderSlipsController {
       const newOs = await tx.orderSlip.create({
         data: {
           osNumber,
-          referenceOs: referenceOs || null, // SAVED TO DATABASE HERE
+          referenceOs: referenceOs || null,
           company,
           customerId,
           status: 'Generated', 
@@ -230,7 +249,7 @@ export class OrderSlipsController {
     if (search) {
       whereClause.OR = [
         { osNumber: { contains: search, mode: 'insensitive' } },
-        { referenceOs: { contains: search, mode: 'insensitive' } }, // ADDED REFERENCE TO SEARCH
+        { referenceOs: { contains: search, mode: 'insensitive' } },
         { customerId: { contains: search, mode: 'insensitive' } },
         { createdBy: { contains: search, mode: 'insensitive' } },
         { customer: { name: { contains: search, mode: 'insensitive' } } }
@@ -345,7 +364,6 @@ export class OrderSlipsController {
 
   @Patch(':id')
   async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
-    // EXTRACTED referenceOs HERE
     const { status, user, items, isVatApplied, vatRate = 0.12, customerId, referenceOs } = data;
     
     const existing = await this.prisma.orderSlip.findUnique({ where: { id } });
@@ -392,7 +410,7 @@ export class OrderSlipsController {
           where: { id },
           data: { 
             status: status || existing.status, 
-            referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, // SAVED TO DATABASE HERE
+            referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs,
             customerId: customerId || existing.customerId, 
             updatedBy: user,
             subtotal: calculatedSubtotal,
@@ -414,7 +432,7 @@ export class OrderSlipsController {
         where: { id },
         data: { 
           status, 
-          referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, // SAVED TO DATABASE HERE
+          referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, 
           customerId: customerId || existing.customerId, 
           updatedBy: user 
         },
