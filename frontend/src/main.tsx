@@ -7,9 +7,17 @@ import './index.css'
 
 const currentPath = window.location.pathname;
 
+// Determine exactly which single component to show based on the URL
+let ComponentToRender = <App />;
+
+if (currentPath === '/privacy') {
+  ComponentToRender = <Privacy />;
+} else if (currentPath === '/terms') {
+  ComponentToRender = <Terms />;
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {currentPath === '/privacy' ? <Privacy /> : <App />}
-    {currentPath === '/terms' ? <Terms /> : <App />}
+    {ComponentToRender}
   </React.StrictMode>,
 )
