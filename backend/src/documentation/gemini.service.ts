@@ -43,7 +43,7 @@ CRITICAL RULES:
     await this.ai.files.delete({ name: fileId });
   }
 
-  async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], modelName: string = 'gemini-2.5-flash'): Promise<string | null> {
+  async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], modelName: string = 'gemini-3.6-flash'): Promise<string | null> {
     try {
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
       
@@ -73,7 +73,7 @@ CRITICAL RULES:
     }
   }
 
-  async askQuestion(query: string, filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], cacheName?: string | null, modelName: string = 'gemini-2.5-flash') {
+  async askQuestion(query: string, filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], cacheName?: string | null, modelName: string = 'gemini-3.6-flash') {
     let config: any = { temperature: 0.0 }; 
     let parts: any[] = [];
     
