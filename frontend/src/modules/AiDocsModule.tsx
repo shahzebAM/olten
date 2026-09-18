@@ -79,7 +79,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
   const [isSearching, setIsSearching] = useState(false);
   
   // NEW: Model Selector State
-  const [selectedModel, setSelectedModel] = useState('gemini-3.8-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
 
   const fetchDirectory = async () => {
     try {
@@ -232,22 +232,23 @@ export default function AiDocsModule({ selectedCompany, loginUsername, onBack }:
           )}
 
           {/* MODEL SELECTOR CHIPS */}
+{/* MODEL SELECTOR CHIPS */}
           <div className="flex items-center justify-center gap-3 mt-5">
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Engine:</span>
             
             <button
               type="button"
-              onClick={() => setSelectedModel('gemini-3.8-flash')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.8-flash' ? 'bg-indigo-50 text-indigo-700 border-2 border-indigo-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
+              onClick={() => setSelectedModel('gemini-1.5-flash')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-1.5-flash' ? 'bg-indigo-50 text-indigo-700 border-2 border-indigo-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
             >
-              ⚡ 3.8 Flash (Speed)
+              ⚡ 1.5 Flash (Speed)
             </button>
             <button
               type="button"
-              onClick={() => setSelectedModel('gemini-3.1-pro')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.1-pro' ? 'bg-purple-50 text-purple-700 border-2 border-purple-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
+              onClick={() => setSelectedModel('gemini-1.5-pro')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${selectedModel === 'gemini-1.5-pro' ? 'bg-purple-50 text-purple-700 border-2 border-purple-200 scale-105' : 'bg-white text-slate-500 border-2 border-slate-100 hover:bg-slate-50'}`}
             >
-              🧠 3.1 Pro (Deep Reasoning)
+              🧠 1.5 Pro (Deep Reasoning)
             </button>
           </div>
         </form>
