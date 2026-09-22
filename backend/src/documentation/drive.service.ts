@@ -94,8 +94,11 @@ export class DriveService {
     return { companyFolderId, folders, files };
   }
 
-  async createSubFolder(companyName: string, folderName: string) {
-    const parentId = await this.getOrCreateCompanyFolder(companyName);
+  // UPDATED: Now accepts an optional parentFolderId to allow nesting
+  async createSubFolder(companyName: string, folderName: string, parentFolderId?: string) {
+    // If a specific parent folder is passed, use it. Otherwise, default to the company's root folder.
+    const parentId = parentFolderId || await this.getOrCreateCompanyFolder(companyName);
+    
     const createRes = await this.drive.files.create({
       requestBody: {
         name: folderName,
@@ -145,6 +148,25 @@ export class DriveService {
       });
     } catch (error: any) {
       this.logger.warn(`Could not delete file ${fileId} from Drive: ${error.message}`);
+    }
+  }
+
+  // NEW: Method to rename folders (or files)
+  async renameFolder(folderId: string, newName: string) {
+    try {
+      const response = await this.drive.files.update({
+        fileId: folderId,
+        requestBody: {
+          name: newName,
+        },
+        fields: 'id, name',
+        supportsAllDrives: true,
+      });
+      return response.data;
+    } catch (error: any) {
+      const actualError = error.response?.data?.error?.message || error.message;
+      this.logger.error(`Folder Rename Failed: ${actualError}`);
+      throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
     }
   }
 }
