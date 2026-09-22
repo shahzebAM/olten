@@ -76,13 +76,37 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     } catch (err: any) { alert(`Failed to upload document: ${err.message}`); } finally { setIsUploading(false); }
   };
 
-  const handleCreateFolder = async (e: React.FormEvent) => {
+const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault(); if (!newFolderName.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany }, body: JSON.stringify({ folderName: newFolderName }) });
+      const payload = {
+        company: selectedCompany,
+        folderName: newFolderName,
+        // If inside a subfolder, send its ID. Otherwise send undefined to default to Root.
+        parentFolderId: currentFolder && currentFolder.id !== 'root' ? currentFolder.id : undefined
+      };
+      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       setNewFolderName(''); setIsNewFolderModalOpen(false); fetchDirectory();
     } catch { alert('Could not create folder.'); }
+  };
+
+  const handleRenameFolder = async (e: React.MouseEvent, folderId: string, currentName: string) => {
+    e.stopPropagation(); // Prevents navigating into the folder when clicking rename
+    const newName = window.prompt("Enter new folder name:", currentName);
+    if (!newName || newName.trim() === "" || newName === currentName) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/folder/${folderId}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName })
+      });
+      if (!res.ok) throw new Error();
+      fetchDirectory(); 
+    } catch (err) {
+      alert("Failed to rename folder.");
+    }
   };
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
@@ -187,12 +211,18 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     });
   };
 
+  // Separate root items from nested items
+  const rootFolders = folders.filter(f => !folders.some(parent => f.parents?.includes(parent.id)));
   const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
-  const currentFolderFiles = currentFolder && currentFolder.id !== 'root' ? files.filter(f => f.parents?.includes(currentFolder.id)) : rootFiles;
-  const totalSelectable = currentFolder ? currentFolderFiles.length : (folders.length + rootFiles.length);
+
+  // Determine what to display based on current location
+  const displayFolders = currentFolder && currentFolder.id !== 'root' ? folders.filter(f => f.parents?.includes(currentFolder.id)) : rootFolders;
+  const displayFiles = currentFolder && currentFolder.id !== 'root' ? files.filter(f => f.parents?.includes(currentFolder.id)) : rootFiles;
+
+  const totalSelectable = displayFolders.length + displayFiles.length + (!currentFolder ? 1 : 0);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) setSelectedItemIds(!currentFolder ? [...folders.map(f => f.id), ...rootFiles.map(f => f.id)] : currentFolderFiles.map(f => f.id));
+    if (e.target.checked) setSelectedItemIds([...displayFolders.map(f => f.id), ...displayFiles.map(f => f.id)]);
     else setSelectedItemIds([]);
   };
 
@@ -271,27 +301,46 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <div className="text-center py-20 text-slate-400 font-medium">Loading Drive workspace...</div>
           ) : (
             <div className="space-y-8">
-              {!currentFolder ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                    <input type="checkbox" disabled className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
-                    <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
-                      <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{rootFiles.length} files</span>
-                    </button>
+              <div className="space-y-6">
+                
+                {/* 1. FOLDERS GRID */}
+                {(displayFolders.length > 0 || !currentFolder) && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    
+                    {/* Master Root Card (Only visible at the very top) */}
+                    {!currentFolder && (
+                      <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
+                        <input type="checkbox" disabled title="Cannot delete root folder" className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
+                        <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
+                          <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{rootFiles.length} files</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Render Subfolders */}
+                    {displayFolders.map((folder) => (
+                      <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
+                        <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer z-10" />
+                        
+                        {/* Rename Button */}
+                        <button onClick={(e) => handleRenameFolder(e, folder.id, folder.name)} className="absolute top-3 right-3 text-slate-400 hover:text-indigo-600 z-10 bg-white/80 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-sm border border-slate-200" title="Rename Folder">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        </button>
+
+                        <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center mt-2">
+                          <div className="text-4xl mb-2">📁</div>
+                          <span className="font-bold text-sm text-slate-800 truncate max-w-full px-2">{folder.name}</span>
+                          <span className="text-[11px] font-semibold text-slate-400 mt-0.5">{files.filter(f => f.parents?.includes(folder.id)).length} files</span>
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  {folders.map((folder) => (
-                    <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                      <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer z-10" />
-                      <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center">
-                        <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800 truncate max-w-full">{folder.name}</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{files.filter(f => f.parents?.includes(folder.id)).length} files</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
+                )}
+
+                {/* 2. FILES LIST */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {currentFolderFiles.length === 0 && <div className="col-span-full text-center py-10 text-slate-400">Empty folder</div>}
-                  {currentFolderFiles.map(file => (
+                  {displayFolders.length === 0 && displayFiles.length === 0 && currentFolder && <div className="col-span-full text-center py-10 text-slate-400 font-medium">Empty folder</div>}
+                  {displayFiles.map(file => (
                     <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
                       <div className="flex items-center gap-3 truncate flex-1">
                         <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer shrink-0" />
@@ -305,7 +354,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>
@@ -382,9 +431,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   <label htmlFor="destSub" className="text-sm font-semibold text-slate-700">Specific subfolder</label>
                 </div>
                 {destinationChoice === 'subfolder' && (
-                  <select value={selectedSubfolderId} onChange={(e) => setSelectedSubfolderId(e.target.value)} className="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none" required>
+                 <select value={selectedSubfolderId} onChange={(e) => setSelectedSubfolderId(e.target.value)} className="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none" required>
                     <option value="">-- Choose Subfolder --</option>
-                    {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    {displayFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
                 )}
               </div>
