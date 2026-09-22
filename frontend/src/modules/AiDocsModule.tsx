@@ -28,7 +28,10 @@ interface AiDocsModuleProps {
 export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: AiDocsModuleProps) {
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // --- SUBMISSION LOCKS (Prevents duplicates) ---
   const [isUploading, setIsUploading] = useState(false);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -39,9 +42,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [files, setFiles] = useState<DriveFile[]>([]);
   
   // --- WORKSPACE & TREE STATES ---
-  const [activeMenu, setActiveMenu] = useState('Documents');
-  const [activeFolderId, setActiveFolderId] = useState<string | null>(null); // Determines where uploads/new folders go
-  const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);  // Determines what is previewed
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   
   // --- MULTI-SELECT STATE ---
@@ -49,7 +51,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   // --- SEARCH & AI STATES ---
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearchingAi, setIsSearchingAi] = useState(false);
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
 
@@ -149,24 +151,39 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- API: CREATE FOLDER ---
+  // --- API: CREATE FOLDER (Resolved duplicate bug & active folder nesting) ---
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) return;
+    if (!newFolderName.trim() || isCreatingFolder) return;
+    
+    setIsCreatingFolder(true);
     try {
+      const payload = {
+        folderName: newFolderName.trim(),
+        // Explicitly set the parent to the selected folder, or the root if none selected
+        parentFolderId: activeFolderId || rootFolderId 
+      };
+
       const res = await fetch(`${API_BASE_URL}/api/docs/folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-        body: JSON.stringify({ folderName: newFolderName, parentFolderId: activeFolderId !== rootFolderId ? activeFolderId : undefined })
+        body: JSON.stringify(payload)
       });
+      
       if (!res.ok) throw new Error();
+      
       setNewFolderName('');
       setIsNewFolderModalOpen(false);
       showToast('Folder created', 'success');
-      fetchDirectory();
+      
+      // Auto-expand the target folder so the user sees the new nested folder immediately
       if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
+      
+      fetchDirectory();
     } catch {
       showToast('Could not create folder', 'error');
+    } finally {
+      setIsCreatingFolder(false);
     }
   };
 
@@ -218,6 +235,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
+  // --- SEARCH FILTERING (OPTIMIZED) ---
+  const activeFiles = useMemo(() => {
+    if (!searchQuery.trim()) return files;
+    const q = searchQuery.toLowerCase();
+    return files.filter(f => f.name.toLowerCase().includes(q));
+  }, [files, searchQuery]);
+
   // --- TREE HELPERS ---
   const toggleFolderExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -236,8 +260,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   const getFileIcon = (mimeType: string) => {
-    if (mimeType.includes('document') || mimeType.includes('word')) return <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
-    if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return <svg className="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+    if (mimeType.includes('document') || mimeType.includes('word')) return <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+    if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return <svg className="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
     if (mimeType.includes('pdf')) return <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
     return <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
   };
@@ -247,8 +271,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  // --- RECURSIVE TREE RENDERER ---
-  const renderTree = (parentId: string, depth: number = 0) => {
+  // --- RECURSIVE TREE RENDERER (MEMOIZED FOR SPEED) ---
+  const renderTree = useCallback((parentId: string, depth: number = 0) => {
     const childFolders = folders.filter(f => f.parents?.includes(parentId));
     const childFiles = files.filter(f => f.parents?.includes(parentId));
 
@@ -258,7 +282,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           <React.Fragment key={folder.id}>
             <div 
               onClick={() => { setActiveFolderId(folder.id); toggleFolderExpand(folder.id); }}
-              className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${activeFolderId === folder.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-50'}`}
+              className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${activeFolderId === folder.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
               style={{ paddingLeft: `${depth * 16 + 8}px` }}
             >
               <div onClick={(e) => toggleSelection(folder.id, e)} className={`w-4 h-4 mr-2 border rounded flex items-center justify-center shrink-0 transition-colors ${selectedItems.has(folder.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 bg-white group-hover:border-slate-400'}`}>
@@ -281,14 +305,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         {childFiles.map(file => (
           <div 
             key={file.id}
-            onClick={() => { setSelectedFile(file); setActiveFolderId(parentId); }}
-            className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-50'}`}
+            onClick={() => { setSelectedFile(file); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
+            className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
             <div onClick={(e) => toggleSelection(file.id, e)} className={`w-4 h-4 mr-2 border rounded flex items-center justify-center shrink-0 transition-colors ${selectedItems.has(file.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 bg-white group-hover:border-slate-400'}`}>
               {selectedItems.has(file.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
             </div>
-            <div className="w-4 shrink-0 mr-1"></div> {/* Spacer for alignment with chevrons */}
+            <div className="w-4 shrink-0 mr-1"></div>
             <div className="mr-2 shrink-0">{getFileIcon(file.mimeType)}</div>
             <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
             
@@ -299,7 +323,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         ))}
       </div>
     );
-  };
+  }, [folders, files, activeFolderId, expandedFolders, selectedItems, selectedFile]);
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#FBFBFC] font-sans text-slate-800 overflow-hidden relative">
@@ -316,152 +340,163 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           <button onClick={() => setIsMobileNavOpen(!isMobileNavOpen)} className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <button onClick={onBack} className="hidden lg:flex p-1.5 hover:bg-slate-100 rounded-md text-slate-400 hover:text-slate-700 transition-colors">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
-          </button>
+          
+          {/* COMPANY WORKSPACE IDENTIFIER (Moved to Top Left Header) */}
+          <div className="hidden lg:flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-md shrink-0">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-black text-slate-900 leading-tight truncate">{selectedCompany}</h2>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Workspace Directory</p>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 flex justify-center max-w-3xl">
           <form onSubmit={handleGeminiSearch} className="relative w-full flex bg-[#F4F5F7] rounded-lg border border-transparent focus-within:border-indigo-300 focus-within:bg-white transition-all overflow-hidden shadow-sm">
             <div className="pl-4 flex items-center shrink-0">
-              <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              <svg className="w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             </div>
             <input 
               type="text" 
-              placeholder="Search documents, folders, or keywords..." 
+              placeholder="Search documents locally... or press Enter for AI" 
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-transparent text-sm px-3 py-2.5 outline-none placeholder:text-slate-400 font-medium"
             />
+            {/* DESKTOP MODEL SELECTOR */}
             <select 
               value={selectedModel} 
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="hidden sm:block bg-transparent text-xs font-bold text-slate-500 border-l border-slate-200 outline-none px-3 cursor-pointer"
+              className="hidden md:block bg-slate-200/50 hover:bg-slate-200 text-[10px] font-bold text-slate-600 border-l border-slate-300 outline-none px-3 cursor-pointer transition-colors"
             >
-              <option value="gemini-1.5-flash">1.5 Flash</option>
-              <option value="gemini-1.5-pro">1.5 Pro</option>
+              <option value="gemini-3.6-flash">⚡ 3.6 Flash (Fast)</option>
+              <option value="gemini-3.5-flash-lite">🪙 3.5 Flash-Lite</option>
             </select>
           </form>
         </div>
 
         <div className="w-1/4 flex justify-end items-center gap-4">
-          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm uppercase shadow-sm">
-            {loginUsername.substring(0, 1)}
-          </div>
+          {/* PROMINENT BACK TO GATEWAY BUTTON */}
+          <button onClick={onBack} className="flex items-center gap-2 px-4 lg:px-5 py-2 lg:py-2.5 bg-slate-900 text-white rounded-xl text-[10px] lg:text-xs font-bold uppercase tracking-widest shadow-sm hover:bg-slate-800 transition-all">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
+            <span className="hidden sm:inline">Gateway</span>
+          </button>
         </div>
       </header>
 
-      {/* MAIN 3-PANE WORKSPACE */}
+      {/* MOBILE MODEL SELECTOR */}
+      <div className="md:hidden bg-white border-b border-slate-200 p-2 flex justify-center z-20 relative shadow-sm">
+         <select 
+            value={selectedModel} 
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="w-full max-w-sm bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 outline-none p-2 rounded-lg"
+          >
+            <option value="gemini-3.6-flash">⚡ Gemini 3.6 Flash (Fast)</option>
+            <option value="gemini-3.5-flash-lite">🪙 Gemini 3.5 Flash-Lite (Saver)</option>
+          </select>
+      </div>
+
+      {/* MAIN 2-PANE WORKSPACE */}
       <main className="flex flex-1 overflow-hidden relative">
         
-        {/* PANE 1: GLOBAL LEFT NAV */}
-        <nav className={`absolute lg:static top-0 left-0 h-full w-[240px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col py-6 z-40 transform transition-transform duration-300 ${isMobileNavOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}`}>
-          <div className="px-6 mb-8 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-sm">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
-            </div>
-            <div>
-              <h2 className="text-sm font-black text-slate-800 leading-tight truncate">{selectedCompany}</h2>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Workspace</p>
-            </div>
-          </div>
-
-          <div className="px-3 space-y-1 flex-1">
-            {['Dashboard', 'Documents', 'Contracts', 'Reports', 'Shared', 'Archive'].map((menu) => (
-              <button 
-                key={menu}
-                onClick={() => { setActiveMenu(menu); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeMenu === menu ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
-              >
-                {menu === 'Dashboard' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>}
-                {menu === 'Documents' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>}
-                {menu === 'Contracts' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>}
-                {menu === 'Reports' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>}
-                {menu === 'Shared' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>}
-                {menu === 'Archive' && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>}
-                {menu}
-              </button>
-            ))}
-          </div>
-
-          <div className="px-6 mt-auto">
-            <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
-              <div>
-                <p className="text-[11px] font-black text-slate-700">Storage</p>
-                <p className="text-[10px] text-slate-400 font-medium">Drive Sync Active</p>
-              </div>
-            </div>
-            <div className="w-full bg-slate-200 h-1.5 rounded-full mt-3 overflow-hidden">
-              <div className="bg-blue-500 w-1/3 h-full rounded-full"></div>
-            </div>
-          </div>
-        </nav>
-
-        {/* PANE 2: NESTED TREE SIDEBAR */}
-        <section className={`w-full lg:w-[300px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col shrink-0 transition-opacity ${selectedFile ? 'hidden lg:flex' : 'flex'}`}>
-          <div className="px-5 py-5 border-b border-slate-200/60 flex justify-between items-center z-10 relative">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-black text-slate-800">All Documents</h2>
-              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" /></svg>
+        {/* PANE 1: UNIFIED LEFT SIDEBAR */}
+        <aside className={`absolute lg:static top-0 left-0 h-full w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col z-40 transform transition-transform duration-300 ${isMobileNavOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}`}>
+          
+          {/* Action Tools */}
+          <div className="px-4 py-4 border-b border-slate-100 flex flex-col gap-3 shrink-0">
+            <div className="flex items-center justify-between">
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workspace Actions</span>
+               <button onClick={() => { setActiveFolderId(rootFolderId); setSelectedFile(null); setSelectedItems(new Set()); }} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 uppercase tracking-widest bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors">
+                 Root Dir
+               </button>
             </div>
             
-            {/* ACTION BUTTON: CREATE / UPLOAD / DELETE */}
             {selectedItems.size > 0 ? (
-              <button onClick={handleBulkDelete} disabled={isLoading} className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete ({selectedItems.size})
+              <button onClick={handleBulkDelete} disabled={isLoading} className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg transition-colors flex items-center gap-1 shadow-sm w-full justify-center">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected ({selectedItems.size})
               </button>
             ) : (
-              <div className="relative">
-                <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className="p-1.5 text-slate-500 hover:bg-slate-200 rounded-md transition-colors">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg>
+              <div className="flex gap-2 w-full">
+                <button onClick={() => setIsNewFolderModalOpen(true)} className="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg> Folder
                 </button>
-                {isAddMenuOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95">
-                    <button onClick={() => fileInputRef.current?.click()} className="w-full text-left px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg> Upload File
-                    </button>
-                    <button onClick={() => { setIsNewFolderModalOpen(true); setIsAddMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg> New Folder
-                    </button>
-                  </div>
-                )}
+                <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg> Upload
+                </button>
               </div>
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto py-3 relative">
-            
-            {/* GEMINI AI ANSWER BOX */}
-            {aiAnswer && (
-              <div className="mx-3 mb-4 p-4 bg-white border border-indigo-100 rounded-xl shadow-sm relative animate-in fade-in slide-in-from-top-2">
-                <button onClick={() => setAiAnswer(null)} className="absolute top-2 right-2 p-1 text-slate-400 hover:text-indigo-600 rounded-md"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className="w-2 h-2 bg-indigo-600 rounded-full animate-pulse"></span>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-indigo-800">Gemini Answer</span>
-                </div>
-                <p className="text-xs font-medium text-slate-700 leading-relaxed whitespace-pre-wrap">{aiAnswer}</p>
-              </div>
-            )}
-
+          {/* Optimized Tree View / Search List */}
+          <div className="flex-1 overflow-y-auto py-2">
             {isLoading ? (
               <div className="flex justify-center py-10"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
+            ) : searchQuery.trim() ? (
+              // Fast Flat List for Searching
+              <div className="px-2 space-y-1">
+                {activeFiles.length === 0 ? (
+                  <p className="text-center text-xs font-bold text-slate-400 py-10">No matching files.</p>
+                ) : (
+                  activeFiles.map(file => (
+                    <div 
+                      key={file.id}
+                      onClick={() => { setSelectedFile(file); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
+                      className={`flex items-center w-full px-3 py-2 cursor-pointer text-sm rounded-lg transition-colors ${selectedFile?.id === file.id ? 'bg-indigo-50 border border-indigo-100 shadow-sm' : 'border border-transparent hover:bg-slate-100'}`}
+                    >
+                      <div className="mr-3 shrink-0">{getFileIcon(file.mimeType)}</div>
+                      <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             ) : (
+              // Full Recursive Tree
               <div className="px-2">
                 {rootFolderId && renderTree(rootFolderId, 0)}
               </div>
             )}
           </div>
-        </section>
 
-        {/* PANE 3: DOCUMENT PREVIEW (RIGHT MAIN AREA) */}
-        <section className={`absolute lg:static top-0 left-0 w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex-col z-20 lg:z-auto transition-transform duration-300 ${selectedFile ? 'translate-x-0 flex' : 'translate-x-full lg:translate-x-0 hidden lg:flex'}`}>
+          {/* Storage Meter */}
+          <div className="p-6 shrink-0 border-t border-slate-200/60 bg-white">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+              <div>
+                <p className="text-[11px] font-black text-slate-700">Storage Sync</p>
+                <p className="text-[10px] text-slate-400 font-medium">Drive Sync Active</p>
+              </div>
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden shadow-inner">
+              <div className="bg-blue-500 w-1/3 h-full rounded-full"></div>
+            </div>
+          </div>
+        </aside>
+
+        {/* PANE 2: DOCUMENT PREVIEW (RIGHT MAIN AREA) */}
+        <section className={`absolute lg:static top-0 left-0 w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex-col z-20 lg:z-auto transition-transform duration-300 ${selectedFile || aiAnswer ? 'translate-x-0 flex' : 'translate-x-full lg:translate-x-0 hidden lg:flex'}`}>
+          
+          {/* AI ANSWER OVERLAY */}
+          {aiAnswer && (
+            <div className="m-4 lg:m-8 p-5 lg:p-6 bg-indigo-50 border border-indigo-100 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-top-4 z-10 shrink-0">
+              <button onClick={() => setAiAnswer(null)} className="absolute top-3 right-3 p-1.5 text-indigo-400 hover:text-indigo-700 bg-white rounded-lg shadow-sm transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2.5 h-2.5 bg-indigo-600 rounded-full animate-pulse"></span>
+                <span className="text-[11px] font-black uppercase tracking-widest text-indigo-800">
+                  Gemini {selectedModel.includes('3.6') ? '3.6 Flash' : '3.5 Flash-Lite'} Answer
+                </span>
+              </div>
+              <p className="text-sm font-medium text-slate-800 leading-relaxed whitespace-pre-wrap">{aiAnswer}</p>
+            </div>
+          )}
+
           {selectedFile ? (
             <>
               {/* Preview Header */}
               <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white lg:rounded-tl-[32px]">
                 <div className="flex items-center gap-4 truncate max-w-[60%]">
-                  <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg">
+                  <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
                   </button>
                   <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
@@ -496,7 +531,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   </div>
                   
                   {/* The Document Iframe */}
-                  <div className="flex-1 min-h-[60vh] bg-white rounded-lg overflow-hidden flex flex-col">
+                  <div className="flex-1 min-h-[60vh] bg-white rounded-lg overflow-hidden flex flex-col shadow-sm border border-slate-200/60">
                     {selectedFile.webViewLink ? (
                       <iframe 
                         src={selectedFile.webViewLink.replace('/view', '/preview')} 
@@ -505,7 +540,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         sandbox="allow-scripts allow-same-origin allow-popups"
                       />
                     ) : (
-                      <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50">
                         <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mb-4">{getFileIcon(selectedFile.mimeType)}</div>
                         <h3 className="text-lg font-black text-slate-800">Preview not available</h3>
                         <p className="text-sm font-medium text-slate-500 mt-2 max-w-sm">Google Drive cannot render this file type in a native iframe window.</p>
@@ -516,16 +551,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 </div>
               </div>
             </>
-          ) : (
+          ) : !aiAnswer ? (
             /* EMPTY STATE */
-            <div className="flex-1 flex flex-col items-center justify-center">
-              <div className="w-24 h-24 mb-6 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-center px-4">
+              <div className="w-24 h-24 mb-6 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-center shadow-inner">
                 <svg className="w-12 h-12 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               </div>
               <h3 className="text-xl font-black text-slate-800 tracking-tight">Select a document</h3>
-              <p className="text-sm font-medium text-slate-400 mt-2 text-center max-w-xs">Choose a file from the directory tree to preview it here.</p>
+              <p className="text-sm font-medium text-slate-400 mt-2 text-center max-w-xs">Choose a file from the directory tree to preview it securely.</p>
             </div>
-          )}
+          ) : null}
         </section>
 
       </main>
@@ -540,8 +575,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <form onSubmit={handleCreateFolder} className="space-y-4">
               <input type="text" placeholder="Folder name..." autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-colors" required />
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setIsNewFolderModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-sm">Create</button>
+                <button type="button" onClick={() => setIsNewFolderModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50" disabled={isCreatingFolder}>Cancel</button>
+                <button type="submit" disabled={isCreatingFolder || !newFolderName.trim()} className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white text-sm font-bold shadow-sm">
+                  {isCreatingFolder ? 'Creating...' : 'Create'}
+                </button>
               </div>
             </form>
           </div>
