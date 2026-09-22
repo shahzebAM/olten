@@ -62,37 +62,58 @@ export class DriveService {
     }
   }
 
-  async getCompanyDirectory(companyName: string) {
-    const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
+async getCompanyDirectory(companyName: string) {
+  const companyFolderId =
+    await this.getOrCreateCompanyFolder(companyName);
 
-    const folderQuery = `'${companyFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const folderRes = await this.drive.files.list({
-      q: folderQuery,
-      fields: 'files(id, name, mimeType, parents)',
-      spaces: 'drive',
-      includeItemsFromAllDrives: true,
-      supportsAllDrives: true,
-    });
-    const folders = folderRes.data.files || [];
+  const folders: any[] = [];
+  const files: any[] = [];
 
-    const subfolderIds = folders.map((f: any) => `'${f.id}' in parents`).join(' or ');
-    const parentQuery = subfolderIds 
-      ? `('${companyFolderId}' in parents or ${subfolderIds})` 
-      : `('${companyFolderId}' in parents)`;
-      
-    const fileQuery = `${parentQuery} and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
+  const pendingFolderIds: string[] = [companyFolderId];
+  const seenIds = new Set<string>([companyFolderId]);
 
-    const fileRes = await this.drive.files.list({
-      q: fileQuery,
-      fields: 'files(id, name, mimeType, webViewLink, createdTime, size, parents)',
-      spaces: 'drive',
-      includeItemsFromAllDrives: true,
-      supportsAllDrives: true,
-    });
-    const files = fileRes.data.files || [];
+  for (let index = 0; index < pendingFolderIds.length; index += 1) {
+    const parentId = pendingFolderIds[index];
+    let pageToken: string | undefined;
 
-    return { companyFolderId, folders, files };
+    do {
+      const response = await this.drive.files.list({
+        q: `'${parentId}' in parents and trashed = false`,
+        fields:
+          'nextPageToken,incompleteSearch,files(id,name,mimeType,webViewLink,createdTime,size,parents)',
+        spaces: 'drive',
+        pageSize: 1000,
+        pageToken,
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+
+      if (response.data.incompleteSearch) {
+        throw new HttpException(
+          'Google Drive returned an incomplete directory. Please retry.',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      for (const item of response.data.files || []) {
+        if (!item.id || seenIds.has(item.id)) continue;
+
+        seenIds.add(item.id);
+
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          folders.push(item);
+          pendingFolderIds.push(item.id);
+        } else {
+          files.push(item);
+        }
+      }
+
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
   }
+
+  return { companyFolderId, folders, files };
+}
 
   // UPDATED: Now accepts an optional parentFolderId to allow nesting
   async createSubFolder(companyName: string, folderName: string, parentFolderId?: string) {
