@@ -1,466 +1,367 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 
-interface DriveItem {
+// --- INTERFACES ---
+interface DriveFile {
   id: string;
   name: string;
-  mimeType?: string;
+  mimeType: string;
   webViewLink?: string;
+  createdTime?: string;
+  size?: string;
   parents?: string[];
 }
 
-interface AiDocsModuleProps {
+interface DriveFolder {
+  id: string;
+  name: string;
+  mimeType: string;
+  parents?: string[];
+}
+
+interface DocumentWorkspaceProps {
   selectedCompany: string;
   loginUsername: string;
   API_BASE_URL: string;
   onBack: () => void;
 }
 
-export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: AiDocsModuleProps) {
-  const [folders, setFolders] = useState<DriveItem[]>([]);
-  const [files, setFiles] = useState<DriveItem[]>([]);
-  const [companyFolderId, setCompanyFolderId] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-  const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
-
-  // --- SMART VIEWER STATES ---
-  const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
-  const [previewHighlightTerms, setPreviewHighlightTerms] = useState<string[]>([]);
-  const [rawTextContent, setRawTextContent] = useState<string | null>(null);
-  const [isLoadingRawText, setIsLoadingRawText] = useState(false);
-
-  // Upload/New Folder States
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [destinationChoice, setDestinationChoice] = useState<'root' | 'subfolder'>('root');
-  const [selectedSubfolderId, setSelectedSubfolderId] = useState<string>('');
+export default function DocumentWorkspace({ selectedCompany, loginUsername, API_BASE_URL, onBack }: DocumentWorkspaceProps) {
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
-  const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
 
-  // Search & AI States
+  // --- DATA STATES ---
+  const [rootFolderId, setRootFolderId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [files, setFiles] = useState<DriveFile[]>([]);
+  
+  // --- LAYOUT STATES ---
+  const [activeMenu, setActiveMenu] = useState<'Home' | 'Recent' | 'Starred' | 'Shared' | 'Trash'>('Home');
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
-  const [isSearching, setIsSearching] = useState(false);
 
-  // Bulk Deletion States
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchDirectory = useCallback(async () => {
+  const showToast = (msg: string, type: 'success' | 'error') => {
+    setToast({ message: msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // --- API: FETCH DIRECTORY ---
+  const fetchDirectory = async () => {
+    setIsLoading(true);
     try {
-      setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/api/docs/directory`, { headers: { 'x-company': selectedCompany }});
+      const res = await fetch(`${API_BASE_URL}/docs/directory`, {
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
+      });
+      if (!res.ok) throw new Error('Failed to load directory');
       const data = await res.json();
+      
+      setRootFolderId(data.companyFolderId);
       setFolders(data.folders || []);
       setFiles(data.files || []);
-      setCompanyFolderId(data.companyFolderId || '');
-    } catch (err) { console.error('Failed to fetch directory', err); } finally { setLoading(false); }
-  }, [selectedCompany, API_BASE_URL]);
+      if (!selectedFolderId) setSelectedFolderId(data.companyFolderId);
+    } catch (err: any) {
+      showToast(err.message || 'Error loading files', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  useEffect(() => { fetchDirectory(); }, [fetchDirectory]);
+  useEffect(() => {
+    fetchDirectory();
+  }, [selectedCompany]);
 
-  const handleUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!selectedFile) return;
+  // --- API: UPLOAD FILE ---
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     setIsUploading(true);
     const formData = new FormData();
-    formData.append('file', selectedFile);
-    const targetFolder = destinationChoice === 'subfolder' ? selectedSubfolderId : companyFolderId;
-    if (targetFolder) formData.append('targetFolderId', targetFolder);
+    formData.append('file', file);
+    if (selectedFolderId && selectedFolderId !== rootFolderId) {
+      formData.append('targetFolderId', selectedFolderId);
+    }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, { method: 'POST', headers: { 'x-company': selectedCompany, 'x-username': loginUsername }, body: formData });
-      if (!res.ok) throw new Error("Upload Failed");
-      alert(`Document uploaded successfully!`);
-      setSelectedFile(null); setIsUploadModalOpen(false); fetchDirectory();
-    } catch (err: any) { alert(`Failed to upload document: ${err.message}`); } finally { setIsUploading(false); }
-  };
-
-const handleCreateFolder = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!newFolderName.trim()) return;
-    try {
-      const payload = {
-        company: selectedCompany,
-        folderName: newFolderName,
-        // If inside a subfolder, send its ID. Otherwise send undefined to default to Root.
-        parentFolderId: currentFolder && currentFolder.id !== 'root' ? currentFolder.id : undefined
-      };
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error();
-      setNewFolderName(''); setIsNewFolderModalOpen(false); fetchDirectory();
-    } catch { alert('Could not create folder.'); }
-  };
-
-  const handleRenameFolder = async (e: React.MouseEvent, folderId: string, currentName: string) => {
-    e.stopPropagation(); // Prevents navigating into the folder when clicking rename
-    const newName = window.prompt("Enter new folder name:", currentName);
-    if (!newName || newName.trim() === "" || newName === currentName) return;
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder/${folderId}/rename`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newName })
+      const res = await fetch(`${API_BASE_URL}/docs/upload`, {
+        method: 'POST',
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
+        body: formData,
       });
-      if (!res.ok) throw new Error();
-      fetchDirectory(); 
-    } catch (err) {
-      alert("Failed to rename folder.");
+      if (!res.ok) throw new Error('Upload failed');
+      showToast('File uploaded successfully', 'success');
+      fetchDirectory();
+    } catch (err: any) {
+      showToast(err.message || 'Upload failed', 'error');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleSearchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!searchQuery.trim()) return;
-    setIsSearching(true); setAiAnswer(null);
+  // --- API: DELETE FILE ---
+  const handleDeleteFile = async (fileId: string) => {
+    if (!window.confirm('Move to trash?')) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/search`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername }, body: JSON.stringify({ query: searchQuery, model: selectedModel }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Search failed');
-      setAiAnswer(data.answer);
-    } catch (err: any) { setAiAnswer(`Error: ${err.message}`); } finally { setIsSearching(false); }
-  };
-
-  // --- SMART VIEWER ENGINE ---
-  const extractKeywordsFromAi = (answer: string) => {
-    const words = answer.match(/\b[A-Z][a-z]{3,}\b|\b[a-zA-Z]{6,}\b/g) || [];
-    return Array.from(new Set(words));
-  };
-
-  const openSmartViewer = async (file: DriveItem, fromAiSearch: boolean = false) => {
-    setPreviewItem(file);
-    setRawTextContent(null);
-    
-    if (fromAiSearch && aiAnswer) {
-      setPreviewHighlightTerms(extractKeywordsFromAi(aiAnswer));
-    } else {
-      setPreviewHighlightTerms([]);
-    }
-
-    const isTextFile = file.mimeType?.includes('text/plain') || file.name.endsWith('.txt') || file.name.endsWith('.md');
-    
-    if (isTextFile) {
-      setIsLoadingRawText(true);
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
-        if (res.ok) {
-          const text = await res.text();
-          setRawTextContent(text);
-        } else {
-          setRawTextContent(null);
-        }
-      } catch (e) {
-        setRawTextContent(null);
-      } finally {
-        setIsLoadingRawText(false);
-      }
+      const res = await fetch(`${API_BASE_URL}/docs/${fileId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+      showToast('Moved to trash', 'success');
+      if (selectedFile?.id === fileId) setSelectedFile(null);
+      fetchDirectory();
+    } catch (err: any) {
+      showToast(err.message, 'error');
     }
   };
 
-  const renderHighlightedText = (text: string, terms: string[]) => {
-    if (!terms.length) return <span className="whitespace-pre-wrap">{text}</span>;
-    const regex = new RegExp(`(${terms.join('|')})`, 'gi');
-    const parts = text.split(regex);
-    return (
-      <span className="whitespace-pre-wrap text-slate-700 leading-relaxed text-sm">
-        {parts.map((part, i) => regex.test(part) ? <mark key={i} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded shadow-sm">{part}</mark> : <span key={i}>{part}</span>)}
-      </span>
-    );
+  // --- FILTERING LOGIC ---
+  const activeFiles = useMemo(() => {
+    let filtered = files;
+    
+    // Filter by Folder
+    if (selectedFolderId) {
+      filtered = filtered.filter(f => f.parents?.includes(selectedFolderId));
+    }
+
+    // Filter by Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(f => f.name.toLowerCase().includes(q));
+    }
+
+    // Sort: Newest first
+    return filtered.sort((a, b) => new Date(b.createdTime || 0).getTime() - new Date(a.createdTime || 0).getTime());
+  }, [files, selectedFolderId, searchQuery]);
+
+  // --- HELPERS: ICONS & DATES ---
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Unknown Date';
+    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const renderFormattedAiText = (text: string) => {
-    const lines = text.split('\n');
-    return lines.map((line, lineIndex) => {
-      const parts: React.ReactNode[] = [];
-      let lastIndex = 0;
-      const regex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*/g;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(line)) !== null) {
-        if (match.index > lastIndex) parts.push(line.substring(lastIndex, match.index));
-        
-        if (match[1] && match[2]) {
-          const linkText = match[1];
-          const linkUrl = match[2];
-          const driveIdMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-
-          if (driveIdMatch && driveIdMatch[1]) {
-            const fileId = driveIdMatch[1];
-            const matchedFile = files.find(f => f.id === fileId) || { id: fileId, name: linkText, webViewLink: linkUrl, mimeType: 'unknown' };
-
-            parts.push(
-              <button key={`${lineIndex}-${match.index}`} onClick={() => openSmartViewer(matchedFile, true)} className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/80 px-2 py-0.5 rounded text-left shadow-sm">
-                <span>{linkText}</span>
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-              </button>
-            );
-          } else {
-            parts.push(
-              <a key={`${lineIndex}-${match.index}`} href={linkUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-bold text-sky-600 hover:text-sky-800 underline decoration-sky-300 hover:decoration-sky-600 transition-colors break-all bg-sky-50/60 px-1.5 py-0.5 rounded">
-                <span>{linkText}</span>
-                <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-              </a>
-            );
-          }
-        } else if (match[3]) {
-          parts.push(<strong key={`${lineIndex}-${match.index}`} className="font-bold text-slate-900">{match[3]}</strong>);
-        }
-        lastIndex = regex.lastIndex;
-      }
-      if (lastIndex < line.length) parts.push(line.substring(lastIndex));
-      return <span key={lineIndex} className="block min-h-[1.35rem] leading-relaxed">{parts.length > 0 ? parts : ' '}</span>;
-    });
-  };
-
-  // Separate root items from nested items
-  const rootFolders = folders.filter(f => !folders.some(parent => f.parents?.includes(parent.id)));
-  const rootFiles = files.filter(f => !folders.some(folder => f.parents?.includes(folder.id)));
-
-  // Determine what to display based on current location
-  const displayFolders = currentFolder && currentFolder.id !== 'root' ? folders.filter(f => f.parents?.includes(currentFolder.id)) : rootFolders;
-  const displayFiles = currentFolder && currentFolder.id !== 'root' ? files.filter(f => f.parents?.includes(currentFolder.id)) : rootFiles;
-
-  const totalSelectable = displayFolders.length + displayFiles.length + (!currentFolder ? 1 : 0);
-
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) setSelectedItemIds([...displayFolders.map(f => f.id), ...displayFiles.map(f => f.id)]);
-    else setSelectedItemIds([]);
-  };
-
-  const handleToggleSelect = (id: string) => setSelectedItemIds(prev => prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]);
-
-  const handleDeleteSelected = async () => {
-    if (selectedItemIds.length === 0) return;
-    if (!window.confirm(`Permanently delete ${selectedItemIds.length} items from Drive and Database?`)) return;
-    setIsDeleting(true);
-    try {
-      await Promise.all(selectedItemIds.map(id => fetch(`${API_BASE_URL}/api/docs/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })));
-      setSelectedItemIds([]); fetchDirectory(); 
-    } catch (error) { alert("Failed to delete some items."); } finally { setIsDeleting(false); }
+  const getFileIconInfo = (mimeType: string) => {
+    if (mimeType.includes('document') || mimeType.includes('word')) return { color: 'bg-blue-500', label: 'W' };
+    if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return { color: 'bg-emerald-500', label: 'X' };
+    if (mimeType.includes('pdf')) return { color: 'bg-rose-500', label: 'PDF' };
+    if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return { color: 'bg-amber-500', label: 'P' };
+    if (mimeType.includes('image')) return { color: 'bg-purple-500', label: 'IMG' };
+    return { color: 'bg-slate-400', label: 'TXT' };
   };
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
-      <header className="border-b border-slate-100 px-6 sm:px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg></button>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">{selectedCompany} Workspace</h1>
-            <p className="text-xs text-slate-400 font-medium tracking-wide">Google Drive & Gemini Index</p>
+    <div className="flex flex-col h-screen w-full bg-[#FAFAFA] font-sans text-slate-800 overflow-hidden">
+      
+      {/* TOAST NOTIFICATION */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3 rounded-lg shadow-xl font-bold text-sm border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+          {toast.message}
+        </div>
+      )}
+
+      {/* TOP HEADER (MAC-STYLE) */}
+      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20">
+        <div className="flex items-center gap-6 w-1/4">
+          <div className="flex gap-2">
+            <div className="w-3 h-3 rounded-full bg-rose-400 cursor-pointer" onClick={onBack}></div>
+            <div className="w-3 h-3 rounded-full bg-amber-400"></div>
+            <div className="w-3 h-3 rounded-full bg-emerald-400"></div>
+          </div>
+          <div className="flex items-center gap-2 font-bold text-sm text-slate-700">
+            <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+            MyFiles
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsNewFolderModalOpen(true)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">+ New Folder</button>
-          <button onClick={() => setIsUploadModalOpen(true)} className="px-5 sm:px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold tracking-wide transition-colors shadow-sm">Upload Document</button>
+
+        <div className="flex-1 flex justify-center">
+          <div className="relative w-full max-w-xl">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input 
+              type="text" 
+              placeholder="Search files, folders, or content..." 
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full bg-[#F3F4F6] text-sm pl-10 pr-4 py-1.5 rounded-md outline-none focus:ring-2 focus:ring-blue-500 transition-shadow placeholder:text-slate-400 font-medium"
+            />
+          </div>
+        </div>
+
+        <div className="w-1/4 flex justify-end items-center gap-4">
+          <button onClick={() => fileInputRef.current?.click()} className="text-sm font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            Upload
+          </button>
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs">
+            {loginUsername.substring(0, 2).toUpperCase()}
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8 flex flex-col items-center">
-        <form onSubmit={handleSearchSubmit} className="w-full max-w-3xl mb-10">
-          <div className="relative flex items-center w-full bg-white border-2 border-slate-300 focus-within:border-indigo-600 focus-within:ring-4 focus-within:ring-indigo-50 rounded-full shadow-sm transition-all p-1.5 pl-4 sm:pl-5">
-            <div className="text-slate-400 shrink-0 mr-2 sm:mr-3"><svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg></div>
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={`Search ${selectedCompany} documents with Gemini...`} className="w-full py-2.5 sm:py-3 bg-transparent text-sm sm:text-base font-medium outline-none placeholder:text-slate-400 min-w-0 pr-2" />
-            <button type="submit" disabled={isSearching || !searchQuery.trim()} className="shrink-0 px-5 sm:px-7 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-50 whitespace-nowrap shadow-sm">
-              {isSearching ? 'Scanning...' : 'Search'}
+      {/* MAIN 3-PANE WORKSPACE */}
+      <main className="flex flex-1 overflow-hidden">
+        
+        {/* PANE 1: LEFT SIDEBAR */}
+        <aside className="w-[240px] bg-[#F9F9FB] border-r border-slate-200 flex flex-col py-4 shrink-0 overflow-y-auto">
+          <div className="px-3 space-y-1 mb-8">
+            <button onClick={() => { setActiveMenu('Home'); setSelectedFolderId(rootFolderId); setSelectedFile(null); }} className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeMenu === 'Home' ? 'bg-slate-200/50 text-slate-900' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+              Home
+            </button>
+            <button onClick={() => setActiveMenu('Recent')} className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeMenu === 'Recent' ? 'bg-slate-200/50 text-slate-900' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              Recent
+            </button>
+            <button onClick={() => setActiveMenu('Starred')} className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeMenu === 'Starred' ? 'bg-slate-200/50 text-slate-900' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+              Starred
+            </button>
+            <button onClick={() => setActiveMenu('Trash')} className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeMenu === 'Trash' ? 'bg-slate-200/50 text-slate-900' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              Trash
             </button>
           </div>
-          <div className="flex items-center justify-center gap-2 sm:gap-3 mt-4 flex-wrap">
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Engine:</span>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.6-flash')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-flash' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 ring-2 ring-indigo-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>⚡ 3.6 Flash (Fast)</button>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.5-flash-lite')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.5-flash-lite' ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 ring-2 ring-emerald-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>🪙 3.5 Flash-Lite (Credit Saver)</button>
-          </div>
-          {isSearching && <div className="w-full h-1 mt-6 bg-indigo-50 rounded-full overflow-hidden flex"><div className="w-1/3 h-full bg-indigo-500 rounded-full animate-[ping_1.5s_cubic-bezier(0,0,0.2,1)_infinite]"></div></div>}
-        </form>
 
-        {aiAnswer && (
-          <div className="w-full max-w-3xl mb-10 p-6 bg-slate-50 border border-indigo-100 rounded-2xl shadow-sm animate-in fade-in">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-              <span className="text-xs font-black tracking-widest text-indigo-700 uppercase flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>Gemini AI Answer</span>
-              <button onClick={() => setAiAnswer(null)} className="text-xs font-bold text-slate-400 hover:text-slate-600">Close</button>
+          <div className="px-3">
+            <div className="flex items-center justify-between px-3 mb-2">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Folders</span>
+              <button className="text-slate-400 hover:text-slate-600"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg></button>
             </div>
-            <div className="text-sm text-slate-700 font-medium space-y-1">{renderFormattedAiText(aiAnswer)}</div>
-          </div>
-        )}
-
-        <div className="w-full">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2 text-sm">
-              <button onClick={() => setCurrentFolder(null)} className={`font-bold transition-colors ${currentFolder ? 'text-indigo-600 hover:underline' : 'text-slate-800 uppercase tracking-widest text-sm'}`}>Drive Directory</button>
-              {currentFolder && <><span className="text-slate-400 font-bold">/</span><span className="font-extrabold text-slate-800 flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-md text-xs">📁 {currentFolder.name}</span></>}
+            <div className="space-y-0.5">
+              {folders.map(folder => (
+                <button 
+                  key={folder.id} 
+                  onClick={() => { setSelectedFolderId(folder.id); setSelectedFile(null); }}
+                  className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors ${selectedFolderId === folder.id ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 font-medium hover:bg-slate-100'}`}
+                >
+                  <svg className={`w-4 h-4 ${selectedFolderId === folder.id ? 'text-blue-500' : 'text-blue-400'}`} fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                  <span className="truncate">{folder.name}</span>
+                </button>
+              ))}
             </div>
-            {currentFolder && <button onClick={() => setCurrentFolder(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition-colors">← Back</button>}
+          </div>
+        </aside>
+
+        {/* PANE 2: FILE LIST (MIDDLE COLUMN) */}
+        <section className="w-[320px] bg-white border-r border-slate-200 flex flex-col shrink-0">
+          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white z-10">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">
+              {selectedFolderId === rootFolderId ? 'Root Directory' : folders.find(f => f.id === selectedFolderId)?.name || 'Files'}
+            </h2>
+            <button className="text-slate-400 hover:text-slate-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" /></svg>
+            </button>
           </div>
 
-          <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-3 rounded-xl mb-6">
-            <label className="flex items-center gap-3 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
-              <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer" /> Select All
-            </label>
-            <button onClick={handleDeleteSelected} disabled={selectedItemIds.length === 0 || isDeleting} className="px-5 py-2.5 bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors shadow-sm">{isDeleting ? 'Deleting...' : `Delete Selected (${selectedItemIds.length})`}</button>
-          </div>
-
-          {loading ? (
-            <div className="text-center py-20 text-slate-400 font-medium">Loading Drive workspace...</div>
-          ) : (
-            <div className="space-y-8">
-              <div className="space-y-6">
+          <div className="flex-1 overflow-y-auto p-3 space-y-1">
+            {isLoading ? (
+              <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>
+            ) : activeFiles.length === 0 ? (
+              <div className="text-center py-10 text-xs font-bold text-slate-400 uppercase tracking-widest">No files found</div>
+            ) : (
+              activeFiles.map(file => {
+                const icon = getFileIconInfo(file.mimeType);
+                const isSelected = selectedFile?.id === file.id;
                 
-                {/* 1. FOLDERS GRID */}
-                {(displayFolders.length > 0 || !currentFolder) && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                    
-                    {/* Master Root Card (Only visible at the very top) */}
-                    {!currentFolder && (
-                      <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                        <input type="checkbox" disabled title="Cannot delete root folder" className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
-                        <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
-                          <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{rootFiles.length} files</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Render Subfolders */}
-                    {displayFolders.map((folder) => (
-                      <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                        <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer z-10" />
-                        
-                        {/* Rename Button */}
-                        <button onClick={(e) => handleRenameFolder(e, folder.id, folder.name)} className="absolute top-3 right-3 text-slate-400 hover:text-indigo-600 z-10 bg-white/80 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-sm border border-slate-200" title="Rename Folder">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                        </button>
-
-                        <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center mt-2">
-                          <div className="text-4xl mb-2">📁</div>
-                          <span className="font-bold text-sm text-slate-800 truncate max-w-full px-2">{folder.name}</span>
-                          <span className="text-[11px] font-semibold text-slate-400 mt-0.5">{files.filter(f => f.parents?.includes(folder.id)).length} files</span>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 2. FILES LIST */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {displayFolders.length === 0 && displayFiles.length === 0 && currentFolder && <div className="col-span-full text-center py-10 text-slate-400 font-medium">Empty folder</div>}
-                  {displayFiles.map(file => (
-                    <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
-                      <div className="flex items-center gap-3 truncate flex-1">
-                        <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer shrink-0" />
-                        <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : file.mimeType?.includes('spreadsheet') || file.mimeType?.includes('csv') ? '📊' : '📄'}</span>
-                        <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <button onClick={() => openSmartViewer(file, false)} className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 transition-colors" title="Preview Document"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg></button>
-                        {file.webViewLink && <a href={file.webViewLink} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-sky-600 p-1.5 rounded-lg hover:bg-sky-50 transition-colors" title="Open in new Google Drive tab"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg></a>}
-                      </div>
+                return (
+                  <div 
+                    key={file.id} 
+                    onClick={() => setSelectedFile(file)}
+                    className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all border ${isSelected ? 'bg-blue-50 border-blue-100 shadow-sm' : 'bg-transparent border-transparent hover:bg-slate-50'}`}
+                  >
+                    <div className={`w-8 h-8 rounded shrink-0 flex items-center justify-center text-white text-[10px] font-black ${icon.color}`}>
+                      {icon.label}
                     </div>
-                  ))}
+                    <div className="flex-1 min-w-0">
+                      <h4 className={`text-sm truncate ${isSelected ? 'font-bold text-blue-900' : 'font-medium text-slate-800'}`}>{file.name}</h4>
+                      <p className={`text-[11px] mt-0.5 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`}>
+                        {formatDate(file.createdTime)} • {file.size ? (parseInt(file.size) / 1024).toFixed(1) + ' KB' : 'Drive Doc'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* PANE 3: DOCUMENT PREVIEW (RIGHT COLUMN) */}
+        <section className="flex-1 bg-white flex flex-col relative overflow-hidden">
+          {selectedFile ? (
+            <>
+              {/* Document Toolbar */}
+              <div className="h-16 border-b border-slate-100 flex justify-between items-center px-8 shrink-0 bg-white/80 backdrop-blur-sm z-10 absolute top-0 left-0 right-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-500">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">{selectedFile.name}</h3>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest">{formatDate(selectedFile.createdTime)}</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <button className="p-2 text-slate-400 hover:text-amber-400 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg></button>
+                  <button className="px-4 py-1.5 border border-slate-200 rounded-md text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" /></svg>
+                    Share
+                  </button>
+                  <button onClick={() => handleDeleteFile(selectedFile.id)} className="p-2 text-slate-400 hover:text-rose-500 transition-colors ml-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                 </div>
               </div>
+
+              {/* Document Canvas */}
+              <div className="flex-1 overflow-y-auto pt-24 pb-12 px-12 lg:px-24">
+                
+                {/* Simulated clean document header */}
+                <div className="max-w-3xl mx-auto mb-10">
+                  <h1 className="text-4xl font-black text-slate-900 tracking-tight">{selectedFile.name.replace(/\.[^/.]+$/, "")}</h1>
+                  <p className="text-sm font-medium text-slate-500 mt-3 italic">A securely synced document from your Google Drive workspace.</p>
+                </div>
+
+                <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-[600px] flex flex-col">
+                  {selectedFile.webViewLink ? (
+                    <iframe 
+                      src={selectedFile.webViewLink.replace('/view', '/preview')} 
+                      className="w-full h-full border-0"
+                      title={selectedFile.name}
+                      sandbox="allow-scripts allow-same-origin allow-popups"
+                    />
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
+                      <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mb-4">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-700">Preview not available</h3>
+                      <p className="text-sm text-slate-500 mt-2">This file type cannot be previewed natively.</p>
+                      <button onClick={() => window.open(selectedFile.webViewLink, '_blank')} className="mt-6 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-colors">
+                        Open in Google Drive
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="max-w-3xl mx-auto mt-8 pt-6 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  <span>Workspace Sync: Active</span>
+                  <span>Last edited {formatDate(selectedFile.createdTime)}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* EMPTY STATE */
+            <div className="flex-1 flex flex-col items-center justify-center bg-slate-50/50">
+              <div className="w-24 h-24 mb-6">
+                <svg className="w-full h-full text-slate-200" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h3 className="text-xl font-black text-slate-400">Select a file to preview</h3>
+              <p className="text-sm font-medium text-slate-400 mt-2">Choose a document from the middle column.</p>
             </div>
           )}
-        </div>
+        </section>
+
       </main>
-
-      {/* SMART DOCUMENT VIEWER MODAL */}
-      {previewItem && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex justify-center items-center p-3 sm:p-6 animate-in zoom-in-95 duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden border border-slate-700">
-            
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0 shadow-sm relative z-10">
-              <div className="flex items-center gap-3 truncate">
-                <span className="text-3xl shrink-0">{previewItem.mimeType?.includes('image') ? '🖼️' : previewItem.mimeType?.includes('pdf') ? '📕' : previewItem.mimeType?.includes('spreadsheet') || previewItem.mimeType?.includes('csv') ? '📊' : '📄'}</span>
-                <div className="truncate">
-                  <h3 className="font-black text-slate-900 text-lg truncate tracking-tight">{previewItem.name}</h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded uppercase tracking-widest font-black">Smart Viewer Engine</span>
-                    {previewHighlightTerms.length > 0 && rawTextContent !== null && (
-                      <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {previewItem.webViewLink && (
-                  <a href={previewItem.webViewLink} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm">
-                    <span>Drive Native</span><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                  </a>
-                )}
-                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
-              </div>
-            </div>
-
-            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex">
-              {rawTextContent !== null ? (
-                <div className="w-full h-full p-8 overflow-y-auto bg-white mx-auto max-w-4xl shadow-inner text-left font-mono">
-                  {renderHighlightedText(rawTextContent, previewHighlightTerms)}
-                </div>
-              ) : isLoadingRawText ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
-                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Text...</span>
-                </div>
-              ) : (
-                <div className="w-full h-full relative">
-                  <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
-                </div>
-              )}
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* UPLOAD MODAL */}
-      {isUploadModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-slate-100">
-            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-2">Upload Document</h3>
-            <p className="text-xs font-bold text-slate-500 mb-2">Gemini Supports: PDF, TXT, CSV, MD, PNG, JPEG, WEBP.</p>
-            <form onSubmit={handleUploadSubmit} className="space-y-6 mt-4">
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-slate-400 p-6 rounded-2xl cursor-pointer">
-                <span className="text-xs font-bold text-slate-600 text-center">{selectedFile ? selectedFile.name : 'Click to select Document or Image'}</span>
-                <input type="file" accept=".pdf, .txt, .csv, .md, image/jpeg, image/png, image/webp" className="hidden" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
-              </label>
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">Target Location in Drive</label>
-                <div className="flex items-center gap-3">
-                  <input type="radio" id="destRoot" name="destChoice" checked={destinationChoice === 'root'} onChange={() => setDestinationChoice('root')} className="text-indigo-600 focus:ring-indigo-500" />
-                  <label htmlFor="destRoot" className="text-sm font-semibold text-slate-700">Root Folder (/{selectedCompany})</label>
-                </div>
-                <div className="flex items-center gap-3">
-                  <input type="radio" id="destSub" name="destChoice" checked={destinationChoice === 'subfolder'} onChange={() => setDestinationChoice('subfolder')} className="text-indigo-600 focus:ring-indigo-500" />
-                  <label htmlFor="destSub" className="text-sm font-semibold text-slate-700">Specific subfolder</label>
-                </div>
-                {destinationChoice === 'subfolder' && (
-                 <select value={selectedSubfolderId} onChange={(e) => setSelectedSubfolderId(e.target.value)} className="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none" required>
-                    <option value="">-- Choose Subfolder --</option>
-                    {displayFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                  </select>
-                )}
-              </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => setIsUploadModalOpen(false)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500">Cancel</button>
-                <button type="submit" disabled={!selectedFile || isUploading} className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{isUploading ? 'Uploading...' : 'Confirm Upload'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* NEW FOLDER MODAL */}
-      {isNewFolderModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">New Folder</h3>
-            <form onSubmit={handleCreateFolder} className="space-y-4">
-              <input type="text" placeholder="Folder name..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-indigo-600" required />
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setIsNewFolderModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">Create</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
