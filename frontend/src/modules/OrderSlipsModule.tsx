@@ -140,22 +140,37 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     if (!isFO) {
       confirmMsg = `Notice: Marking an OS as ${newStatus} is safe. However, if an active Final Order exists for this OS, the backend will strictly block this action. Proceed?`;
     } else {
-      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office. Proceed?`;
+      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office.\n\nBecause this is a Final Order, its original parent Order Slip (${slip.referenceOs}) will also be automatically marked as ${newStatus}. Proceed?`;
     }
 
     if (!window.confirm(confirmMsg)) return;
 
     setIsLoading(true);
     try {
+      // 1. Cancel the target slip (FO or OS)
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}/cancel`, { 
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername }) 
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername, status: newStatus }) 
       });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.message || `Failed to process cancellation.`);
       }
 
-      showToast(`Document marked as ${newStatus}!`, "success");
+      // 2. AUTO-CASCADING CANCELLATION: If this is an FO, find and cancel its parent OS automatically
+      if (isFO && slip.referenceOs) {
+        const parentOs = allSlips.find(s => s.osNumber === slip.referenceOs);
+        if (parentOs && parentOs.status !== newStatus) {
+          try {
+            await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}/cancel`, { 
+              method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername, status: newStatus }) 
+            });
+          } catch (parentErr) {
+            console.warn("Parent OS Auto-Cancel failed:", parentErr);
+          }
+        }
+      }
+
+      showToast(`Document(s) marked as ${newStatus}!`, "success");
       setViewSlip(null);
       fetchOrderSlips(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsLoading(false); }
@@ -303,11 +318,11 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               </div>
               <div className="flex gap-3 items-center">
                 
-                {/* NEW FO GENERATION EMBEDDED DIRECTLY IN THE LEDGER MODAL */}
+                {/* NEW FO GENERATION WITH THICK TEAL STYLING */}
                 {viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned' && (
-                  <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100 mr-2">
-                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
-                    <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
+                  <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
+                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                    <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFo ? 'Gen...' : 'Gen Final Order'}
                     </button>
                   </div>
@@ -321,8 +336,9 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
             {/* PRINT CONTAINER */}
             <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
               
+              {/* FIXED TOP-LAYER WATERMARK WITH INK MULTIPLY EFFECT */}
               {(viewSlip.status === 'Cancelled' || viewSlip.status === 'Returned') && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 opacity-25 mix-blend-multiply">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">
                     {viewSlip.status}
                   </div>
@@ -330,50 +346,54 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               )}
 
               <div className="relative z-10">
-                <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
-                <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
-                  <div>
-                    <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
-                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">{viewSlip.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}</p>
-                  </div>
-                  <div className="text-right">
-                    <h2 className={`text-2xl font-mono font-black ${viewSlip.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{viewSlip.osNumber}</h2>
-                    
-                    {/* BOLD GENERATED FROM REFERENCE */}
-                    {viewSlip.osNumber.startsWith('FO') && viewSlip.referenceOs && (
-                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">
-                        GENERATED FROM: {viewSlip.referenceOs}
-                      </div>
-                    )}
-
-                    <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">Date: {new Date(viewSlip.createdAt).toLocaleDateString()}</p>
-                  </div>
+                {/* Top Header - Company & Title */}
+                <div className="flex justify-between items-end border-b-2 border-slate-900 pb-3 mb-6">
+                  <h1 className="text-3xl print:text-2xl font-black text-slate-900 uppercase tracking-widest leading-none">
+                    {selectedCompany}
+                  </h1>
+                  <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest leading-none">
+                    {viewSlip.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
+                  </h2>
                 </div>
+                
+                {/* Billed To (Left) & OS Number (Right) */}
+                <div className="flex justify-between items-start mb-6">
+                  
+                  <div className="text-left flex flex-col items-start">
+                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest mb-0.5">Billed To</h4>
+                    <div className="font-black text-base text-black uppercase leading-tight">{viewSlip.customer?.name || 'Unknown Customer'}</div>
+                  </div>
 
-                <div className="mb-8">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
-                  <div className="font-black text-lg text-slate-900 uppercase">{viewSlip.customer?.name || 'Unknown Customer'}</div>
-                  <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {viewSlip.customerId.slice(0,8)}</div>
+                  <div className="text-right flex flex-col items-end">
+                    <h2 className={`text-2xl font-mono font-black leading-none ${viewSlip.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{viewSlip.osNumber}</h2>
+                    {viewSlip.osNumber.startsWith('FO') && viewSlip.referenceOs && (
+                      <div className="mt-1 inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded-md text-[10px] font-black text-slate-600 tracking-widest uppercase">REF: {viewSlip.referenceOs}</div>
+                    )}
+                    <p className="text-xs font-bold text-slate-500 mt-2 uppercase tracking-widest">
+                      Date: {new Date(viewSlip.createdAt).toLocaleDateString()} &nbsp; Time: {new Date(viewSlip.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+
                 </div>
 
                 <table className="w-full text-left text-sm mb-12 border-collapse bg-white">
-                  <thead className="border-y-2 border-slate-900 bg-slate-50/50">
+                  <thead className="border-y-2 border-slate-900 bg-slate-50/50 print:bg-transparent">
                     <tr>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider w-32">SKU</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider">Description</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-center w-16">Qty</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-right w-28">Unit Price</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-right w-32">Amount</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-slate-300 print:divide-slate-400">
                     {viewSlip.items.map((item: any, idx: number) => (
                       <tr key={idx}>
-                        <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
-                        <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">{item.productName}</td>
-                        <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
-                        <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
-                        <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                        <td className="py-2 px-2 font-mono text-[13px] font-black text-black uppercase">{item.sku}</td>
+                        <td className="py-2 px-2 font-bold text-[13px] text-black uppercase leading-tight">{item.productName}</td>
+                        <td className="py-2 px-2 text-center font-black text-[13px] text-black">{item.requestedQty}</td>
+                        <td className="py-2 px-2 text-right font-mono text-[13px] font-bold text-black">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                        <td className="py-2 px-2 text-right font-black font-mono text-[13px] text-black">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                       </tr>
                     ))}
                   </tbody>

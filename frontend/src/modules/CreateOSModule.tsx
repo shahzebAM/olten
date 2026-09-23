@@ -297,6 +297,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // --- MASSIVELY IMPROVED FINAL ORDER GENERATOR ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -304,24 +305,61 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setIsGeneratingFinalOrder(true);
     try {
       const payload = {
-        osNumber: finalOrderNumber.trim(), referenceOs: finalizedOs.osNumber, company: selectedCompany, customerId: finalizedOs.customerId,
-        isVatApplied: finalizedOs.vatApplied, vatRate: finalizedOs.vatRate, subtotal: finalizedOs.subtotal, vatAmount: finalizedOs.vatAmount, grandTotal: finalizedOs.grandTotal, user: loginUsername,
-        items: finalizedOs.items.map((i: any) => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        osNumber: finalOrderNumber.trim(), 
+        referenceOs: finalizedOs.osNumber, 
+        company: selectedCompany, 
+        customerId: selectedCustomer?.id || finalizedOs.customerId, // Guaranteed Fallback
+        isVatApplied: finalizedOs.isVatApplied ?? finalizedOs.vatApplied ?? isVatApplied, 
+        vatRate: finalizedOs.vatRate || vatRate, 
+        subtotal: finalizedOs.subtotal || subtotal, 
+        vatAmount: finalizedOs.vatAmount || vatAmount, 
+        grandTotal: finalizedOs.grandTotal || grandTotal, 
+        user: loginUsername,
+        items: finalizedOs.items.map((i: any) => ({ 
+            productId: i.productId, 
+            sku: i.sku, 
+            productName: i.productName, 
+            requestedQty: Number(i.requestedQty), 
+            unitPrice: Number(i.unitPrice), 
+            lineTotal: Number(i.lineTotal) 
+        }))
       };
 
       const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to generate Final Order.");
+      
+      if (!res.ok) {
+        let errDesc = "Failed to create Final Order in Database.";
+        try { const d = await res.json(); if (d.message) errDesc = d.message; } catch(e){}
+        throw new Error(errDesc); // Triggers Red Toast with exact Prisma reason
+      }
+      
       const newFo = await res.json();
 
-      await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
-      });
+      // Silent Patch: If this fails, it won't crash the FO generation UI
+      try {
+        await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
+        });
+      } catch (patchErr) {
+        console.warn("Could not patch original OS status, but FO was generated.");
+      }
 
       await handleRefreshStock(); 
       showToast("Final Order logged & Stock Deducted instantly!", "success");
-      setFinalizedOs(newFo); setFinalOrderGenerated(true); setOsNumber(newFo.osNumber); setLoadedOsId(newFo.id);
+      
+      // Inject Customer back into state so the print modal doesn't crash if the POST response omitted it
+      const completeFo = { ...newFo, customer: selectedCustomer || finalizedOs.customer };
+      
+      setFinalizedOs(completeFo); 
+      setFinalOrderGenerated(true); 
+      setOsNumber(completeFo.osNumber); 
+      setLoadedOsId(completeFo.id);
       fetchNextFoNumber();
-    } catch (e: any) { showToast(e.message || "Failed to generate Final Order.", "error"); } finally { setIsGeneratingFinalOrder(false); }
+    } catch (e: any) { 
+      showToast(e.message || "Failed to generate Final Order.", "error"); 
+    } finally { 
+      setIsGeneratingFinalOrder(false); 
+    }
   };
 
   const handleClosePrintModal = () => {
@@ -332,7 +370,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const handlePrint = () => window.print();
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'} print:hidden`}>
           {toast.message}
@@ -561,9 +599,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
       {/* FINALIZED PRINT MODAL */}
       {finalizedOs && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:p-0 print:bg-white print:block">
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[250] flex justify-center p-4 sm:p-8 overflow-hidden print:static print:inset-auto print:p-0 print:bg-white print:block print:overflow-visible print:h-auto">
           <style type="text/css" media="print">{`@page { size: auto; margin: 0; }`}</style>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
+          
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none print:block print:h-auto print:overflow-visible">
             
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
@@ -574,9 +613,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <div className="flex gap-3">
                 {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
-                  <div className="flex items-center gap-2 bg-teal-50 p-1.5 rounded-xl border border-teal-100">
-                    <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-28 px-2 py-1.5 text-[10px] font-mono font-black text-teal-700 bg-white border border-teal-200 rounded-lg outline-none focus:border-teal-400 uppercase" placeholder="FO-000000" />
-                    <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-4 py-1.5 bg-teal-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
+                  <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm">
+                    <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                    <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
                     </button>
                   </div>
@@ -589,7 +628,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             </div>
 
             {/* PRINT CONTAINER */}
-            <div className="p-8 print:pt-12 print:px-8 print:pb-8 bg-white flex-1 overflow-y-auto print:overflow-visible relative">
+            <div className="p-8 print:pt-4 print:px-8 print:pb-4 bg-white flex-1 overflow-y-auto print:overflow-visible print:block relative">
               {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">{finalizedOs.status}</div>
@@ -597,61 +636,71 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               )}
 
               <div className="relative z-10">
-                <h2 className="hidden print:block text-center text-xl font-black uppercase mb-8 tracking-widest text-slate-900">{selectedCompany}</h2>
-                <div className="flex justify-between items-start mb-10 border-b-2 border-slate-900 pb-6">
-                  <div>
-                    <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter print:hidden">{selectedCompany}</h1>
-                    <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest">{finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}</p>
+                {/* Top Header - Company & Title */}
+                <div className="flex justify-between items-end border-b-2 border-slate-900 pb-3 mb-6">
+                  <h1 className="text-3xl print:text-2xl font-black text-slate-900 uppercase tracking-widest leading-none">
+                    {selectedCompany}
+                  </h1>
+                  <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest leading-none">
+                    {finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
+                  </h2>
+                </div>
+                
+                {/* Billed To (Left) & OS Number (Right) */}
+                <div className="flex justify-between items-start mb-6">
+                  
+                  <div className="text-left flex flex-col items-start">
+                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest mb-0.5">Billed To</h4>
+                    <div className="font-black text-base text-black uppercase leading-tight">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
                   </div>
-                  <div className="text-right">
-                    <h2 className={`text-2xl font-mono font-black ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
+
+                  <div className="text-right flex flex-col items-end">
+                    <h2 className={`text-2xl font-mono font-black leading-none ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{finalizedOs.osNumber}</h2>
                     {finalizedOs.osNumber.startsWith('FO') && finalizedOs.referenceOs && (
-                      <div className="mt-2 inline-block bg-slate-100 border border-slate-300 px-3 py-1 rounded-md text-xs font-black text-slate-600 tracking-widest uppercase">GENERATED FROM: {finalizedOs.referenceOs}</div>
+                      <div className="mt-1 inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded-md text-[10px] font-black text-slate-600 tracking-widest uppercase">REF: {finalizedOs.referenceOs}</div>
                     )}
-                    <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">Date: {new Date(finalizedOs.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs font-bold text-slate-500 mt-2 uppercase tracking-widest">
+                      Date: {new Date(finalizedOs.createdAt).toLocaleDateString()} &nbsp; Time: {new Date(finalizedOs.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </div>
+
                 </div>
 
-                <div className="mb-8">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1">Billed To</h4>
-                  <div className="font-black text-lg text-slate-900 uppercase">{finalizedOs.customer?.name || 'Unknown Customer'}</div>
-                  <div className="text-xs font-mono text-slate-500 uppercase mt-1">Code: {finalizedOs.customerId.slice(0,8)}</div>
-                </div>
-
-                <table className="w-full text-left text-sm mb-12 border-collapse bg-white">
-                  <thead className="border-y-2 border-slate-900 bg-slate-50/50">
+                {/* Highly Legible & Compacted Table */}
+                <table className="w-full text-left mb-6 border-collapse bg-white">
+                  <thead className="border-y-2 border-black bg-slate-50/50 print:bg-transparent">
                     <tr>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs w-32 border-r border-slate-200">SKU</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs border-r border-slate-200">Description</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-center w-24 border-r border-slate-200">Qty</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32 border-r border-slate-200">Unit Price</th>
-                      <th className="py-3 px-3 font-black text-slate-900 uppercase text-xs text-right w-32">Amount</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider w-32">SKU</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider">Description</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-center w-16">Qty</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-right w-28">Unit Price</th>
+                      <th className="py-2 px-2 font-black text-black uppercase text-[11px] tracking-wider text-right w-32">Amount</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-slate-300 print:divide-slate-400">
                     {finalizedOs.items.map((item: any, idx: number) => (
                       <tr key={idx}>
-                        <td className="py-3 px-3 font-mono text-xs border-r border-slate-200 font-bold text-slate-700 uppercase">{item.sku}</td>
-                        <td className="py-3 px-3 font-bold text-slate-900 border-r border-slate-200 uppercase">{item.productName}</td>
-                        <td className="py-3 px-3 text-center font-bold border-r border-slate-200 text-slate-500">{item.requestedQty}</td>
-                        <td className="py-3 px-3 text-right border-r border-slate-200 font-mono text-slate-700">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
-                        <td className="py-3 px-3 text-right font-black font-mono text-slate-900">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                        <td className="py-2 px-2 font-mono text-[13px] font-black text-black uppercase">{item.sku}</td>
+                        <td className="py-2 px-2 font-bold text-[13px] text-black uppercase leading-tight">{item.productName}</td>
+                        <td className="py-2 px-2 text-center font-black text-[13px] text-black">{item.requestedQty}</td>
+                        <td className="py-2 px-2 text-right font-mono text-[13px] font-bold text-black">₱{Number(item.unitPrice).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
+                        <td className="py-2 px-2 text-right font-black font-mono text-[13px] text-black">₱{Number(item.lineTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
 
-                <div className="flex justify-end border-t-2 border-slate-900 pt-6">
-                  <div className="w-72 space-y-3">
-                    <div className="flex justify-between text-sm font-bold text-slate-600"><span>Subtotal:</span><span className="font-mono">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
-                    <div className="flex justify-between text-sm font-bold text-slate-600 border-b border-slate-200 pb-3"><span>VAT (12%):</span><span className="font-mono">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
-                    <div className="flex justify-between text-xl font-black text-slate-900 pt-1"><span>Total:</span><span className={`font-mono ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                <div className="flex justify-end border-t-2 border-slate-900 pt-4">
+                  <div className="w-64 space-y-2">
+                    <div className="flex justify-between text-xs font-bold text-slate-900"><span>Subtotal:</span><span className="font-mono text-sm">₱{Number(finalizedOs.subtotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                    <div className="flex justify-between text-xs font-bold text-slate-900 border-b border-slate-300 pb-2"><span>VAT (12%):</span><span className="font-mono text-sm">₱{Number(finalizedOs.vatAmount).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
+                    <div className="flex justify-between text-base font-black text-black pt-1"><span>Total:</span><span className={`font-mono text-xl ${finalizedOs.osNumber.startsWith('FO') ? 'text-teal-800' : 'text-indigo-800'}`}>₱{Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}</span></div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-6 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
+            <div className="p-4 border-t border-slate-200 bg-slate-50 print:hidden flex justify-between items-center rounded-b-2xl shrink-0">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Prepared by: {finalizedOs.createdBy}</span>
             </div>
           </div>
