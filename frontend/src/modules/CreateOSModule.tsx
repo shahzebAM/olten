@@ -4,7 +4,9 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
 interface WarehouseBreakdown { name: string; quantity: number; }
 interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
-interface DraftItem { productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number | ''; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
+
+// UPDATED: Added `id` so the backend knows exactly which row to update, and unitPrice is string/number for decimal typing
+interface DraftItem { id?: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number | string; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
 
 interface CreateOSModuleProps {
   selectedCompany: string;
@@ -152,7 +154,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setLoadedOsId(slip.id); setOsNumber(slip.osNumber); setReferenceOs(slip.referenceOs || null); setIsVatApplied(slip.vatApplied || false); setLoadedOsStatus(slip.status || 'Generated');
     if (slip.customer) { setSelectedCustomer(slip.customer); setCustomerSearch(slip.customer.name); }
     
+    // CRITICAL FIX: Retaining `i.id` so Prisma knows exactly which item to PATCH later
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
+      id: i.id, 
       productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
       officeStock: 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null
     }));
@@ -193,7 +197,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     else if (e.key === 'Escape') { setShowProductDropdown(false); setHighlightedIndex(-1); }
   };
 
-  // --- IMMUTABLE STATE FIX FOR QTY UPDATES ---
   const handleUpdateQty = (index: number, val: string) => {
     setDraftItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
@@ -204,14 +207,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     }));
   };
 
-  // --- IMMUTABLE STATE FIX FOR PRICE UPDATES ---
+  // CRITICAL FIX: Decimals can now be fully typed without immediately disappearing
   const handleUpdateUnitPrice = (index: number, val: string) => {
     setDraftItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
       if (val === '') return { ...item, unitPrice: '', lineTotal: 0 };
-      const price = parseFloat(val);
+      
+      const priceFloat = parseFloat(val);
+      const safePrice = isNaN(priceFloat) ? 0 : priceFloat;
       const qty = Number(item.requestedQty) || 0;
-      return { ...item, unitPrice: price, lineTotal: qty * price };
+      
+      return { ...item, unitPrice: val, lineTotal: qty * safePrice };
     }));
   };
 
@@ -241,7 +247,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
-  const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => typeof i.requestedQty === 'number' && i.requestedQty > 0 && typeof i.unitPrice === 'number');
+
+  // Form validation now strictly verifies the numbers are valid without breaking string typings
+  const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => {
+    const q = Number(i.requestedQty);
+    const p = Number(i.unitPrice);
+    return !isNaN(q) && q > 0 && !isNaN(p) && i.unitPrice !== '';
+  });
 
   const handleStatusChangeWithStockRestore = async (newStatus: 'Cancelled' | 'Returned') => {
     if (!loadedOsId) return;
@@ -293,13 +305,17 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
+  // CRITICAL FIX: Sent `id` so backend PATCH targets the specific row properly instead of ignoring it
   const handleUpdateOrder = async () => {
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
-        items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
+        items: draftItems.map(i => ({ 
+          id: i.id, // Explicit ID inclusion allows Prisma update nested tables
+          productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) 
+        }))
       };
       
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
