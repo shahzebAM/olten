@@ -1,4 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// --- DRAG AND DROP WRAPPER COMPONENT ---
+function SortableModuleCard({ id, children }: { id: string, children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 1,
+    opacity: isDragging ? 0.9 : 1,
+  };
+
+  return (
+    <div 
+      ref={setNodeRef} 
+      style={style} 
+      {...attributes} 
+      {...listeners} 
+      className={`touch-none h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'scale-105 drop-shadow-2xl' : ''} transition-all duration-200`}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
@@ -10,6 +38,54 @@ export default function CompanyModule({
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+  // --- DRAG AND DROP STATES & CONFIG ---
+  const [moduleOrder, setModuleOrder] = useState<string[]>([]);
+
+  // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
+  );
+
+  useEffect(() => {
+    if (!isGateway) return;
+
+    // 1. Identify which modules this user currently has access to
+    const activeIds: string[] = [];
+    if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
+    if (hasPurchasing) activeIds.push('purchase_orders');
+    if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory');
+    if (hasPayroll) activeIds.push('payroll');
+    if (hasAiDocs) activeIds.push('ai_docs');
+
+    // 2. Fetch their previous custom grid layout from their local storage
+    const savedOrder = JSON.parse(localStorage.getItem(`module_order_${loginUsername}`) || '[]');
+    
+    // 3. Merge them: keep saved order, remove revoked modules, and append newly granted modules to the end
+    const mergedOrder = [
+      ...savedOrder.filter((id: string) => activeIds.includes(id)),
+      ...activeIds.filter(id => !savedOrder.includes(id))
+    ];
+    
+    setModuleOrder(mergedOrder);
+  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername]);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      setModuleOrder((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
+        const newOrder = arrayMove(items, oldIndex, newIndex);
+        
+        // Save the new layout permanently for this specific user
+        localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
+        return newOrder;
+      });
+    }
+  };
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -51,6 +127,99 @@ export default function CompanyModule({
     return { title: 'text-slate-900', sub: 'Workspace Environment', iconBg: 'bg-slate-100', icon: 'text-slate-600', borderHover: 'hover:border-slate-400' };
   };
 
+  // --- RENDER DYNAMIC MODULE CARDS ---
+  const renderModuleCard = (id: string) => {
+    switch (id) {
+      case 'customers':
+        return (
+          <button onClick={() => onSelectModule('customers')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Customer Directory</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage clients and view profiles.</p>
+            </div>
+          </button>
+        );
+      case 'create_os':
+        return (
+          <button onClick={() => onSelectModule('create_os')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-teal-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-teal-950 transition-colors group-hover:text-teal-700">Create Order Slip</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft and process new customer orders.</p>
+            </div>
+          </button>
+        );
+      case 'sales_orders':
+        return (
+          <button onClick={() => onSelectModule('sales_orders')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-violet-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-violet-950 transition-colors group-hover:text-violet-700">O.S. Ledger</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">View, print, and manage generated order slips.</p>
+            </div>
+          </button>
+        );
+      case 'purchase_orders':
+        return (
+          <button onClick={() => onSelectModule('purchase_orders')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-sky-950 transition-colors group-hover:text-sky-700">Procurement (P.O.)</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage Purchase Orders, verify deliveries, and track shortages.</p>
+            </div>
+          </button>
+        );
+      case 'inventory':
+        return (
+          <button onClick={() => onSelectModule('inventory')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-blue-950 transition-colors group-hover:text-blue-700">Master Inventory</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Consolidated catalog, stock ledger, and facilities.</p>
+            </div>
+          </button>
+        );
+      case 'payroll':
+        return (
+          <button onClick={() => onSelectModule('payroll')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-indigo-950 transition-colors group-hover:text-indigo-700">Payroll Engine</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage salaries, bonuses, and deductions.</p>
+            </div>
+          </button>
+        );
+      case 'ai_docs':
+        return (
+          <button onClick={() => onSelectModule('ai_docs')} className="group w-full h-full bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-rose-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
+            <div>
+              <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <svg className="w-5 h-5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-rose-950 transition-colors group-hover:text-rose-700">AI Docs Engine</h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Generate letters, SOPs, and compliance docs.</p>
+            </div>
+          </button>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // --- WORKSPACE LIST VIEW ---
   if (!isGateway) {
     const available = companiesList.filter((c: string) => allowedCompanies[c]);
 
@@ -149,7 +318,7 @@ export default function CompanyModule({
     );
   }
 
-  // GATEWAY VIEW
+  // --- GATEWAY VIEW (WITH DRAG & DROP) ---
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
       <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 sm:mb-12">
@@ -163,92 +332,19 @@ export default function CompanyModule({
         </div>
       </div>
 
-      <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        
-        {/* CUSTOMER & SALES MODULES */}
-        {hasSales && (
-          <>
-            <button onClick={() => onSelectModule('customers')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-              <div>
-                <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black text-emerald-950 transition-colors group-hover:text-emerald-700">Customer Directory</h2>
-                <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage clients and view profiles.</p>
-              </div>
-            </button>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={moduleOrder} strategy={rectSortingStrategy}>
+          <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            
+            {moduleOrder.map(moduleId => (
+              <SortableModuleCard key={moduleId} id={moduleId}>
+                {renderModuleCard(moduleId)}
+              </SortableModuleCard>
+            ))}
 
-            <button onClick={() => onSelectModule('create_os')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-teal-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-              <div>
-                <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <svg className="w-5 h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black text-teal-950 transition-colors group-hover:text-teal-700">Create Order Slip</h2>
-                <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Draft and process new customer orders.</p>
-              </div>
-            </button>
-            <button onClick={() => onSelectModule('sales_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-violet-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-              <div>
-                <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <svg className="w-5 h-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black text-violet-950 transition-colors group-hover:text-violet-700">O.S. Ledger</h2>
-                <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">View, print, and manage generated order slips.</p>
-              </div>
-            </button>
-          </>
-        )}
-
-        {/* PROCUREMENT / PURCHASE ORDERS MODULE */}
-        {hasPurchasing && (
-          <button onClick={() => onSelectModule('purchase_orders')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                </svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-sky-950 transition-colors group-hover:text-sky-700">Procurement (P.O.)</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage Purchase Orders, verify deliveries, and track shortages.</p>
-            </div>
-          </button>
-        )}
-
-        {/* UNIFIED MASTER INVENTORY MODULE */}
-        {(hasProducts || hasInventory || hasWarehouses) && (
-          <button onClick={() => onSelectModule('inventory')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-blue-950 transition-colors group-hover:text-blue-700">Master Inventory</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Consolidated catalog, stock ledger, and facilities.</p>
-            </div>
-          </button>
-        )}
-
-        {hasPayroll && (
-          <button onClick={() => onSelectModule('payroll')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-indigo-950 transition-colors group-hover:text-indigo-700">Payroll Engine</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Manage salaries, bonuses, and deductions.</p>
-            </div>
-          </button>
-        )}
-        
-        {hasAiDocs && (
-          <button onClick={() => onSelectModule('ai_docs')} className="group bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 hover:border-rose-400 hover:shadow-md transition-all text-left flex flex-col justify-between min-h-[160px] sm:min-h-[180px]">
-            <div>
-              <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><svg className="w-5 h-5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
-              <h2 className="text-xl sm:text-2xl font-black text-rose-950 transition-colors group-hover:text-rose-700">AI Docs Engine</h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium">Generate letters, SOPs, and compliance docs.</p>
-            </div>
-          </button>
-        )}
-      </div>
+          </div>
+        </SortableContext>
+      </DndContext>
     </div>
   );
 }
