@@ -2,37 +2,56 @@ import { Controller, Post, Get, Delete, Patch, Param, Body, Headers, UseIntercep
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentService } from './document.service';
-import { DriveService } from './drive.service'; // <-- Added DriveService
+import { DriveService } from './drive.service';
 
 @Controller('api/docs')
 export class DocumentController {
   constructor(
     private readonly documentService: DocumentService,
-    private readonly driveService: DriveService // <-- Injected DriveService
+    private readonly driveService: DriveService 
   ) {}
 
   @Get('directory')
   async getDirectory(@Headers('x-company') company: string) {
     if (!company) throw new BadRequestException('Company header missing');
-    return this.documentService.getCompanyDirectory(company);
+    
+    // 1. Fetch your existing directory logic
+    const directoryData = await this.documentService.getCompanyDirectory(company);
+    
+    // 2. Fetch the new storage quota
+    const storageQuota = await this.driveService.getStorageQuota();
+
+    // 3. Merge them so the frontend gets exactly what it expects
+    return {
+      ...directoryData,
+      storageQuota
+    };
   }
 
+  // --- THE NESTING FIX IS HERE ---
   @Post('folder')
   async createFolder(
     @Headers('x-company') company: string,
-    @Body('folderName') folderName: string,
+    @Body() body: { folderName: string; parentFolderId?: string; targetFolderId?: string },
   ) {
-    if (!company || !folderName) throw new BadRequestException('Company and Folder Name are required');
-    return this.documentService.createFolder(company, folderName);
+    if (!company || !body.folderName) {
+      throw new BadRequestException('Company and Folder Name are required');
+    }
+
+    // Extract the parent ID sent from the frontend payload
+    const targetId = body.targetFolderId || body.parentFolderId;
+
+    // Call DriveService directly to properly nest the folder
+    return this.driveService.createSubFolder(company, body.folderName, targetId);
   }
 
-  // --- NEW: FOLDER RENAME ENDPOINT ---
+  // --- FOLDER RENAME ENDPOINT ---
   @Patch('folder/:id/rename')
   async renameFolder(@Param('id') id: string, @Body() body: { newName: string }) {
     if (!body.newName || body.newName.trim() === '') {
       throw new BadRequestException('New folder name is required.');
     }
-    // We can call DriveService directly here since it already handles the rename logic perfectly
+    // We call DriveService directly here since it already handles the rename logic perfectly
     return this.driveService.renameFolder(id, body.newName);
   }
 

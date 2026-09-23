@@ -62,58 +62,56 @@ export class DriveService {
     }
   }
 
-async getCompanyDirectory(companyName: string) {
-  const companyFolderId =
-    await this.getOrCreateCompanyFolder(companyName);
+  async getCompanyDirectory(companyName: string) {
+    const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
 
-  const folders: any[] = [];
-  const files: any[] = [];
+    const folders: any[] = [];
+    const files: any[] = [];
 
-  const pendingFolderIds: string[] = [companyFolderId];
-  const seenIds = new Set<string>([companyFolderId]);
+    const pendingFolderIds: string[] = [companyFolderId];
+    const seenIds = new Set<string>([companyFolderId]);
 
-  for (let index = 0; index < pendingFolderIds.length; index += 1) {
-    const parentId = pendingFolderIds[index];
-    let pageToken: string | undefined;
+    for (let index = 0; index < pendingFolderIds.length; index += 1) {
+      const parentId = pendingFolderIds[index];
+      let pageToken: string | undefined;
 
-    do {
-      const response = await this.drive.files.list({
-        q: `'${parentId}' in parents and trashed = false`,
-        fields:
-          'nextPageToken,incompleteSearch,files(id,name,mimeType,webViewLink,createdTime,size,parents)',
-        spaces: 'drive',
-        pageSize: 1000,
-        pageToken,
-        includeItemsFromAllDrives: true,
-        supportsAllDrives: true,
-      });
+      do {
+        const response = await this.drive.files.list({
+          q: `'${parentId}' in parents and trashed = false`,
+          fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,webViewLink,createdTime,size,parents)',
+          spaces: 'drive',
+          pageSize: 1000,
+          pageToken,
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
 
-      if (response.data.incompleteSearch) {
-        throw new HttpException(
-          'Google Drive returned an incomplete directory. Please retry.',
-          HttpStatus.BAD_GATEWAY,
-        );
-      }
-
-      for (const item of response.data.files || []) {
-        if (!item.id || seenIds.has(item.id)) continue;
-
-        seenIds.add(item.id);
-
-        if (item.mimeType === 'application/vnd.google-apps.folder') {
-          folders.push(item);
-          pendingFolderIds.push(item.id);
-        } else {
-          files.push(item);
+        if (response.data.incompleteSearch) {
+          throw new HttpException(
+            'Google Drive returned an incomplete directory. Please retry.',
+            HttpStatus.BAD_GATEWAY,
+          );
         }
-      }
 
-      pageToken = response.data.nextPageToken || undefined;
-    } while (pageToken);
+        for (const item of response.data.files || []) {
+          if (!item.id || seenIds.has(item.id)) continue;
+
+          seenIds.add(item.id);
+
+          if (item.mimeType === 'application/vnd.google-apps.folder') {
+            folders.push(item);
+            pendingFolderIds.push(item.id);
+          } else {
+            files.push(item);
+          }
+        }
+
+        pageToken = response.data.nextPageToken || undefined;
+      } while (pageToken);
+    }
+
+    return { companyFolderId, folders, files };
   }
-
-  return { companyFolderId, folders, files };
-}
 
   // UPDATED: Now accepts an optional parentFolderId to allow nesting
   async createSubFolder(companyName: string, folderName: string, parentFolderId?: string) {
@@ -172,7 +170,7 @@ async getCompanyDirectory(companyName: string) {
     }
   }
 
-  // NEW: Method to rename folders (or files)
+  // Method to rename folders (or files)
   async renameFolder(folderId: string, newName: string) {
     try {
       const response = await this.drive.files.update({
@@ -188,6 +186,20 @@ async getCompanyDirectory(companyName: string) {
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Folder Rename Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  // --- NEW: Fetch exact storage quota from Google Drive ---
+  async getStorageQuota() {
+    try {
+      const aboutRes = await this.drive.about.get({ fields: 'storageQuota' });
+      return {
+        usage: aboutRes.data.storageQuota?.usage || '0',
+        limit: aboutRes.data.storageQuota?.limit || '0',
+      };
+    } catch (error: any) {
+      this.logger.warn(`Could not fetch storage quota: ${error.message}`);
+      return null;
     }
   }
 }
