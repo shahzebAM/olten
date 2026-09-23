@@ -1,10 +1,20 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
-interface DriveItem {
+// --- INTERFACES ---
+interface DriveFile {
   id: string;
   name: string;
-  mimeType?: string;
+  mimeType: string;
   webViewLink?: string;
+  createdTime?: string;
+  size?: string;
+  parents?: string[];
+}
+
+interface DriveFolder {
+  id: string;
+  name: string;
+  mimeType: string;
   parents?: string[];
 }
 
@@ -16,604 +26,787 @@ interface AiDocsModuleProps {
 }
 
 export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: AiDocsModuleProps) {
-  const [folders, setFolders] = useState<DriveItem[]>([]);
-  const [files, setFiles] = useState<DriveItem[]>([]);
-  const [companyFolderId, setCompanyFolderId] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-  const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
-
-  // --- SMART VIEWER STATES ---
-  const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
-  const [previewHighlightTerms, setPreviewHighlightTerms] = useState<string[]>([]);
-  const [rawTextContent, setRawTextContent] = useState<string | null>(null);
-  const [isLoadingRawText, setIsLoadingRawText] = useState(false);
-
-  // Upload/New Folder States
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [destinationChoice, setDestinationChoice] = useState<'root' | 'subfolder'>('root');
-  const [selectedSubfolderId, setSelectedSubfolderId] = useState<string>('');
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // --- SUBMISSION LOCKS ---
   const [isUploading, setIsUploading] = useState(false);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+
+  // --- RESPONSIVE STATES ---
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // --- DATA STATES ---
+  const [rootFolderId, setRootFolderId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [files, setFiles] = useState<DriveFile[]>([]);
+  
+  // --- NEW: STORAGE STATE ---
+  const [storageData, setStorageData] = useState<{ usage: string, limit: string } | null>(null);
+  
+  // --- WORKSPACE & TREE STATES ---
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  
+  // --- MULTI-SELECT STATE ---
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+
+  // --- SEARCH & AI STATES ---
+  const [aiQuery, setAiQuery] = useState('');
+  const [localQuery, setLocalQuery] = useState('');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
+  const [isSearchingAi, setIsSearchingAi] = useState(false);
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+
+  // --- RESIZER STATES ---
+  const [aiPanelHeight, setAiPanelHeight] = useState(300);
+  const [isDraggingResizer, setIsDraggingResizer] = useState(false);
+  const rightPaneRef = useRef<HTMLElement>(null);
+
+  // --- MODAL STATES ---
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [renameTarget, setRenameTarget] = useState<{ id: string, name: string } | null>(null);
+  const [newRenameValue, setNewRenameValue] = useState('');
 
-  // Search & AI States
-  const [searchQuery, setSearchQuery] = useState('');
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
-  const [isSearching, setIsSearching] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Bulk Deletion States
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const directoryRequestId = useRef(0);
-  const directoryScope = useRef<{ company: string; baseUrl: string } | null>(null);
-  const activeFolderId =
-    currentFolder && currentFolder.id !== 'root'
-      ? currentFolder.id
-      : companyFolderId;
-
-  const fetchDirectory = useCallback(async () => {
-    const scope = directoryScope.current;
-    if (!scope || scope.company !== selectedCompany || scope.baseUrl !== API_BASE_URL) return;
-    const requestId = ++directoryRequestId.current;
-    setLoading(true);
-
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/docs/directory`,
-        { headers: { 'x-company': selectedCompany } }
-      );
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.message || 'Could not load the Drive directory.');
-      if (!data.companyFolderId || !Array.isArray(data.folders) || !Array.isArray(data.files)) {
-        throw new Error('The server returned an incomplete Drive directory.');
-      }
-      if (scope !== directoryScope.current || requestId !== directoryRequestId.current) return;
-
-      const nextFolders: DriveItem[] = data.folders;
-      const nextFiles: DriveItem[] = data.files;
-      setFolders(nextFolders);
-      setFiles(nextFiles);
-      setCompanyFolderId(data.companyFolderId);
-      setSelectedItemIds([]);
-
-      // Keep an open folder in sync after renames, moves, or deletions in Drive.
-      setCurrentFolder((previous) => {
-        if (!previous) return null;
-        const root = { id: 'root', name: `${selectedCompany} Root` };
-        if (previous.id === 'root' || previous.id === data.companyFolderId) return root;
-        const updated = nextFolders.find((folder) => folder.id === previous.id);
-        return updated ? { id: updated.id, name: updated.name } : root;
-      });
-    } catch (err) {
-      if (scope !== directoryScope.current || requestId !== directoryRequestId.current) return;
-      console.error('Failed to fetch directory', err);
-      alert(err instanceof Error ? err.message : 'Could not load the Drive directory.');
-    } finally {
-      if (scope === directoryScope.current && requestId === directoryRequestId.current) setLoading(false);
-    }
-  }, [selectedCompany, API_BASE_URL]);
-
-  useEffect(() => {
-    directoryScope.current = { company: selectedCompany, baseUrl: API_BASE_URL };
-    setCurrentFolder(null);
-    setFolders([]);
-    setFiles([]);
-    setCompanyFolderId('');
-    setSelectedItemIds([]);
-    setDestinationChoice('root');
-    setSelectedSubfolderId('');
-    setIsUploadModalOpen(false);
-    setIsNewFolderModalOpen(false);
-    void fetchDirectory();
-
-    return () => {
-      directoryRequestId.current += 1;
-      directoryScope.current = null;
-    };
-  }, [fetchDirectory, selectedCompany, API_BASE_URL]);
-
-  useEffect(() => {
-    setSelectedItemIds([]);
-  }, [currentFolder?.id, selectedCompany]);
-
-  const handleUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) return;
-
-    const targetFolder = destinationChoice === 'subfolder'
-      ? selectedSubfolderId
-      : companyFolderId;
-
-    if (loading || !targetFolder || targetFolder === 'root' ||
-        (targetFolder !== companyFolderId && !folders.some((folder) => folder.id === targetFolder))) {
-      alert('Please wait for the directory to load and select a valid destination folder.');
-      return;
-    }
-
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-    formData.append('targetFolderId', targetFolder);
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, { method: 'POST', headers: { 'x-company': selectedCompany, 'x-username': loginUsername }, body: formData });
-      if (!res.ok) throw new Error('Upload Failed');
-      alert('Document uploaded successfully!');
-      setSelectedFile(null); setIsUploadModalOpen(false); await fetchDirectory();
-    } catch (err: any) { alert(`Failed to upload document: ${err.message}`); } finally { setIsUploading(false); }
+  const showToast = (msg: string, type: 'success' | 'error') => {
+    setToast({ message: msg, type });
+    setTimeout(() => setToast(null), 3500);
   };
 
+  // --- RESIZER LOGIC ---
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingResizer(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsDraggingResizer(false);
+  }, []);
+
+  const resize = useCallback((e: MouseEvent) => {
+    if (isDraggingResizer && rightPaneRef.current) {
+      const paneRect = rightPaneRef.current.getBoundingClientRect();
+      let newHeight = e.clientY - paneRect.top;
+      
+      if (newHeight < 150) newHeight = 150;
+      if (newHeight > paneRect.height - 200) newHeight = paneRect.height - 200;
+      
+      setAiPanelHeight(newHeight);
+    }
+  }, [isDraggingResizer]);
+
+  useEffect(() => {
+    if (isDraggingResizer) {
+      window.addEventListener('mousemove', resize);
+      window.addEventListener('mouseup', stopResizing);
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isDraggingResizer, resize, stopResizing]);
+
+  // --- API: FETCH DIRECTORY ---
+  const fetchDirectory = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/directory`, {
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
+      });
+      if (!res.ok) throw new Error('Failed to load directory');
+      const data = await res.json();
+      
+      setRootFolderId(data.companyFolderId);
+      setFolders(data.folders || []);
+      setFiles(data.files || []);
+      
+      // Save the exact storage quota from backend
+      if (data.storageQuota) {
+        setStorageData(data.storageQuota);
+      }
+      
+      if (!activeFolderId) {
+        setActiveFolderId(data.companyFolderId);
+        setExpandedFolders(prev => new Set(prev).add(data.companyFolderId));
+      }
+    } catch (err: any) {
+      if (!isSilent) showToast(err.message || 'Error loading workspace', 'error');
+    } finally {
+      if (!isSilent) setIsLoading(false);
+    }
+  }, [API_BASE_URL, selectedCompany, loginUsername, activeFolderId]);
+
+  useEffect(() => {
+    fetchDirectory();
+  }, [fetchDirectory]);
+
+  // --- HELPER: FORMAT BYTES ---
+  const formatBytes = (bytes: string | number) => {
+    const b = Number(bytes);
+    if (b === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(b) / Math.log(k));
+    return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  // --- API: GEMINI SEARCH ---
+  const handleGeminiSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiQuery.trim()) return;
+    setIsSearchingAi(true);
+    setAiAnswer(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        body: JSON.stringify({ query: aiQuery, model: selectedModel })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'AI Search failed');
+      
+      setAiAnswer(data.answer);
+    } catch (err: any) {
+      setAiAnswer(`Error: ${err.message}`);
+    } finally {
+      setIsSearchingAi(false);
+    }
+  };
+
+  // --- API: UPLOAD FILE ---
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    if (activeFolderId && activeFolderId !== rootFolderId) {
+      formData.append('targetFolderId', activeFolderId);
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
+        method: 'POST',
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
+        body: formData,
+      });
+      if (!res.ok) throw new Error('Upload failed');
+      showToast('Document uploaded successfully', 'success');
+      
+      if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
+      fetchDirectory(true);
+    } catch (err: any) {
+      showToast(err.message || 'Upload failed', 'error');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // --- API: CREATE FOLDER ---
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) return;
-    if (loading || !activeFolderId || activeFolderId === 'root') {
-      alert('The directory is still loading. Please try again.');
-      return;
-    }
-
+    if (!newFolderName.trim() || isCreatingFolder) return;
+    
+    setIsCreatingFolder(true);
     try {
+      const targetId = activeFolderId && activeFolderId !== rootFolderId ? activeFolderId : undefined;
+      
       const payload = {
-        company: selectedCompany,
         folderName: newFolderName.trim(),
-        parentFolderId: activeFolderId
+        targetFolderId: targetId,
+        parentFolderId: targetId
       };
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany }, body: JSON.stringify(payload) });
+
+      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+        body: JSON.stringify(payload)
+      });
+      
       if (!res.ok) throw new Error();
-      setNewFolderName(''); setIsNewFolderModalOpen(false); await fetchDirectory();
-    } catch { alert('Could not create folder.'); }
+      
+      setNewFolderName('');
+      setIsNewFolderModalOpen(false);
+      showToast('Folder created', 'success');
+      
+      if (targetId) setExpandedFolders(prev => new Set(prev).add(targetId));
+      
+      fetchDirectory(true);
+    } catch {
+      showToast('Could not create folder', 'error');
+    } finally {
+      setIsCreatingFolder(false);
+    }
   };
 
-  const handleRenameFolder = async (e: React.MouseEvent, folderId: string, currentName: string) => {
-    e.stopPropagation(); // Prevents navigating into the folder when clicking rename.
-    if (folderId === 'root' || folderId === companyFolderId) return;
-
-    const newName = window.prompt('Enter new folder name:', currentName)?.trim();
-    if (!newName || newName === currentName) return;
-
+  // --- API: RENAME FILE/FOLDER ---
+  const handleRename = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTarget || !newRenameValue.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder/${folderId}/rename`, {
+      const res = await fetch(`${API_BASE_URL}/api/docs/folder/${renameTarget.id}/rename`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-company': selectedCompany,
-          'x-username': loginUsername
-        },
-        body: JSON.stringify({ newName })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName: newRenameValue.trim() })
       });
       if (!res.ok) throw new Error();
-      await fetchDirectory();
+      showToast('Renamed successfully', 'success');
+      setRenameTarget(null);
+      if (selectedFile?.id === renameTarget.id) {
+        setSelectedFile({ ...selectedFile, name: newRenameValue.trim() });
+      }
+      fetchDirectory(true);
     } catch {
-      alert('Failed to rename folder.');
+      showToast('Failed to rename', 'error');
     }
   };
 
-  const handleSearchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!searchQuery.trim()) return;
-    setIsSearching(true); setAiAnswer(null);
+  // --- API: BULK DELETE ---
+  const handleBulkDelete = async () => {
+    if (selectedItems.size === 0) return;
+    if (!window.confirm(`Permanently delete ${selectedItems.size} selected item(s)?`)) return;
+
+    setIsLoading(true); 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/search`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername }, body: JSON.stringify({ query: searchQuery, model: selectedModel }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Search failed');
-      setAiAnswer(data.answer);
-    } catch (err: any) { setAiAnswer(`Error: ${err.message}`); } finally { setIsSearching(false); }
+      const promises = Array.from(selectedItems).map(id =>
+        fetch(`${API_BASE_URL}/api/docs/${id}`, { method: 'DELETE' })
+      );
+      await Promise.all(promises);
+      showToast(`Deleted ${selectedItems.size} item(s)`, 'success');
+      
+      if (selectedFile && selectedItems.has(selectedFile.id)) setSelectedFile(null);
+      if (activeFolderId && selectedItems.has(activeFolderId)) setActiveFolderId(rootFolderId);
+      
+      setSelectedItems(new Set());
+      fetchDirectory(); 
+    } catch {
+      showToast('Failed to delete some items', 'error');
+      fetchDirectory();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // --- SMART VIEWER ENGINE ---
-  const extractKeywordsFromAi = (answer: string) => {
-    const words = answer.match(/\b[A-Z][a-z]{3,}\b|\b[a-zA-Z]{6,}\b/g) || [];
-    return Array.from(new Set(words));
-  };
+  // --- SEARCH FILTERING (LOCAL ONLY) ---
+  const activeFiles = useMemo(() => {
+    if (!localQuery.trim()) return files;
+    const q = localQuery.toLowerCase();
+    return files.filter(f => f.name.toLowerCase().includes(q));
+  }, [files, localQuery]);
 
-  const openSmartViewer = async (file: DriveItem, fromAiSearch: boolean = false) => {
-    setPreviewItem(file);
-    setRawTextContent(null);
-    
-    if (fromAiSearch && aiAnswer) {
-      setPreviewHighlightTerms(extractKeywordsFromAi(aiAnswer));
+
+  // --- RECURSIVE SELECTION LOGIC ---
+  const getAllDescendants = useCallback((parentId: string, currentDescendants = new Set<string>()) => {
+    const childFolders = folders.filter(f => f.parents?.includes(parentId));
+    const childFiles = files.filter(f => f.parents?.includes(parentId));
+
+    childFolders.forEach(f => {
+      currentDescendants.add(f.id);
+      getAllDescendants(f.id, currentDescendants);
+    });
+
+    childFiles.forEach(f => {
+      currentDescendants.add(f.id);
+    });
+
+    return currentDescendants;
+  }, [folders, files]);
+
+  const toggleSelection = (id: string, e: React.MouseEvent, isFolder: boolean = false) => {
+    e.stopPropagation();
+    const newSet = new Set(selectedItems);
+    const isSelected = newSet.has(id);
+
+    if (isSelected) {
+      newSet.delete(id);
+      if (isFolder) {
+        const descendants = getAllDescendants(id);
+        descendants.forEach(descId => newSet.delete(descId));
+      }
     } else {
-      setPreviewHighlightTerms([]);
+      newSet.add(id);
+      if (isFolder) {
+        const descendants = getAllDescendants(id);
+        descendants.forEach(descId => newSet.add(descId));
+      }
     }
+    setSelectedItems(newSet);
+  };
 
-    const isTextFile = file.mimeType?.includes('text/plain') || file.name.endsWith('.txt') || file.name.endsWith('.md');
+  const totalSelectableItems = folders.length + files.length;
+  const isAllSelected = totalSelectableItems > 0 && selectedItems.size === totalSelectableItems;
+
+  const handleSelectAllToggle = () => {
+    if (isAllSelected) {
+      setSelectedItems(new Set());
+    } else {
+      const allIds = new Set([
+        ...folders.map(f => f.id),
+        ...files.map(f => f.id)
+      ]);
+      setSelectedItems(allIds);
+    }
+  };
+
+  // --- TREE HELPERS ---
+  const toggleFolderExpand = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const newSet = new Set(expandedFolders);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setExpandedFolders(newSet);
+  };
+
+  const getFileIcon = (mimeType: string) => {
+    if (mimeType.includes('document') || mimeType.includes('word')) return <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+    if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return <svg className="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+    if (mimeType.includes('pdf')) return <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+    return <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Unknown Date';
+    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // --- AI TEXT PARSER ---
+  const renderFormattedText = (text: string) => {
+    const parts = text.split(/(\[[^\]]+\]\([^)]+\))/g);
     
-    if (isTextFile) {
-      setIsLoadingRawText(true);
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/docs/download/${file.id}`, { headers: { 'x-company': selectedCompany }});
-        if (res.ok) {
-          const text = await res.text();
-          setRawTextContent(text);
-        } else {
-          setRawTextContent(null);
-        }
-      } catch (e) {
-        setRawTextContent(null);
-      } finally {
-        setIsLoadingRawText(false);
-      }
-    }
-  };
-
-  const renderHighlightedText = (text: string, terms: string[]) => {
-    if (!terms.length) return <span className="whitespace-pre-wrap">{text}</span>;
-    const regex = new RegExp(`(${terms.join('|')})`, 'gi');
-    const parts = text.split(regex);
-    return (
-      <span className="whitespace-pre-wrap text-slate-700 leading-relaxed text-sm">
-        {parts.map((part, i) => regex.test(part) ? <mark key={i} className="bg-yellow-300 text-slate-900 font-bold px-0.5 rounded shadow-sm">{part}</mark> : <span key={i}>{part}</span>)}
-      </span>
-    );
-  };
-
-  const renderFormattedAiText = (text: string) => {
-    const lines = text.split('\n');
-    return lines.map((line, lineIndex) => {
-      const parts: React.ReactNode[] = [];
-      let lastIndex = 0;
-      const regex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*/g;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(line)) !== null) {
-        if (match.index > lastIndex) parts.push(line.substring(lastIndex, match.index));
+    return parts.map((part, i) => {
+      const match = part.match(/\[([^\]]+)\]\(([^)]+)\)/);
+      if (match) {
+        const linkText = match[1];
+        const linkUrl = match[2];
         
-        if (match[1] && match[2]) {
-          const linkText = match[1];
-          const linkUrl = match[2];
-          const driveIdMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-
-          if (driveIdMatch && driveIdMatch[1]) {
-            const fileId = driveIdMatch[1];
-            const matchedFile = files.find(f => f.id === fileId) || { id: fileId, name: linkText, webViewLink: linkUrl, mimeType: 'unknown' };
-
-            parts.push(
-              <button key={`${lineIndex}-${match.index}`} onClick={() => openSmartViewer(matchedFile, true)} className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300 hover:decoration-indigo-600 transition-colors break-all bg-indigo-50/80 px-2 py-0.5 rounded text-left shadow-sm">
-                <span>{linkText}</span>
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-              </button>
-            );
-          } else {
-            parts.push(
-              <a key={`${lineIndex}-${match.index}`} href={linkUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-bold text-sky-600 hover:text-sky-800 underline decoration-sky-300 hover:decoration-sky-600 transition-colors break-all bg-sky-50/60 px-1.5 py-0.5 rounded">
-                <span>{linkText}</span>
-                <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-              </a>
-            );
-          }
-        } else if (match[3]) {
-          parts.push(<strong key={`${lineIndex}-${match.index}`} className="font-bold text-slate-900">{match[3]}</strong>);
-        }
-        lastIndex = regex.lastIndex;
+        return (
+          <a 
+            key={i} 
+            href={linkUrl} 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            onClick={(e) => {
+              const idMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+              if (idMatch) {
+                 const fileId = idMatch[1];
+                 const foundFile = files.find(f => f.id === fileId);
+                 if (foundFile) {
+                     e.preventDefault();
+                     setSelectedFile(foundFile);
+                 }
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-1 mb-1 bg-indigo-50 border border-indigo-200 rounded text-indigo-700 font-bold text-xs hover:bg-indigo-100 transition-colors no-underline"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+            {linkText}
+          </a>
+        );
       }
-      if (lastIndex < line.length) parts.push(line.substring(lastIndex));
-      return <span key={lineIndex} className="block min-h-[1.35rem] leading-relaxed">{parts.length > 0 ? parts : ' '}</span>;
+      return <span key={i}>{part}</span>;
     });
   };
 
-  // The company root has its own separate card.
-  const nestedFolders = folders.filter(
-    (folder) => folder.id !== 'root' && folder.id !== companyFolderId
-  );
+  // --- RECURSIVE TREE RENDERER ---
+  const renderTree = useCallback((parentId: string, depth: number = 0) => {
+    const childFolders = folders.filter(f => f.parents?.includes(parentId));
+    const childFiles = files.filter(f => f.parents?.includes(parentId));
 
-  const rootFolders = nestedFolders.filter(
-    (folder) => folder.parents?.includes(companyFolderId)
-  );
-  const rootFiles = files.filter(
-    (file) => file.parents?.includes(companyFolderId)
-  );
-  const displayFolders = currentFolder
-    ? nestedFolders.filter((folder) => folder.parents?.includes(activeFolderId))
-    : rootFolders;
-  const displayFiles = currentFolder
-    ? files.filter((file) => file.parents?.includes(activeFolderId))
-    : rootFiles;
+    return (
+      <div className="flex flex-col w-full" key={`group-${parentId}`}>
+        {childFolders.map(folder => (
+          <React.Fragment key={folder.id}>
+            <div 
+              onClick={() => { setActiveFolderId(folder.id); toggleFolderExpand(folder.id); }}
+              className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${activeFolderId === folder.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
+              style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            >
+              <div onClick={(e) => toggleSelection(folder.id, e, true)} className={`w-4 h-4 mr-2 border rounded flex items-center justify-center shrink-0 transition-colors ${selectedItems.has(folder.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 bg-white group-hover:border-slate-400'}`}>
+                {selectedItems.has(folder.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+              </div>
+              <button onClick={(e) => toggleFolderExpand(folder.id, e)} className="p-0.5 text-slate-400 hover:text-slate-700 shrink-0 mr-1 transition-transform" style={{ transform: expandedFolders.has(folder.id) ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/></svg>
+              </button>
+              <svg className={`w-4 h-4 mr-2 shrink-0 ${activeFolderId === folder.id ? 'text-indigo-500' : 'text-blue-400'}`} fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+              <span className={`truncate flex-1 ${activeFolderId === folder.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-700'}`}>{folder.name}</span>
+              
+              <div className="opacity-0 group-hover:opacity-100 flex items-center shrink-0 pl-2">
+                <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ id: folder.id, name: folder.name }); setNewRenameValue(folder.name); }} className="p-1 text-slate-400 hover:text-indigo-600 rounded" title="Rename"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
+              </div>
+            </div>
+            {expandedFolders.has(folder.id) && renderTree(folder.id, depth + 1)}
+          </React.Fragment>
+        ))}
 
-  const getFolderPath = (folderId: string) => {
-    const path: { id: string; name: string }[] = [];
-    const visited = new Set<string>();
-    let folder = nestedFolders.find((item) => item.id === folderId);
-
-    while (folder && !visited.has(folder.id)) {
-      visited.add(folder.id);
-      path.unshift({ id: folder.id, name: folder.name });
-      const parentId = folder.parents?.[0];
-      folder = nestedFolders.find((item) => item.id === parentId);
-    }
-
-    return [{ id: 'root', name: `${selectedCompany} Root` }, ...path];
-  };
-
-  const folderPath = currentFolder ? getFolderPath(activeFolderId) : [];
-  const totalSelectable = displayFolders.length + displayFiles.length;
-
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) setSelectedItemIds([...displayFolders.map(f => f.id), ...displayFiles.map(f => f.id)]);
-    else setSelectedItemIds([]);
-  };
-
-  const handleToggleSelect = (id: string) => setSelectedItemIds(prev => prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]);
-
-  const handleDeleteSelected = async () => {
-    if (selectedItemIds.length === 0) return;
-    if (!window.confirm(`Permanently delete ${selectedItemIds.length} items from Drive and Database?`)) return;
-    setIsDeleting(true);
-    try {
-      await Promise.all(selectedItemIds.map(id => fetch(`${API_BASE_URL}/api/docs/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })));
-      setSelectedItemIds([]); fetchDirectory(); 
-    } catch (error) { alert("Failed to delete some items."); } finally { setIsDeleting(false); }
-  };
+        {childFiles.map(file => (
+          <div 
+            key={file.id}
+            onClick={() => { setSelectedFile(file); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
+            className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          >
+            <div onClick={(e) => toggleSelection(file.id, e, false)} className={`w-4 h-4 mr-2 border rounded flex items-center justify-center shrink-0 transition-colors ${selectedItems.has(file.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 bg-white group-hover:border-slate-400'}`}>
+              {selectedItems.has(file.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+            </div>
+            <div className="w-4 shrink-0 mr-1"></div>
+            <div className="mr-2 shrink-0">{getFileIcon(file.mimeType)}</div>
+            <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
+            
+            <div className="opacity-0 group-hover:opacity-100 flex items-center shrink-0 pl-2">
+              <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ id: file.id, name: file.name }); setNewRenameValue(file.name); }} className="p-1 text-slate-400 hover:text-indigo-600 rounded" title="Rename"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }, [folders, files, activeFolderId, expandedFolders, selectedItems, selectedFile, toggleSelection]);
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
-      <header className="border-b border-slate-100 px-6 sm:px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg></button>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">{selectedCompany} Workspace</h1>
-            <p className="text-xs text-slate-400 font-medium tracking-wide">Google Drive & Gemini Index</p>
+    <div className="flex flex-col h-screen w-full bg-[#FBFBFC] font-sans text-slate-800 overflow-hidden relative">
+      
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3 rounded-lg shadow-lg font-bold text-sm border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+          {toast.message}
+        </div>
+      )}
+
+      {/* TOP HEADER */}
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shrink-0 z-30 shadow-sm relative">
+        <div className="flex items-center gap-4 w-1/4">
+          <button onClick={() => setIsMobileNavOpen(!isMobileNavOpen)} className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          
+          <div className="hidden lg:flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-md shrink-0">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-black text-slate-900 leading-tight truncate">{selectedCompany}</h2>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Workspace Directory</p>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsNewFolderModalOpen(true)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">+ New Folder</button>
-          <button
-            type="button"
-            onClick={() => { void fetchDirectory(); }}
-            disabled={loading}
-            className="px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Syncing...' : 'Sync Drive'}
-          </button>
-          <button
-            onClick={() => {
-              const inSubfolder = Boolean(currentFolder) && activeFolderId !== companyFolderId;
-              setDestinationChoice(inSubfolder ? 'subfolder' : 'root');
-              setSelectedSubfolderId(inSubfolder ? activeFolderId : '');
-              setIsUploadModalOpen(true);
-            }}
-            className="px-5 sm:px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold tracking-wide transition-colors shadow-sm"
-          >
-            Upload Document
+
+        {/* GEMINI AI SEARCH BAR */}
+        <div className="flex-1 flex justify-center max-w-3xl">
+          <form onSubmit={handleGeminiSearch} className="relative w-full flex bg-[#F4F5F7] rounded-lg border border-transparent focus-within:border-indigo-300 focus-within:bg-white transition-all overflow-hidden shadow-sm">
+            <div className="pl-4 flex items-center shrink-0">
+              {isSearchingAi ? (
+                <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <svg className="w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              )}
+            </div>
+            <input 
+              type="text" 
+              placeholder="Ask AI to analyze across all folders..." 
+              value={aiQuery}
+              onChange={e => setAiQuery(e.target.value)}
+              className="w-full bg-transparent text-sm px-3 py-2.5 outline-none placeholder:text-slate-400 font-medium"
+            />
+            {/* DESKTOP MODEL SELECTOR */}
+            <select 
+              value={selectedModel} 
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="hidden md:block bg-slate-200/50 hover:bg-slate-200 text-[10px] font-bold text-slate-600 border-l border-slate-300 outline-none px-3 cursor-pointer transition-colors"
+            >
+              <option value="gemini-3.6-flash">⚡ 3.6 Flash (Fast)</option>
+              <option value="gemini-3.5-flash-lite">🪙 3.5 Flash-Lite</option>
+            </select>
+          </form>
+        </div>
+
+        <div className="w-1/4 flex justify-end items-center gap-4">
+          <button onClick={onBack} className="flex items-center gap-2 px-4 lg:px-5 py-2 lg:py-2.5 bg-slate-900 text-white rounded-xl text-[10px] lg:text-xs font-bold uppercase tracking-widest shadow-sm hover:bg-slate-800 transition-all">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
+            <span className="hidden sm:inline">Gateway</span>
           </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8 flex flex-col items-center">
-        <form onSubmit={handleSearchSubmit} className="w-full max-w-3xl mb-10">
-          <div className="relative flex items-center w-full bg-white border-2 border-slate-300 focus-within:border-indigo-600 focus-within:ring-4 focus-within:ring-indigo-50 rounded-full shadow-sm transition-all p-1.5 pl-4 sm:pl-5">
-            <div className="text-slate-400 shrink-0 mr-2 sm:mr-3"><svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg></div>
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={`Search ${selectedCompany} documents with Gemini...`} className="w-full py-2.5 sm:py-3 bg-transparent text-sm sm:text-base font-medium outline-none placeholder:text-slate-400 min-w-0 pr-2" />
-            <button type="submit" disabled={isSearching || !searchQuery.trim()} className="shrink-0 px-5 sm:px-7 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-50 whitespace-nowrap shadow-sm">
-              {isSearching ? 'Scanning...' : 'Search'}
-            </button>
-          </div>
-          <div className="flex items-center justify-center gap-2 sm:gap-3 mt-4 flex-wrap">
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Engine:</span>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.6-flash')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.6-flash' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 ring-2 ring-indigo-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>⚡ 3.6 Flash (Fast)</button>
-            <button type="button" onClick={() => setSelectedModel('gemini-3.5-flash-lite')} className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all shadow-sm ${selectedModel === 'gemini-3.5-flash-lite' ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 ring-2 ring-emerald-100' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>🪙 3.5 Flash-Lite (Credit Saver)</button>
-          </div>
-          {isSearching && <div className="w-full h-1 mt-6 bg-indigo-50 rounded-full overflow-hidden flex"><div className="w-1/3 h-full bg-indigo-500 rounded-full animate-[ping_1.5s_cubic-bezier(0,0,0.2,1)_infinite]"></div></div>}
-        </form>
+      {/* MOBILE MODEL SELECTOR */}
+      <div className="md:hidden bg-white border-b border-slate-200 p-2 flex justify-center z-20 relative shadow-sm">
+         <select 
+           value={selectedModel} 
+           onChange={(e) => setSelectedModel(e.target.value)}
+           className="w-full max-w-sm bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 outline-none p-2 rounded-lg"
+         >
+           <option value="gemini-3.6-flash">⚡ Gemini 3.6 Flash (Fast)</option>
+           <option value="gemini-3.5-flash-lite">🪙 Gemini 3.5 Flash-Lite (Saver)</option>
+         </select>
+      </div>
 
-        {aiAnswer && (
-          <div className="w-full max-w-3xl mb-10 p-6 bg-slate-50 border border-indigo-100 rounded-2xl shadow-sm animate-in fade-in">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-              <span className="text-xs font-black tracking-widest text-indigo-700 uppercase flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>Gemini AI Answer</span>
-              <button onClick={() => setAiAnswer(null)} className="text-xs font-bold text-slate-400 hover:text-slate-600">Close</button>
+      {/* MAIN 2-PANE WORKSPACE */}
+      <main className="flex flex-1 overflow-hidden relative">
+        
+        {/* PANE 1: UNIFIED LEFT SIDEBAR */}
+        <aside className={`absolute lg:static top-0 left-0 h-full w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col z-40 transform transition-transform duration-300 ${isMobileNavOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}`}>
+          
+          {/* Action Tools */}
+          <div className="px-4 py-4 border-b border-slate-100 flex flex-col gap-3 shrink-0 bg-white">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workspace Actions</span>
+               <div className="flex gap-2">
+                 <button onClick={handleSelectAllToggle} className="text-[10px] font-bold text-slate-600 hover:text-slate-900 uppercase tracking-widest bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition-colors">
+                   {isAllSelected ? 'Deselect All' : 'Select All'}
+                 </button>
+                 <button onClick={() => { setActiveFolderId(rootFolderId); setSelectedFile(null); setSelectedItems(new Set()); }} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 uppercase tracking-widest bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded transition-colors">
+                   Root Dir
+                 </button>
+               </div>
             </div>
-            <div className="text-sm text-slate-700 font-medium space-y-1">{renderFormattedAiText(aiAnswer)}</div>
-          </div>
-        )}
 
-        <div className="w-full">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2 text-sm flex-wrap">
-              <button
-                onClick={() => setCurrentFolder(null)}
-                className={`font-bold transition-colors ${currentFolder ? 'text-indigo-600 hover:underline' : 'text-slate-800 uppercase tracking-widest text-sm'}`}
-              >
-                Drive Directory
+            {/* MINI PROGRESS BAR FOR UPLOADS */}
+            {isUploading && (
+              <div className="flex flex-col gap-1.5 mt-1 mb-1">
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest text-center animate-pulse">Uploading file...</span>
+                <div className="w-full h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                  <div className="w-full h-full bg-indigo-500 origin-left animate-pulse"></div>
+                </div>
+              </div>
+            )}
+            
+            {selectedItems.size > 0 ? (
+              <button onClick={handleBulkDelete} disabled={isLoading} className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg transition-colors flex items-center gap-1 shadow-sm w-full justify-center">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected ({selectedItems.size})
               </button>
-              {folderPath.map((folder, index) => (
-                <React.Fragment key={folder.id}>
-                  <span className="text-slate-400 font-bold">/</span>
-                  <button
-                    onClick={() => setCurrentFolder(folder)}
-                    className={index === folderPath.length - 1
-                      ? 'font-extrabold flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-md text-xs'
-                      : 'font-bold text-indigo-600 hover:underline'}
-                  >
-                    {index === folderPath.length - 1 ? '📁 ' : ''}{folder.name}
-                  </button>
-                </React.Fragment>
-              ))}
+            ) : (
+              <div className="flex gap-2 w-full">
+                <button onClick={() => setIsNewFolderModalOpen(true)} className="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg> Folder
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg> Upload
+                </button>
+              </div>
+            )}
+
+            {/* NEW LOCAL SEARCH BAR */}
+            <div className="relative w-full flex bg-slate-100 rounded-lg overflow-hidden border border-transparent focus-within:border-indigo-300 focus-within:bg-white transition-all shadow-inner mt-2">
+              <div className="pl-3 flex items-center shrink-0">
+                <svg className="w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              </div>
+              <input 
+                value={localQuery} 
+                onChange={e => setLocalQuery(e.target.value)} 
+                placeholder="Filter files locally..." 
+                className="w-full bg-transparent text-xs px-2 py-2 outline-none placeholder:text-slate-400 font-bold text-slate-700" 
+              />
             </div>
-            {currentFolder && (
-              <button
-                onClick={() => setCurrentFolder(folderPath.length > 1 ? folderPath[folderPath.length - 2] : null)}
-                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition-colors"
-              >
-                ← Back
-              </button>
+          </div>
+
+          {/* Optimized Tree View / Local Search List */}
+          <div className="flex-1 overflow-y-auto py-2">
+            {isLoading ? (
+              <div className="flex justify-center py-10"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
+            ) : localQuery.trim() ? (
+              // Fast Flat List for Local Searching
+              <div className="px-2 space-y-1">
+                {activeFiles.length === 0 ? (
+                  <p className="text-center text-xs font-bold text-slate-400 py-10">No matching files locally.</p>
+                ) : (
+                  activeFiles.map(file => (
+                    <div 
+                      key={file.id}
+                      onClick={() => { setSelectedFile(file); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
+                      className={`flex items-center w-full px-2 py-1.5 cursor-pointer text-sm rounded-lg transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'border-transparent hover:bg-slate-100'}`}
+                    >
+                      <div onClick={(e) => toggleSelection(file.id, e, false)} className={`w-4 h-4 mr-3 border rounded flex items-center justify-center shrink-0 transition-colors ${selectedItems.has(file.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 bg-white'}`}>
+                        {selectedItems.has(file.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+                      </div>
+                      <div className="mr-3 shrink-0">{getFileIcon(file.mimeType)}</div>
+                      <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              // Full Recursive Tree
+              <div className="px-2">
+                {rootFolderId && renderTree(rootFolderId, 0)}
+              </div>
             )}
           </div>
 
-          <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-3 rounded-xl mb-6">
-            <label className="flex items-center gap-3 cursor-pointer text-xs font-bold text-slate-600 uppercase tracking-widest select-none">
-              <input type="checkbox" onChange={handleSelectAll} checked={selectedItemIds.length > 0 && selectedItemIds.length === totalSelectable} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer" /> Select All
-            </label>
-            <button onClick={handleDeleteSelected} disabled={selectedItemIds.length === 0 || isDeleting} className="px-5 py-2.5 bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors shadow-sm">{isDeleting ? 'Deleting...' : `Delete Selected (${selectedItemIds.length})`}</button>
+          {/* DYNAMIC STORAGE METER */}
+          <div className="p-5 shrink-0 border-t border-slate-200/60 bg-white">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+              <div className="flex-1">
+                <div className="flex justify-between items-end mb-1">
+                  <p className="text-[11px] font-black text-slate-700">Storage Sync</p>
+                  <p className="text-[10px] font-bold text-slate-500">
+                    {storageData && Number(storageData.limit) > 0 
+                      ? `${formatBytes(storageData.usage)} / ${formatBytes(storageData.limit)}` 
+                      : storageData ? `${formatBytes(storageData.usage)} Used` : 'Syncing...'}
+                  </p>
+                </div>
+                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden shadow-inner">
+                  <div 
+                    className="bg-indigo-500 h-full rounded-full transition-all duration-700 ease-out" 
+                    style={{ 
+                      width: storageData && Number(storageData.limit) > 0 
+                        ? `${Math.min((Number(storageData.usage) / Number(storageData.limit)) * 100, 100)}%` 
+                        : '100%' 
+                    }}
+                  ></div>
+                </div>
+              </div>
+            </div>
           </div>
+        </aside>
 
-          {loading ? (
-            <div className="text-center py-20 text-slate-400 font-medium">Loading Drive workspace...</div>
-          ) : (
-            <div className="space-y-8">
-              <div className="space-y-6">
-                
-                {/* 1. FOLDERS GRID */}
-                {(displayFolders.length > 0 || !currentFolder) && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                    
-                    {/* Master Root Card (Only visible at the very top) */}
-                    {!currentFolder && (
-                      <div className="group relative flex flex-col items-center justify-center p-4 bg-white/60 border border-slate-200 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                        <input type="checkbox" disabled title="Cannot delete root folder" className="absolute top-3 left-3 w-5 h-5 rounded text-rose-600 border-slate-300 disabled:opacity-30 disabled:cursor-not-allowed" />
-                        <button onClick={() => setCurrentFolder({ id: 'root', name: `${selectedCompany} Root` })} className="w-full flex flex-col items-center">
-                          <div className="text-4xl mb-2">📁</div><span className="font-bold text-sm text-slate-800">{selectedCompany} Root</span><span className="text-[11px] font-semibold text-slate-400 mt-0.5">{rootFiles.length} files</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Render Subfolders */}
-                    {displayFolders.map((folder) => (
-                      <div key={folder.id} className="group relative flex flex-col items-center justify-center p-4 bg-white/60 hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all duration-200 shadow-sm text-center w-full">
-                        <input type="checkbox" checked={selectedItemIds.includes(folder.id)} onChange={() => handleToggleSelect(folder.id)} className="absolute top-3 left-3 w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer z-10" />
-                        
-                        {/* Rename Button */}
-                        <button onClick={(e) => handleRenameFolder(e, folder.id, folder.name)} className="absolute top-3 right-3 text-slate-400 hover:text-indigo-600 z-10 bg-white/80 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-sm border border-slate-200" title="Rename Folder">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                        </button>
-
-                        <button onClick={() => setCurrentFolder({ id: folder.id, name: folder.name })} className="w-full flex flex-col items-center mt-2">
-                          <div className="text-4xl mb-2">📁</div>
-                          <span className="font-bold text-sm text-slate-800 truncate max-w-full px-2">{folder.name}</span>
-                          <span className="text-[11px] font-semibold text-slate-400 mt-0.5">{files.filter(f => f.parents?.includes(folder.id)).length} files</span>
-                        </button>
-                      </div>
-                    ))}
+        {/* PANE 2: DOCUMENT PREVIEW (RIGHT MAIN AREA WITH RESIZER) */}
+        <section 
+          ref={rightPaneRef} 
+          className={`absolute lg:static top-0 left-0 w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex-col z-20 lg:z-auto transition-transform duration-300 ${selectedFile || aiAnswer ? 'translate-x-0 flex' : 'translate-x-full lg:translate-x-0 hidden lg:flex'}`}
+        >
+          
+          {/* AI ANSWER PANEL (Top Section) */}
+          {aiAnswer && (
+            <div 
+              style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
+              className={`shrink-0 flex flex-col ${selectedFile ? 'bg-slate-50/40' : ''}`}
+            >
+              <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'm-4 lg:m-8'}`}>
+                <div className={`bg-white border border-indigo-100 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-top-4 ${selectedFile ? 'p-5 min-h-full' : 'p-6'}`}>
+                  <button onClick={() => setAiAnswer(null)} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-white border border-slate-200 rounded-md shadow-sm transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                  
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="w-2.5 h-2.5 bg-indigo-600 rounded-full"></span>
+                    <span className="text-[11px] font-black uppercase tracking-widest text-indigo-700">
+                      GEMINI {selectedModel.includes('3.6') ? '3.6 FLASH' : '3.5 FLASH-LITE'} ANSWER
+                    </span>
                   </div>
-                )}
-
-                {/* 2. FILES LIST */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {displayFolders.length === 0 && displayFiles.length === 0 && currentFolder && <div className="col-span-full text-center py-10 text-slate-400 font-medium">Empty folder</div>}
-                  {displayFiles.map(file => (
-                    <div key={file.id} className="flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200 shadow-sm transition-all group">
-                      <div className="flex items-center gap-3 truncate flex-1">
-                        <input type="checkbox" checked={selectedItemIds.includes(file.id)} onChange={() => handleToggleSelect(file.id)} className="w-5 h-5 rounded text-indigo-600 border-slate-300 cursor-pointer shrink-0" />
-                        <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{file.mimeType?.includes('image') ? '🖼️' : file.mimeType?.includes('pdf') ? '📕' : file.mimeType?.includes('spreadsheet') || file.mimeType?.includes('csv') ? '📊' : '📄'}</span>
-                        <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <button onClick={() => openSmartViewer(file, false)} className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 transition-colors" title="Preview Document"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg></button>
-                        {file.webViewLink && <a href={file.webViewLink} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-sky-600 p-1.5 rounded-lg hover:bg-sky-50 transition-colors" title="Open in new Google Drive tab"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg></a>}
-                      </div>
-                    </div>
-                  ))}
+                  
+                  <div className="text-sm font-medium text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {renderFormattedText(aiAnswer)}
+                  </div>
                 </div>
               </div>
             </div>
           )}
-        </div>
-      </main>
 
-      {/* SMART DOCUMENT VIEWER MODAL */}
-      {previewItem && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex justify-center items-center p-3 sm:p-6 animate-in zoom-in-95 duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden border border-slate-700">
-            
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0 shadow-sm relative z-10">
-              <div className="flex items-center gap-3 truncate">
-                <span className="text-3xl shrink-0">{previewItem.mimeType?.includes('image') ? '🖼️' : previewItem.mimeType?.includes('pdf') ? '📕' : previewItem.mimeType?.includes('spreadsheet') || previewItem.mimeType?.includes('csv') ? '📊' : '📄'}</span>
-                <div className="truncate">
-                  <h3 className="font-black text-slate-900 text-lg truncate tracking-tight">{previewItem.name}</h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded uppercase tracking-widest font-black">Smart Viewer Engine</span>
-                    {previewHighlightTerms.length > 0 && rawTextContent !== null && (
-                      <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">Target: {previewHighlightTerms.join(', ')}</span>
+          {/* DRAGGABLE HORIZONTAL SEPARATOR */}
+          {aiAnswer && selectedFile && (
+            <div 
+              onMouseDown={startResizing}
+              className="h-3 w-full bg-slate-100 hover:bg-indigo-100 border-y border-slate-200 cursor-row-resize flex items-center justify-center shrink-0 z-30 transition-colors group"
+              title="Drag to resize panels"
+            >
+              <div className="w-12 h-1 bg-slate-300 group-hover:bg-indigo-400 rounded-full pointer-events-none transition-colors"></div>
+            </div>
+          )}
+
+          {/* DOCUMENT PREVIEW PANEL (Bottom Section) */}
+          {selectedFile ? (
+            <div className="flex-1 flex flex-col min-h-0 relative bg-white">
+              <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white">
+                <div className="flex items-center gap-4 truncate max-w-[80%]">
+                  <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
+                  </button>
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
+                    {getFileIcon(selectedFile.mimeType)}
+                  </div>
+                  <div className="truncate">
+                    <h3 className="text-base lg:text-lg font-black text-slate-900 truncate tracking-tight">{selectedFile.name.replace(/\.[^/.]+$/, "")}</h3>
+                    <p className="text-[11px] font-medium text-slate-400 mt-0.5">{formatDate(selectedFile.createdTime)} • {(parseInt(selectedFile.size || '0') / 1024).toFixed(0)} KB • Edited via Drive</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Document Canvas Area */}
+              <div className="flex-1 overflow-y-auto p-4 lg:p-12 bg-white flex justify-center">
+                <div className="w-full max-w-4xl flex flex-col h-full">
+                  <div className="flex-1 bg-white rounded-lg overflow-hidden flex flex-col shadow-sm border border-slate-200/60 min-h-[400px]">
+                    {selectedFile.webViewLink ? (
+                      <iframe 
+                        src={selectedFile.webViewLink.replace('/view', '/preview')} 
+                        className="w-full h-full border-0 rounded-xl"
+                        title={selectedFile.name}
+                        sandbox="allow-scripts allow-same-origin allow-popups"
+                      />
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50">
+                        <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mb-4">{getFileIcon(selectedFile.mimeType)}</div>
+                        <h3 className="text-lg font-black text-slate-800">Preview not available</h3>
+                        <p className="text-sm font-medium text-slate-500 mt-2 max-w-sm">Google Drive cannot render this file type in a native iframe window.</p>
+                        <button onClick={() => window.open(selectedFile.webViewLink, '_blank')} className="mt-6 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm">Open externally</button>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {previewItem.webViewLink && (
-                  <a href={previewItem.webViewLink} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm">
-                    <span>Drive Native</span><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                  </a>
-                )}
-                <button onClick={() => { setPreviewItem(null); setRawTextContent(null); }} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl font-black transition-colors"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
-              </div>
             </div>
-
-            <div className="flex-1 bg-[#E2E8F0] relative overflow-hidden flex">
-              {rawTextContent !== null ? (
-                <div className="w-full h-full p-8 overflow-y-auto bg-white mx-auto max-w-4xl shadow-inner text-left font-mono">
-                  {renderHighlightedText(rawTextContent, previewHighlightTerms)}
-                </div>
-              ) : isLoadingRawText ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-slate-400">
-                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                  <span className="font-bold text-sm tracking-widest uppercase">Extracting Text...</span>
-                </div>
-              ) : (
-                <div className="w-full h-full relative">
-                  <iframe src={`https://drive.google.com/file/d/${previewItem.id}/preview`} className="w-full h-full border-0 bg-white relative z-0" allow="autoplay" title={previewItem.name} />
-                </div>
-              )}
+          ) : !aiAnswer ? (
+            /* EMPTY STATE */
+            <div className="flex-1 flex flex-col items-center justify-center px-4 bg-white">
+              <div className="w-24 h-24 mb-6 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-center shadow-inner">
+                <svg className="w-12 h-12 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <h3 className="text-xl font-black text-slate-800 tracking-tight">Select a document</h3>
+              <p className="text-sm font-medium text-slate-400 mt-2 text-center max-w-xs">Choose a file from the directory tree to preview it securely.</p>
             </div>
+          ) : null}
+        </section>
 
-          </div>
-        </div>
-      )}
+      </main>
 
-      {/* UPLOAD MODAL */}
-      {isUploadModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-slate-100">
-            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-2">Upload Document</h3>
-            <p className="text-xs font-bold text-slate-500 mb-2">Gemini Supports: PDF, TXT, CSV, MD, PNG, JPEG, WEBP.</p>
-            <form onSubmit={handleUploadSubmit} className="space-y-6 mt-4">
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-slate-400 p-6 rounded-2xl cursor-pointer">
-                <span className="text-xs font-bold text-slate-600 text-center">{selectedFile ? selectedFile.name : 'Click to select Document or Image'}</span>
-                <input type="file" className="hidden" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
-              </label>
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">Target Location in Drive</label>
-                <div className="flex items-center gap-3">
-                  <input type="radio" id="destRoot" name="destChoice" checked={destinationChoice === 'root'} onChange={() => setDestinationChoice('root')} className="text-indigo-600 focus:ring-indigo-500" />
-                  <label htmlFor="destRoot" className="text-sm font-semibold text-slate-700">Root Folder (/{selectedCompany})</label>
-                </div>
-                <div className="flex items-center gap-3">
-                  <input type="radio" id="destSub" name="destChoice" checked={destinationChoice === 'subfolder'} onChange={() => setDestinationChoice('subfolder')} className="text-indigo-600 focus:ring-indigo-500" />
-                  <label htmlFor="destSub" className="text-sm font-semibold text-slate-700">Specific subfolder</label>
-                </div>
-                {destinationChoice === 'subfolder' && (
-                  <select value={selectedSubfolderId} onChange={(e) => setSelectedSubfolderId(e.target.value)} className="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none" required>
-                    <option value="">-- Choose Subfolder --</option>
-                    {nestedFolders.map((folder) => (
-                      <option key={folder.id} value={folder.id}>
-                        {getFolderPath(folder.id).map((part) => part.name).join(' / ')}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => setIsUploadModalOpen(false)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500">Cancel</button>
-                <button type="submit" disabled={!selectedFile || isUploading} className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{isUploading ? 'Uploading...' : 'Confirm Upload'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* NEW FOLDER MODAL */}
+      {/* --- MODALS --- */}
+      
+      {/* Create Folder Modal */}
       {isNewFolderModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">New Folder</h3>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-base font-black text-slate-800 tracking-tight mb-4">Create New Folder</h3>
             <form onSubmit={handleCreateFolder} className="space-y-4">
-              <input type="text" placeholder="Folder name..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-indigo-600" required />
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setIsNewFolderModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">Create</button>
+              <input type="text" placeholder="Folder name..." autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-colors" required />
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setIsNewFolderModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50" disabled={isCreatingFolder}>Cancel</button>
+                <button type="submit" disabled={isCreatingFolder || !newFolderName.trim()} className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white text-sm font-bold shadow-sm">
+                  {isCreatingFolder ? 'Creating...' : 'Create'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Rename Modal */}
+      {renameTarget && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-base font-black text-slate-800 tracking-tight mb-4">Rename Document</h3>
+            <form onSubmit={handleRename} className="space-y-4">
+              <input type="text" placeholder="New name..." autoFocus value={newRenameValue} onChange={(e) => setNewRenameValue(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500 focus:bg-white transition-colors" required />
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setRenameTarget(null)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50">Cancel</button>
+                <button type="submit" className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold shadow-sm">Rename</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+
     </div>
   );
 }
