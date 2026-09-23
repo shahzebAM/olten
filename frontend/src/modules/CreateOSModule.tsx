@@ -193,22 +193,38 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     else if (e.key === 'Escape') { setShowProductDropdown(false); setHighlightedIndex(-1); }
   };
 
+  // --- IMMUTABLE STATE FIX FOR QTY UPDATES ---
   const handleUpdateQty = (index: number, val: string) => {
-    const updated = [...draftItems];
-    if (val === '') { updated[index].requestedQty = ''; updated[index].lineTotal = 0; } 
-    else { const qty = parseInt(val, 10); const price = Number(updated[index].unitPrice) || 0; updated[index].requestedQty = qty; updated[index].lineTotal = qty * price; }
-    setDraftItems(updated);
+    setDraftItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      if (val === '') return { ...item, requestedQty: '', lineTotal: 0 };
+      const qty = parseInt(val, 10);
+      const price = Number(item.unitPrice) || 0;
+      return { ...item, requestedQty: qty, lineTotal: qty * price };
+    }));
   };
 
+  // --- IMMUTABLE STATE FIX FOR PRICE UPDATES ---
   const handleUpdateUnitPrice = (index: number, val: string) => {
-    const updated = [...draftItems];
-    if (val === '') { updated[index].unitPrice = ''; updated[index].lineTotal = 0; } 
-    else { const price = parseFloat(val); const qty = Number(updated[index].requestedQty) || 0; updated[index].unitPrice = price; updated[index].lineTotal = qty * price; }
-    setDraftItems(updated);
+    setDraftItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      if (val === '') return { ...item, unitPrice: '', lineTotal: 0 };
+      const price = parseFloat(val);
+      const qty = Number(item.requestedQty) || 0;
+      return { ...item, unitPrice: price, lineTotal: qty * price };
+    }));
   };
 
-  const handleSelectWarehouse = (index: number, warehouseName: string | null) => { const updated = [...draftItems]; updated[index].selectedWarehouseName = warehouseName; setDraftItems(updated); };
-  const handleRemoveItem = (index: number) => { setDraftItems(draftItems.filter((_, i) => i !== index)); };
+  const handleSelectWarehouse = (index: number, warehouseName: string | null) => {
+    setDraftItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      return { ...item, selectedWarehouseName: warehouseName };
+    }));
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setDraftItems(prev => prev.filter((_, i) => i !== index));
+  };
 
   const handleRefreshStock = async () => {
     if (draftItems.length === 0) return;
@@ -297,7 +313,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // --- MASSIVELY IMPROVED FINAL ORDER GENERATOR ---
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
     if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
@@ -308,7 +323,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         osNumber: finalOrderNumber.trim(), 
         referenceOs: finalizedOs.osNumber, 
         company: selectedCompany, 
-        customerId: selectedCustomer?.id || finalizedOs.customerId, // Guaranteed Fallback
+        customerId: selectedCustomer?.id || finalizedOs.customerId,
         isVatApplied: finalizedOs.isVatApplied ?? finalizedOs.vatApplied ?? isVatApplied, 
         vatRate: finalizedOs.vatRate || vatRate, 
         subtotal: finalizedOs.subtotal || subtotal, 
@@ -330,12 +345,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) {
         let errDesc = "Failed to create Final Order in Database.";
         try { const d = await res.json(); if (d.message) errDesc = d.message; } catch(e){}
-        throw new Error(errDesc); // Triggers Red Toast with exact Prisma reason
+        throw new Error(errDesc);
       }
       
       const newFo = await res.json();
 
-      // Silent Patch: If this fails, it won't crash the FO generation UI
       try {
         await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
@@ -347,7 +361,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       await handleRefreshStock(); 
       showToast("Final Order logged & Stock Deducted instantly!", "success");
       
-      // Inject Customer back into state so the print modal doesn't crash if the POST response omitted it
       const completeFo = { ...newFo, customer: selectedCustomer || finalizedOs.customer };
       
       setFinalizedOs(completeFo); 
@@ -613,7 +626,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
               </div>
               <div className="flex gap-3">
                 {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
-                  <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm">
+                  <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
@@ -629,8 +642,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
             {/* PRINT CONTAINER */}
             <div className="p-8 print:pt-4 print:px-8 print:pb-4 bg-white flex-1 overflow-y-auto print:overflow-visible print:block relative">
+              
+              {/* FIXED WATERMARK STYLING */}
               {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-10">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 opacity-25 mix-blend-multiply">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">{finalizedOs.status}</div>
                 </div>
               )}
