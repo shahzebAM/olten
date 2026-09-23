@@ -4,8 +4,6 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
 interface WarehouseBreakdown { name: string; quantity: number; }
 interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
-
-// UPDATED: Added `id` so the backend knows exactly which row to update, and unitPrice is string/number for decimal typing
 interface DraftItem { id?: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number | string; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
 
 interface CreateOSModuleProps {
@@ -154,7 +152,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setLoadedOsId(slip.id); setOsNumber(slip.osNumber); setReferenceOs(slip.referenceOs || null); setIsVatApplied(slip.vatApplied || false); setLoadedOsStatus(slip.status || 'Generated');
     if (slip.customer) { setSelectedCustomer(slip.customer); setCustomerSearch(slip.customer.name); }
     
-    // CRITICAL FIX: Retaining `i.id` so Prisma knows exactly which item to PATCH later
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
       id: i.id, 
       productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal),
@@ -197,27 +194,35 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     else if (e.key === 'Escape') { setShowProductDropdown(false); setHighlightedIndex(-1); }
   };
 
+  // --- CRITICAL FIX: Safe Quantity Handler ---
   const handleUpdateQty = (index: number, val: string) => {
+    // Clean input to only allow digits (no letters or decimals)
+    const cleanVal = val.replace(/\D/g, '');
+
     setDraftItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
-      if (val === '') return { ...item, requestedQty: '', lineTotal: 0 };
-      const qty = parseInt(val, 10);
+      if (cleanVal === '') return { ...item, requestedQty: '', lineTotal: 0 };
+      
+      const qty = parseInt(cleanVal, 10);
       const price = Number(item.unitPrice) || 0;
       return { ...item, requestedQty: qty, lineTotal: qty * price };
     }));
   };
 
-  // CRITICAL FIX: Decimals can now be fully typed without immediately disappearing
+  // --- CRITICAL FIX: Safe Unit Price Handler ---
   const handleUpdateUnitPrice = (index: number, val: string) => {
+    // Clean input to allow only numbers and a single decimal point
+    const cleanVal = val.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+
     setDraftItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
-      if (val === '') return { ...item, unitPrice: '', lineTotal: 0 };
+      if (cleanVal === '') return { ...item, unitPrice: '', lineTotal: 0 };
       
-      const priceFloat = parseFloat(val);
+      const priceFloat = parseFloat(cleanVal);
       const safePrice = isNaN(priceFloat) ? 0 : priceFloat;
       const qty = Number(item.requestedQty) || 0;
       
-      return { ...item, unitPrice: val, lineTotal: qty * safePrice };
+      return { ...item, unitPrice: cleanVal, lineTotal: qty * safePrice };
     }));
   };
 
@@ -247,8 +252,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
   const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
   const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
-
-  // Form validation now strictly verifies the numbers are valid without breaking string typings
+  
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => {
     const q = Number(i.requestedQty);
     const p = Number(i.unitPrice);
@@ -305,7 +309,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
-  // CRITICAL FIX: Sent `id` so backend PATCH targets the specific row properly instead of ignoring it
   const handleUpdateOrder = async () => {
     if (!isFormValid || !loadedOsId) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
@@ -313,7 +316,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       const payload = {
         user: loginUsername, status: loadedOsStatus, isVatApplied, vatRate, subtotal, vatAmount, grandTotal,
         items: draftItems.map(i => ({ 
-          id: i.id, // Explicit ID inclusion allows Prisma update nested tables
+          id: i.id, 
           productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) 
         }))
       };
@@ -521,13 +524,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <td className={`border border-slate-300 py-2.5 px-4 text-center font-black ${item.officeStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.officeStock}</td>
                       
                       <td className="border border-slate-300 p-0 bg-indigo-50/20 relative">
-                        <input id={`qty-input-${item.productId}`} type="number" min="1" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
+                        {/* TYPE="TEXT" FOR QTY FIX */}
+                        <input id={`qty-input-${item.productId}`} type="text" inputMode="numeric" placeholder="0" value={item.requestedQty} onChange={e => handleUpdateQty(idx, e.target.value)} className="w-full h-full px-2 py-3 text-center font-black text-indigo-700 bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
                         {item.officeStock !== undefined && reqQty > item.officeStock && <span className="absolute bottom-0 left-0 right-0 text-center text-rose-600 font-bold text-[8px] uppercase tracking-widest bg-rose-50">Short {reqQty - item.officeStock}</span>}
                       </td>
 
                       <td className="border border-slate-300 p-0 relative bg-white">
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₱</div>
-                        <input type="number" step="0.01" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
+                        {/* TYPE="TEXT" FOR DECIMAL PRICE FIX */}
+                        <input type="text" inputMode="decimal" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
                       </td>
 
                       <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
@@ -659,7 +664,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             {/* PRINT CONTAINER */}
             <div className="p-8 print:pt-4 print:px-8 print:pb-4 bg-white flex-1 overflow-y-auto print:overflow-visible print:block relative">
               
-              {/* FIXED WATERMARK STYLING */}
               {(finalizedOs.status === 'Cancelled' || finalizedOs.status === 'Returned') && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 opacity-25 mix-blend-multiply">
                   <div className="text-[120px] font-black text-rose-600 uppercase tracking-tighter rotate-[-30deg] border-8 border-rose-600 px-12 py-4 rounded-3xl">{finalizedOs.status}</div>
