@@ -283,7 +283,7 @@ export class OrderSlipsController {
           const product = dbProducts.find(p => p.id === Number(item.productId));
           if (!product) continue;
 
-          const unitPrice = Number(product.sellingPrice); 
+          const unitPrice = Number(item.unitPrice) || Number(product.sellingPrice);
           const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
           calculatedSubtotal += lineTotal;
           cleanItems.push({ productId: product.id, sku: product.sku, productName: product.name, requestedQty, unitPrice, lineTotal });
