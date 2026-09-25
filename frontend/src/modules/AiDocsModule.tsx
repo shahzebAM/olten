@@ -725,10 +725,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
                     {getFileIcon(selectedFile.mimeType)}
                   </div>
-                  <div className="truncate">
+                  {/* <div className="truncate">
                     <h3 className="text-base lg:text-lg font-black text-slate-900 truncate tracking-tight">{selectedFile.name.replace(/\.[^/.]+$/, "")}</h3>
                     <p className="text-[11px] font-medium text-slate-400 mt-0.5">{formatDate(selectedFile.createdTime)} • {(parseInt(selectedFile.size || '0') / 1024).toFixed(0)} KB • Edited via Drive</p>
-                  </div>
+                  </div> */}
                 </div>
               </div>
 
