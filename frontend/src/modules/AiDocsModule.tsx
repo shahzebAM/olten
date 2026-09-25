@@ -718,18 +718,18 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           {selectedFile ? (
             <div className="flex-1 flex flex-col min-h-0 relative bg-white">
               <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white">
-                <div className="flex items-center gap-4 truncate max-w-[80%]">
-                  <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
+                {/* <div className="flex items-center gap-4 truncate max-w-[80%]"> */}
+                  {/* <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
-                  </button>
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
+                  </button> */}
+                  {/* <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
                     {getFileIcon(selectedFile.mimeType)}
-                  </div>
+                  </div> */}
                   {/* <div className="truncate">
                     <h3 className="text-base lg:text-lg font-black text-slate-900 truncate tracking-tight">{selectedFile.name.replace(/\.[^/.]+$/, "")}</h3>
                     <p className="text-[11px] font-medium text-slate-400 mt-0.5">{formatDate(selectedFile.createdTime)} • {(parseInt(selectedFile.size || '0') / 1024).toFixed(0)} KB • Edited via Drive</p>
                   </div> */}
-                </div>
+                {/* </div> */}
               </div>
 
               {/* Document Canvas Area */}
