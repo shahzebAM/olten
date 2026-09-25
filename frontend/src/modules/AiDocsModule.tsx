@@ -717,7 +717,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           {/* DOCUMENT PREVIEW PANEL (Bottom Section) */}
           {selectedFile ? (
             <div className="flex-1 flex flex-col min-h-0 relative bg-white">
-              <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white">
+              {/* <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white"> */}
                 {/* <div className="flex items-center gap-4 truncate max-w-[80%]"> */}
                   {/* <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
@@ -730,7 +730,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <p className="text-[11px] font-medium text-slate-400 mt-0.5">{formatDate(selectedFile.createdTime)} • {(parseInt(selectedFile.size || '0') / 1024).toFixed(0)} KB • Edited via Drive</p>
                   </div> */}
                 {/* </div> */}
-              </div>
+              {/* </div> */}
 
               {/* Document Canvas Area */}
               <div className="flex-1 overflow-y-auto p-4 lg:p-12 bg-white flex justify-center">
