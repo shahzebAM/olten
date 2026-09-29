@@ -21,7 +21,7 @@ function SortableModuleCard({ id, children }: { id: string, children: React.Reac
       style={style} 
       {...attributes} 
       {...listeners} 
-      className={`h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'touch-none scale-105 drop-shadow-2xl' : 'touch-pan-y'} transition-all duration-200`}
+      className={`h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'touch-none scale-105 drop-shadow-2xl' : ''} transition-all duration-200`}
     >
       {children}
     </div>
@@ -32,7 +32,7 @@ export default function CompanyModule({
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
   selectedCompany, loginUsername, currentUser, 
   hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales,
-  onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = []
+  onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL
 }: any) {
   
   const [showAddModal, setShowAddModal] = useState(false);
@@ -48,7 +48,7 @@ export default function CompanyModule({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
   );
 
-  useEffect(() => {
+useEffect(() => {
     if (!isGateway) return;
 
     // 1. Identify which modules this user currently has access to
@@ -59,31 +59,43 @@ export default function CompanyModule({
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
 
-    // 2. Fetch their previous custom grid layout from their local storage
-    const savedOrder = JSON.parse(localStorage.getItem(`module_order_${loginUsername}`) || '[]');
+    // 2. Fetch custom grid layout from database (fallback to local storage)
+    const dbOrder = currentUser?.moduleOrder;
+    const savedOrder = (Array.isArray(dbOrder) && dbOrder.length > 0) 
+      ? dbOrder 
+      : JSON.parse(localStorage.getItem(`module_order_${loginUsername}`) || '[]');
     
     // 3. Merge them: keep saved order, remove revoked modules, and append newly granted modules to the end
     const mergedOrder = [
       ...savedOrder.filter((id: string) => activeIds.includes(id)),
-      ...activeIds.filter(id => !savedOrder.includes(id))
+      ...activeIds.filter((id: string) => !savedOrder.includes(id))
     ];
     
     setModuleOrder(mergedOrder);
-  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername]);
+  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     
     if (over && active.id !== over.id) {
-      setModuleOrder((items) => {
-        const oldIndex = items.indexOf(active.id as string);
-        const newIndex = items.indexOf(over.id as string);
-        const newOrder = arrayMove(items, oldIndex, newIndex);
-        
-        // Save the new layout permanently for this specific user
-        localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
-        return newOrder;
-      });
+      const oldIndex = moduleOrder.indexOf(active.id as string);
+      const newIndex = moduleOrder.indexOf(over.id as string);
+      const newOrder = arrayMove(moduleOrder, oldIndex, newIndex);
+      
+      // 1. Update UI instantly
+      setModuleOrder(newOrder);
+      
+      // 2. Save locally as a temporary backup
+      localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
+      
+      // 3. Save permanently to backend database
+      if (API_BASE_URL) {
+        fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ moduleOrder: newOrder })
+        }).catch(err => console.warn("Failed to save layout to DB", err));
+      }
     }
   };
 
