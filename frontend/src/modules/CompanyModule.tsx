@@ -83,6 +83,7 @@ const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
     const { active, over } = event;
     
+    // Only trigger if you actually moved the card to a NEW position
     if (over && active.id !== over.id) {
       const oldIndex = moduleOrder.indexOf(active.id as string);
       const newIndex = moduleOrder.indexOf(over.id as string);
@@ -91,27 +92,31 @@ const handleDragEnd = async (event: DragEndEvent) => {
       // 1. Update UI instantly
       setModuleOrder(newOrder);
       
-      // 2. Save locally as a temporary backup
+      // 2. Save locally as a backup
       localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
       
-      // 3. Save permanently to backend database and trigger mini toast
-      if (API_BASE_URL) {
-        try {
-          const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ moduleOrder: newOrder })
-          });
-          
-          if (res.ok) {
-            showToast("Layout synced across devices.", "success");
-          } else {
-            showToast("Layout saved locally (Database sync failed).", "error");
-          }
-        } catch (err) {
-          console.warn("Failed to save layout to DB", err);
-          showToast("Network error. Layout saved offline.", "error");
+      // 3. Check for API URL before fetching
+      if (!API_BASE_URL) {
+        showToast("Error: API_BASE_URL is missing! Saved locally only.", "error");
+        return; // Stop execution here
+      }
+
+      // 4. Save permanently to backend database
+      try {
+        const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ moduleOrder: newOrder })
+        });
+        
+        if (res.ok) {
+          showToast("Layout synced across devices.", "success");
+        } else {
+          showToast(`Database sync failed: ${res.status}`, "error");
         }
+      } catch (err) {
+        console.warn("Failed to save layout to DB", err);
+        showToast("Network error. Saved locally.", "error");
       }
     }
   };
