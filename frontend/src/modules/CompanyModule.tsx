@@ -79,8 +79,8 @@ useEffect(() => {
     });
   }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
 
- const handleDragEnd = (event: DragEndEvent) => {
-    setIsDraggingGrid(false); // <--- Unlock syncing when card is dropped
+const handleDragEnd = async (event: DragEndEvent) => {
+    setIsDraggingGrid(false); 
     const { active, over } = event;
     
     if (over && active.id !== over.id) {
@@ -88,15 +88,30 @@ useEffect(() => {
       const newIndex = moduleOrder.indexOf(over.id as string);
       const newOrder = arrayMove(moduleOrder, oldIndex, newIndex);
       
+      // 1. Update UI instantly
       setModuleOrder(newOrder);
+      
+      // 2. Save locally as a temporary backup
       localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
       
+      // 3. Save permanently to backend database and trigger mini toast
       if (API_BASE_URL) {
-        fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ moduleOrder: newOrder })
-        }).catch(err => console.warn("Failed to save layout to DB", err));
+        try {
+          const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ moduleOrder: newOrder })
+          });
+          
+          if (res.ok) {
+            showToast("Layout synced across devices.", "success");
+          } else {
+            showToast("Layout saved locally (Database sync failed).", "error");
+          }
+        } catch (err) {
+          console.warn("Failed to save layout to DB", err);
+          showToast("Network error. Layout saved offline.", "error");
+        }
       }
     }
   };
