@@ -95,15 +95,12 @@ const handleDragEnd = async (event: DragEndEvent) => {
       // 2. Save locally as a backup
       localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
       
-      // 3. Check for API URL before fetching
-      if (!API_BASE_URL) {
-        showToast("Error: API_BASE_URL is missing! Saved locally only.", "error");
-        return; // Stop execution here
-      }
+      // 3. Fallback routing: If App.tsx fails to pass the URL, default to NestJS standard port
+      const targetApiUrl = API_BASE_URL || 'http://localhost:3000';
 
       // 4. Save permanently to backend database
       try {
-        const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
+        const res = await fetch(`${targetApiUrl}/admins/${currentUser?.id || loginUsername}/preferences`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ moduleOrder: newOrder })
@@ -116,7 +113,7 @@ const handleDragEnd = async (event: DragEndEvent) => {
         }
       } catch (err) {
         console.warn("Failed to save layout to DB", err);
-        showToast("Network error. Saved locally.", "error");
+        showToast(`Network error: Could not reach ${targetApiUrl}`, "error");
       }
     }
   };
