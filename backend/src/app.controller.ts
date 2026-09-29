@@ -49,18 +49,18 @@ export class AppController {
   async login(@Body() body: any) {
     const { username, password } = body;
     
-    const admin = await prisma.admin.findFirst({
-      where: { username: username.toLowerCase() }
-    });
+    // Fetch all admins and match case-insensitively to prevent "Admin" vs "admin" lockouts
+    const admins = await prisma.admin.findMany();
+    const admin = admins.find(a => a.username.toLowerCase() === username.toLowerCase());
 
     if (!admin) {
-      throw new UnauthorizedException('Access Denied: Invalid credentials.');
+      throw new UnauthorizedException('Access Denied: User not found.');
     }
 
     const isPasswordValid = await bcrypt.compare(password, admin.password);
     
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Access Denied: Invalid credentials.');
+      throw new UnauthorizedException('Access Denied: Invalid password.');
     }
 
     return { message: "Login successful!" };
@@ -146,6 +146,22 @@ export class AppController {
     });
     return { message: "Module access updated" };
   }
+  
+  @Delete(['admins/:id', 'api/admins/:id'])
+  async deleteAdmin(@Param('id', ParseIntPipe) id: number) {
+    const targetAdmin = await prisma.admin.findUnique({ where: { id } });
+    if (!targetAdmin) throw new NotFoundException("Admin not found");
+
+    if (targetAdmin.role === 'Super Admin') {
+      const superAdminCount = await prisma.admin.count({ where: { role: 'Super Admin' } });
+      if (superAdminCount <= 1) {
+        throw new HttpException('Cannot delete the last Super Admin', HttpStatus.FORBIDDEN);
+      }
+    }
+    
+    await prisma.admin.delete({ where: { id } });
+    return { message: "Admin deleted" };
+  }
 
   @Patch(['admins/:id/preferences', 'api/admins/:id/preferences'])
   async updateAdminPreferences(
@@ -180,21 +196,5 @@ export class AppController {
     });
     
     return { message: "Preferences updated successfully" };
-  }
-  
-  @Delete(['admins/:id', 'api/admins/:id'])
-  async deleteAdmin(@Param('id', ParseIntPipe) id: number) {
-    const targetAdmin = await prisma.admin.findUnique({ where: { id } });
-    if (!targetAdmin) throw new NotFoundException("Admin not found");
-
-    if (targetAdmin.role === 'Super Admin') {
-      const superAdminCount = await prisma.admin.count({ where: { role: 'Super Admin' } });
-      if (superAdminCount <= 1) {
-        throw new HttpException('Cannot delete the last Super Admin', HttpStatus.FORBIDDEN);
-      }
-    }
-    
-    await prisma.admin.delete({ where: { id } });
-    return { message: "Admin deleted" };
   }
 }
