@@ -46,8 +46,8 @@ export default function CompanyModule({
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
   
-  // Check if current user is allowed to rearrange modules
-  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
+ // Check if current user is allowed to rearrange modules
+  const isAdmin = currentUser?.role === 'Super Admin';
 
   // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
   const sensors = useSensors(
