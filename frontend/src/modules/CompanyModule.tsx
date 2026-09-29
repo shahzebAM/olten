@@ -21,7 +21,7 @@ function SortableModuleCard({ id, children }: { id: string, children: React.Reac
       style={style} 
       {...attributes} 
       {...listeners} 
-      className={`touch-none h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'scale-105 drop-shadow-2xl' : ''} transition-all duration-200`}
+      className={`h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'touch-none scale-105 drop-shadow-2xl' : 'touch-pan-y'} transition-all duration-200`}
     >
       {children}
     </div>
