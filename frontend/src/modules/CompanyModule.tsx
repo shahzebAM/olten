@@ -5,8 +5,11 @@ import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@d
 import { CSS } from '@dnd-kit/utilities';
 
 // --- DRAG AND DROP WRAPPER COMPONENT ---
-function SortableModuleCard({ id, children }: { id: string, children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+function SortableModuleCard({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ 
+    id, 
+    disabled 
+  });
   
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -19,9 +22,9 @@ function SortableModuleCard({ id, children }: { id: string, children: React.Reac
     <div 
       ref={setNodeRef} 
       style={style} 
-      {...attributes} 
-      {...listeners} 
-      className={`h-full w-full cursor-grab active:cursor-grabbing ${isDragging ? 'touch-none scale-105 drop-shadow-2xl' : ''} transition-all duration-200`}
+      {...(disabled ? {} : attributes)} 
+      {...(disabled ? {} : listeners)} 
+      className={`h-full w-full ${disabled ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${isDragging ? 'touch-none scale-105 drop-shadow-2xl' : ''} transition-all duration-200`}
     >
       {children}
     </div>
