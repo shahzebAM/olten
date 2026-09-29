@@ -146,6 +146,41 @@ export class AppController {
     });
     return { message: "Module access updated" };
   }
+
+  @Patch(['admins/:id/preferences', 'api/admins/:id/preferences'])
+  async updateAdminPreferences(
+    @Param('id') id: string, 
+    @Body() body: any
+  ) {
+    const { moduleOrder } = body;
+    
+    if (!moduleOrder || !Array.isArray(moduleOrder)) {
+      throw new HttpException('Invalid module layout format', HttpStatus.BAD_REQUEST);
+    }
+
+    // Determine if the frontend sent the numeric ID or the string username
+    const numericId = parseInt(id, 10);
+    const adminRecord = await prisma.admin.findFirst({
+      where: {
+        OR: [
+          { id: isNaN(numericId) ? undefined : numericId },
+          { username: id }
+        ]
+      }
+    });
+
+    if (!adminRecord) {
+      throw new NotFoundException("Admin not found");
+    }
+
+    // Save the new layout array to the database
+    await prisma.admin.update({ 
+      where: { id: adminRecord.id }, 
+      data: { moduleOrder } 
+    });
+    
+    return { message: "Preferences updated successfully" };
+  }
   
   @Delete(['admins/:id', 'api/admins/:id'])
   async deleteAdmin(@Param('id', ParseIntPipe) id: number) {

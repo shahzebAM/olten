@@ -44,6 +44,7 @@ model Admin {
   role     String  @default("Admin")
   modules  Json?
   status   String  @default("Active")
+  moduleOrder   String[] @default([])
 }
 
 model Settings {
