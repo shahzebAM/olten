@@ -66,7 +66,7 @@ export class AppController {
     return { message: "Login successful!" };
   }
 
-  @Get(['admins', 'api/admins'])
+@Get(['admins', 'api/admins'])
   async getAdmins() {
     const admins = await prisma.admin.findMany();
     return admins.map(a => ({
@@ -74,6 +74,7 @@ export class AppController {
       username: a.username,
       role: a.role || 'Admin', 
       modules: a.modules || { payroll: false, ai_docs: false, inventory: false, sales: false, purchasing: false }, 
+      moduleOrder: a.moduleOrder || [], // <--- ADDED THIS LINE
       status: 'Active'
     }));
   }
