@@ -347,9 +347,17 @@ const handleDragEnd = async (event: DragEndEvent) => {
     );
   }
 
-  // --- GATEWAY VIEW (WITH DRAG & DROP) ---
+// --- GATEWAY VIEW (WITH DRAG & DROP) ---
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
+      
+      {/* GATEWAY TOAST ALERTS */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 fade-in border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 sm:mb-12">
         <div className="w-full sm:w-auto">
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{selectedCompany} Workspace</h1>
