@@ -192,6 +192,7 @@ export default function App() {
       isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} 
       companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
       onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
+      API_BASE_URL={API_BASE_URL}
     />
   );
 
