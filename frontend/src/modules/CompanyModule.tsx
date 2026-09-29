@@ -41,6 +41,7 @@ export default function CompanyModule({
 
   // --- DRAG AND DROP STATES & CONFIG ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
+  const [isDraggingGrid, setIsDraggingGrid] = useState(false);
 
   // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
   const sensors = useSensors(
@@ -49,9 +50,9 @@ export default function CompanyModule({
   );
 
 useEffect(() => {
-    if (!isGateway) return;
+    // Skip sync if not in gateway OR if the user is currently holding a card
+    if (!isGateway || isDraggingGrid) return; 
 
-    // 1. Identify which modules this user currently has access to
     const activeIds: string[] = [];
     if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
     if (hasPurchasing) activeIds.push('purchase_orders');
@@ -59,22 +60,27 @@ useEffect(() => {
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
 
-    // 2. Fetch custom grid layout from database (fallback to local storage)
     const dbOrder = currentUser?.moduleOrder;
     const savedOrder = (Array.isArray(dbOrder) && dbOrder.length > 0) 
       ? dbOrder 
       : JSON.parse(localStorage.getItem(`module_order_${loginUsername}`) || '[]');
     
-    // 3. Merge them: keep saved order, remove revoked modules, and append newly granted modules to the end
     const mergedOrder = [
       ...savedOrder.filter((id: string) => activeIds.includes(id)),
       ...activeIds.filter((id: string) => !savedOrder.includes(id))
     ];
     
-    setModuleOrder(mergedOrder);
-  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser]);
+    // Smart update: Only change the visual grid if the other device actually changed the order
+    setModuleOrder((prev) => {
+      if (JSON.stringify(prev) !== JSON.stringify(mergedOrder)) {
+        return mergedOrder;
+      }
+      return prev;
+    });
+  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+ const handleDragEnd = (event: DragEndEvent) => {
+    setIsDraggingGrid(false); // <--- Unlock syncing when card is dropped
     const { active, over } = event;
     
     if (over && active.id !== over.id) {
@@ -82,13 +88,9 @@ useEffect(() => {
       const newIndex = moduleOrder.indexOf(over.id as string);
       const newOrder = arrayMove(moduleOrder, oldIndex, newIndex);
       
-      // 1. Update UI instantly
       setModuleOrder(newOrder);
-      
-      // 2. Save locally as a temporary backup
       localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
       
-      // 3. Save permanently to backend database
       if (API_BASE_URL) {
         fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
           method: 'PATCH',
@@ -344,7 +346,12 @@ useEffect(() => {
         </div>
       </div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext 
+        sensors={sensors} 
+        collisionDetection={closestCenter} 
+        onDragStart={() => setIsDraggingGrid(true)} 
+        onDragEnd={handleDragEnd}
+      >
         <SortableContext items={moduleOrder} strategy={rectSortingStrategy}>
           <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             
