@@ -42,9 +42,12 @@ export default function CompanyModule({
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // --- DRAG AND DROP STATES & CONFIG ---
+// --- DRAG AND DROP STATES & CONFIG ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
+  
+  // Check if current user is allowed to rearrange modules
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
   // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
   const sensors = useSensors(
@@ -84,6 +87,8 @@ useEffect(() => {
 
 const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
+    if (!isAdmin) return; // Instantly cancel drop if not an admin
+    
     const { active, over } = event;
     
     if (over && active.id !== over.id) {
@@ -381,8 +386,8 @@ const handleDragEnd = async (event: DragEndEvent) => {
         <SortableContext items={moduleOrder} strategy={rectSortingStrategy}>
           <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             
-            {moduleOrder.map(moduleId => (
-              <SortableModuleCard key={moduleId} id={moduleId}>
+           {moduleOrder.map(moduleId => (
+              <SortableModuleCard key={moduleId} id={moduleId} disabled={!isAdmin}>
                 {renderModuleCard(moduleId)}
               </SortableModuleCard>
             ))}
