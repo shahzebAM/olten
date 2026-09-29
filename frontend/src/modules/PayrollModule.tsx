@@ -1056,7 +1056,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
       return true;
     });
 
-    return employees.map(emp => {
+    return employees.filter(emp => emp.company === selectedCompany).map(emp => {
       const empPayrolls = filteredPayrolls.filter(pr => pr.employeeId === emp.id);
       if (empPayrolls.length === 0) return null;
       const totalHours = empPayrolls.reduce((sum, pr) => sum + pr.totalHours, 0);
@@ -2151,7 +2151,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
                       <tbody>
                         {payrolls.length === 0 ? ( <tr><td colSpan={8} className="py-8 text-slate-400 italic">No payrolls computed yet.</td></tr> ) : (
                           (() => {
-                            let totalWithholdingTax = 0; const declaredPayrolls = payrolls.filter(pr => pr.tax > 0);
+                            let totalWithholdingTax = 0; const declaredPayrolls = payrolls.filter(pr => pr.tax > 0 && employees.some(e => e.id === Number(pr.employeeId) && e.company === selectedCompany));
                             if (declaredPayrolls.length === 0) return <tr><td colSpan={8} className="py-8 text-slate-400 italic">No declared salary records found.</td></tr>;
                             const rows = declaredPayrolls.map((pr) => {
                               const emp = employees.find(e => e.id === pr.employeeId); const name = emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown';
