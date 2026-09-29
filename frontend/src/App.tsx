@@ -192,7 +192,7 @@ export default function App() {
       isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} 
       companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
       onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
-      API_BASE_URL={API_BASE_URL}
+      
     />
   );
 
@@ -211,7 +211,7 @@ export default function App() {
       hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory} 
       hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}
       hasSales={userHasSales && globalModules.sales}
-      onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} 
+      onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} API_BASE_URL={API_BASE_URL}
     />
   }
 
