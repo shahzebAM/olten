@@ -104,12 +104,18 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       const payload = {
         company: selectedCompany,
         user: loginUsername,
-        poNumber: nextPoNumber.trim(), // Use the editable value
+        poNumber: nextPoNumber.trim(),
         supplierId: poForm.supplierId,
         osReference: poForm.osReference || null,
         isVatApplied: poForm.isVatApplied,
         vatRate: 0.12,
-        items: poItems.map(i => ({ ...i, productId: Date.now() + Math.floor(Math.random() * 1000) })) 
+        // REMOVED Date.now() fake ID generation. Send strictly mapped data.
+        items: poItems.map(i => ({ 
+          sku: i.sku || 'N/A', 
+          productName: i.productName, 
+          requestedQty: Number(i.requestedQty), 
+          unitCost: Number(i.unitCost)
+        })) 
       };
 
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
@@ -217,7 +223,6 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       </header>
 
       <div className="bg-white border-b border-slate-200 px-8 py-3 flex gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
-        {/* Buttons swapped and highlighted correctly */}
         <button onClick={() => setActiveTab('generate')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'generate' ? 'bg-sky-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
           Generate P.O.
         </button>
@@ -292,7 +297,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
           {/* =========================================
               TAB 2: GENERATE P.O.
-          ========================================= */}
+          ======================================== */}
           {activeTab === 'generate' && (
             <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
               
