@@ -12,6 +12,7 @@ import OrderSlipsModule from './modules/OrderSlipsModule';
 import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
+import SupplierModule from './modules/SupplierModule'; // <-- ADDED NEW IMPORT
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -242,7 +243,7 @@ export default function App() {
     return <MasterInventory selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   }
 
- if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   
   if (activeModule === 'sales_orders') return (
@@ -252,6 +253,16 @@ export default function App() {
   // NEW PURCHASE ORDERS ROUTE
   if (activeModule === 'purchase_orders') return (
     <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />
+  );
+
+  // --- ADDED SUPPLIER DIRECTORY ROUTE ---
+  if (activeModule === 'suppliers') return (
+    <SupplierModule 
+      selectedCompany={selectedCompany!} 
+      loginUsername={loginUsername} 
+      API_BASE_URL={API_BASE_URL} 
+      onBack={() => setActiveModule('none')} 
+    />
   );
 
   if (activeModule === 'users') return (
