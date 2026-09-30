@@ -195,7 +195,7 @@ export default function CompanyModule({
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md">{realActiveUsers.length} Online</span>
-            <svg className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOnlineWidgetOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+            <svg className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOnlineWidgetOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
         
