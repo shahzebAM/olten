@@ -194,6 +194,8 @@ export default function App() {
       companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
       onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
       
+      // FIXED: Passed missing props needed for the Online Sessions Widget to function properly
+      loginUsername={loginUsername} currentUser={currentUser} API_BASE_URL={API_BASE_URL}
     />
   );
 

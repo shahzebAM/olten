@@ -63,10 +63,11 @@ export default function CompanyModule({
       fetch(`${API_BASE_URL}/admins`)
         .then(res => res.json())
         .then(data => {
+          if (!Array.isArray(data)) return; // Prevents crash if DB returns irregular data
           const colors = ['bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700', 'bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700', 'bg-indigo-100 text-indigo-700'];
           
           const formattedUsers = data.map((u: any, index: number) => {
-            const isMe = u.username.toLowerCase() === loginUsername?.toLowerCase();
+            const isMe = loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase();
             return {
               id: u.id || index,
               name: u.username,
@@ -81,7 +82,10 @@ export default function CompanyModule({
           formattedUsers.sort((a: any, b: any) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0));
           setRealActiveUsers(formattedUsers);
         })
-        .catch(err => console.error("Failed to fetch widget users", err));
+        .catch(err => {
+          console.error("Failed to fetch widget users", err);
+          setRealActiveUsers([]);
+        });
     }
   }, [isAdmin, API_BASE_URL, loginUsername, selectedCompany]);
 
@@ -181,7 +185,7 @@ export default function CompanyModule({
 
   // --- ONLINE STATUS WIDGET (SUPER ADMIN ONLY) ---
   const renderOnlineWidget = () => {
-    if (!isAdmin) return null; // Restrict visibility to Super Admins only
+    if (!isAdmin) return null;
 
     return (
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[150] w-[calc(100vw-2rem)] sm:w-72 shadow-2xl rounded-2xl overflow-hidden animate-in slide-in-from-bottom-8 fade-in duration-500 flex flex-col border border-slate-200/60 transition-all">
@@ -221,7 +225,7 @@ export default function CompanyModule({
                </div>
              ))}
              {realActiveUsers.length === 0 && (
-               <div className="px-4 py-6 text-center text-xs font-bold text-slate-400">Loading user database...</div>
+               <div className="px-4 py-6 text-center text-xs font-bold text-slate-400">Loading system users...</div>
              )}
           </div>
         )}
