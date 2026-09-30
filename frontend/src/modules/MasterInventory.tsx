@@ -431,6 +431,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
         const prevMasterForLog = currentMasterStock;
 
+        // 1. DEDUCT FROM SOURCE
         if (source === 'MASTER') {
           if (currentMasterStock < q) throw new Error(`Not enough Master Stock for ${prod.sku}.`);
           currentMasterStock -= q;
@@ -442,6 +443,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
         }
 
+        // 2. ADD TO DESTINATION
         if (dest === 'MASTER') {
           currentMasterStock += q;
         } else if (dest !== 'EXTERNAL') {
@@ -451,9 +453,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
         }
 
+        // 3. LOG MOVEMENT
         const logWarehouseId = (dest !== 'MASTER' && dest !== 'EXTERNAL') ? dest : ((source !== 'MASTER' && source !== 'EXTERNAL') ? source : null);
         apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
 
+        // 4. MASTER STOCK PATCH
         if (currentMasterStock !== (Number(prod.currentStock) || 0)) {
           if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
           apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
@@ -470,7 +474,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         showToast("Warning: Background sync delay. Verifying data.", "error");
         fetchAllData(); 
       });
-    } catch (e: any) { showToast(e.message || "Validation failed.", "error"); } finally { setIsProcessing(false); }
+
+    } catch (e: any) { showToast(e.message || "Validation failed.", "error"); } 
+    finally { setIsProcessing(false); }
   };
 
   const handleExportExcel = () => {
@@ -527,7 +533,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
-      {/* SIDEBAR NAVIGATION[cite: 8] */}
+      {/* SIDEBAR NAVIGATION */}
       <aside className={`fixed inset-y-0 left-0 z-50 bg-[#0F172A] text-slate-300 w-64 transition-transform duration-300 md:relative md:translate-x-0 flex flex-col shadow-xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-[#0B1120]">
           <h1 className="text-xl font-black text-white uppercase tracking-wider truncate">{selectedCompany}</h1>
@@ -552,18 +558,20 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden font-black text-slate-900 px-3 py-1 bg-slate-100 rounded-lg">MENU</button>
-            <div>
-              <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">
+        
+        {/* RESPONSIVE HEADER - FIXED HIDDEN BUTTONS */}
+        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-6 shrink-0 shadow-sm z-10 gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden font-black text-slate-900 px-3 py-2 bg-slate-100 rounded-lg text-xs shrink-0">MENU</button>
+            <div className="truncate hidden sm:block">
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tighter truncate">
                 {activeView === 'products' ? 'Product Catalog' : activeView === 'movements' ? 'Historical Ledger' : activeView === 'warehouses' ? 'Warehouses' : 'Physical Receiving'}
               </h2>
             </div>
           </div>
-          <div className="flex gap-3">
-            <button onClick={onBack} className="hidden sm:block px-5 py-2.5 bg-white border border-slate-300 text-slate-700 font-bold uppercase text-xs rounded-xl hover:bg-slate-50 transition-colors shadow-sm">Gateway</button>
-            <button onClick={onLogout} className="px-5 py-2.5 bg-rose-500 text-white font-bold uppercase text-xs rounded-xl hover:bg-rose-600 transition-colors shadow-sm">Logout</button>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={onBack} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 font-bold uppercase text-[10px] sm:text-xs rounded-xl hover:bg-slate-50 transition-colors shadow-sm">Gateway</button>
+            <button onClick={onLogout} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] sm:text-xs rounded-xl hover:bg-rose-600 transition-colors shadow-sm">Logout</button>
           </div>
         </header>
 
