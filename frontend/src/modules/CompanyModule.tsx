@@ -45,7 +45,8 @@ export default function CompanyModule({
   // --- WIDGET & DRAG AND DROP STATES ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
-  const [isOnlineWidgetOpen, setIsOnlineWidgetOpen] = useState(true); // Online Status Widget State
+  const [isOnlineWidgetOpen, setIsOnlineWidgetOpen] = useState(true);
+  const [realActiveUsers, setRealActiveUsers] = useState<any[]>([]);
   
   // Check if current user is allowed to rearrange modules and view admin tools
   const isAdmin = currentUser?.role === 'Super Admin' || hasUsers;
@@ -55,6 +56,34 @@ export default function CompanyModule({
     useSensor(MouseSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
   );
+
+  // --- FETCH ACTUAL SYSTEM USERS FOR WIDGET ---
+  useEffect(() => {
+    if (isAdmin && API_BASE_URL) {
+      fetch(`${API_BASE_URL}/admins`)
+        .then(res => res.json())
+        .then(data => {
+          const colors = ['bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700', 'bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700', 'bg-indigo-100 text-indigo-700'];
+          
+          const formattedUsers = data.map((u: any, index: number) => {
+            const isMe = u.username.toLowerCase() === loginUsername?.toLowerCase();
+            return {
+              id: u.id || index,
+              name: u.username,
+              company: isMe ? (selectedCompany || 'Gateway Entry') : 'System Connected',
+              initials: u.username.substring(0, 2).toUpperCase(),
+              color: colors[index % colors.length],
+              isMe: isMe
+            };
+          });
+          
+          // Put the currently logged in Super Admin at the top
+          formattedUsers.sort((a: any, b: any) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0));
+          setRealActiveUsers(formattedUsers);
+        })
+        .catch(err => console.error("Failed to fetch widget users", err));
+    }
+  }, [isAdmin, API_BASE_URL, loginUsername, selectedCompany]);
 
   useEffect(() => {
     // Skip sync if not in gateway OR if the user is currently holding a card
@@ -154,13 +183,6 @@ export default function CompanyModule({
   const renderOnlineWidget = () => {
     if (!isAdmin) return null; // Restrict visibility to Super Admins only
 
-    // Simulated Active Sessions (Replace with real-time backend data later)
-    const activeUsersList = [
-      { id: 1, name: loginUsername || 'Admin', company: selectedCompany || 'Gateway Entry', initials: loginUsername?.substring(0, 2).toUpperCase() || 'AD', color: 'bg-sky-100 text-sky-700' },
-      { id: 2, name: 'Shahzeb', company: 'Surgicom', initials: 'SH', color: 'bg-emerald-100 text-emerald-700' },
-      { id: 3, name: 'Agent01', company: 'Olten', initials: 'AG', color: 'bg-purple-100 text-purple-700' }
-    ];
-
     return (
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[150] w-[calc(100vw-2rem)] sm:w-72 shadow-2xl rounded-2xl overflow-hidden animate-in slide-in-from-bottom-8 fade-in duration-500 flex flex-col border border-slate-200/60 transition-all">
         {/* Widget Header (Toggle) */}
@@ -173,7 +195,7 @@ export default function CompanyModule({
             <span className="text-[11px] font-black text-white uppercase tracking-widest">Active Sessions</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md">{activeUsersList.length} Online</span>
+            <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md">{realActiveUsers.length} Online</span>
             <svg className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOnlineWidgetOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
@@ -181,14 +203,16 @@ export default function CompanyModule({
         {/* Widget Body (Collapsible) */}
         {isOnlineWidgetOpen && (
           <div className="flex flex-col max-h-56 overflow-y-auto bg-white/95 backdrop-blur divide-y divide-slate-100">
-             {activeUsersList.map(u => (
+             {realActiveUsers.map(u => (
                <div key={u.id} className="px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black uppercase shadow-sm ${u.color}`}>
                       {u.initials}
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-xs font-black text-slate-800 leading-none">{u.name}</span>
+                      <span className="text-xs font-black text-slate-800 leading-none flex items-center gap-1.5">
+                        {u.name} {u.isMe && <span className="text-[8px] bg-slate-200 text-slate-600 px-1 py-0.5 rounded">(YOU)</span>}
+                      </span>
                       <span className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-wider truncate max-w-[140px]">{u.company}</span>
                     </div>
                   </div>
@@ -196,6 +220,9 @@ export default function CompanyModule({
                   <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></div>
                </div>
              ))}
+             {realActiveUsers.length === 0 && (
+               <div className="px-4 py-6 text-center text-xs font-bold text-slate-400">Loading user database...</div>
+             )}
           </div>
         )}
       </div>
