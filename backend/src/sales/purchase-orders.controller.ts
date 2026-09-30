@@ -1,12 +1,80 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
-@Controller('procurement/purchase-orders')
-export class PurchaseOrdersController {
+@Controller('procurement')
+export class ProcurementController {
   private readonly prisma = new PrismaClient();
-  
-  // --- FETCH NEXT P.O. NUMBER ---
-  @Get('next-po-number')
+
+  // ==========================================
+  // 1. SUPPLIERS WORKFLOW
+  // ==========================================
+
+  @Post('suppliers')
+  async createSupplier(@Body() data: any) {
+    const { company, legalName, tradeName, tin, address, contactPerson, phone, email, paymentTerms } = data;
+
+    if (!company || !legalName || !tin || !address) {
+      throw new BadRequestException('Company, Legal Name, TIN, and Address are required.');
+    }
+
+    const existing = await this.prisma.supplier.findFirst({
+      where: { tin, company }
+    });
+
+    if (existing) {
+      throw new ConflictException('A supplier with this TIN already exists.');
+    }
+
+    return await this.prisma.supplier.create({
+      data: {
+        company, legalName, tradeName: tradeName || null, tin, address,
+        contactPerson: contactPerson || null, phone: phone || null, email: email || null,
+        paymentTerms: paymentTerms || 'Cash on Delivery', apBalance: 0
+      }
+    });
+  }
+
+  @Get('suppliers')
+  async listSuppliers(@Query('company') company: string) {
+    if (!company) throw new BadRequestException('Company is required.');
+    return await this.prisma.supplier.findMany({
+      where: { company },
+      orderBy: { legalName: 'asc' }
+    });
+  }
+
+  @Patch('suppliers/:id')
+  async updateSupplier(@Param('id') id: string, @Body() data: any) {
+    const supplier = await this.prisma.supplier.findUnique({ where: { id } });
+    if (!supplier) throw new NotFoundException('Supplier not found.');
+
+    const { legalName, tradeName, tin, address, contactPerson, phone, email, paymentTerms } = data;
+    return await this.prisma.supplier.update({
+      where: { id },
+      data: { legalName, tradeName, tin, address, contactPerson, phone, email, paymentTerms }
+    });
+  }
+
+  @Delete('suppliers/:id')
+  async deleteSupplier(@Param('id') id: string) {
+    const supplier = await this.prisma.supplier.findUnique({ 
+      where: { id },
+      include: { purchaseOrders: true }
+    });
+    
+    if (!supplier) throw new NotFoundException('Supplier not found.');
+    if (supplier.purchaseOrders && supplier.purchaseOrders.length > 0) {
+      throw new BadRequestException('Cannot delete a supplier that has existing Purchase Orders.');
+    }
+
+    return await this.prisma.supplier.delete({ where: { id } });
+  }
+
+  // ==========================================
+  // 2. PURCHASE ORDERS WORKFLOW
+  // ==========================================
+
+  @Get('purchase-orders/next-po-number')
   async getNextPoNumber(@Query('company') company: string) {
     const lastPo = await this.prisma.purchaseOrder.findFirst({
       where: { company },
@@ -26,8 +94,7 @@ export class PurchaseOrdersController {
     return { poNumber: 'PO-000001' };
   }
 
-  // --- CREATE PURCHASE ORDER WITH SUPPLIER LINKAGE ---
-  @Post()
+  @Post('purchase-orders')
   async createPurchaseOrder(@Body() data: any) {
     const { company, items, isVatApplied, vatRate = 0.12, user, osReference, poNumber, supplierId } = data;
 
@@ -35,17 +102,12 @@ export class PurchaseOrdersController {
       throw new BadRequestException('Missing required fields.');
     }
 
-    // Prevent duplicates
     const existing = await this.prisma.purchaseOrder.findUnique({ where: { poNumber } });
     if (existing) throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
 
-    // Verify and fetch supplier details if a supplierId is provided
-    let supplierName: string | null = null; // FIX: Explicitly type as string OR null
-    
     if (supplierId) {
       const supplier = await this.prisma.supplier.findUnique({ where: { id: supplierId } });
       if (!supplier) throw new BadRequestException('The selected supplier does not exist.');
-      supplierName = supplier.legalName;
     }
 
     return await this.prisma.$transaction(async (tx) => {
@@ -79,8 +141,7 @@ export class PurchaseOrdersController {
           vatAmount: calculatedVat, 
           grandTotal: calculatedGrandTotal,
           createdBy: user,
-          supplierId: supplierId || null, // Link to Supplier ID
-          supplierName: supplierName,     // Store the name directly for fast querying
+          supplierId: supplierId || null, // Only store the ID. Prisma will use relations to fetch the name.
           items: { create: cleanItems }
         },
         include: { items: true }
@@ -88,19 +149,27 @@ export class PurchaseOrdersController {
     });
   }
 
-  // --- LIST ALL PURCHASE ORDERS ---
-  @Get()
+  @Get('purchase-orders')
   async listPurchaseOrders(@Query('company') company: string) {
     if (!company) throw new BadRequestException('Company is required.');
-    return await this.prisma.purchaseOrder.findMany({
+    
+    // Format the response so the frontend receives `supplierName` from the relation
+    const pos = await this.prisma.purchaseOrder.findMany({
       where: { company },
-      include: { items: true },
+      include: { 
+        items: true,
+        supplier: true // Fetch relational supplier data
+      },
       orderBy: { createdAt: 'desc' },
     });
+
+    return pos.map(po => ({
+      ...po,
+      supplierName: po.supplier ? po.supplier.legalName : null
+    }));
   }
 
-  // --- RECEIVE PURCHASE ORDER ---
-  @Post(':id/receive')
+  @Post('purchase-orders/:id/receive')
   async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
     const { user, verifications } = data; 
     return await this.prisma.$transaction(async (tx) => {
@@ -152,8 +221,7 @@ export class PurchaseOrdersController {
     });
   }
 
-  // --- CANCEL PURCHASE ORDER ---
-  @Delete(':id/cancel')
+  @Delete('purchase-orders/:id/cancel')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
     return this.prisma.$transaction(async tx => {
       const existing = await tx.purchaseOrder.findUnique({ where: { id } });
@@ -166,8 +234,7 @@ export class PurchaseOrdersController {
     });
   }
 
-  // --- HARD DELETE PURCHASE ORDER ---
-  @Delete(':id')
+  @Delete('purchase-orders/:id')
   async hardDeletePurchaseOrder(@Param('id') id: string) {
     return this.prisma.purchaseOrder.delete({ where: { id } });
   }
