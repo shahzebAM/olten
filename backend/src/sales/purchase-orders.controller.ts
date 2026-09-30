@@ -5,7 +5,7 @@ import { PrismaClient } from '@prisma/client';
 export class PurchaseOrdersController {
   private readonly prisma = new PrismaClient();
 
-  // --- NEW: FETCH NEXT P.O. NUMBER ---
+  // --- FETCH NEXT P.O. NUMBER ---
   @Get('next-po-number')
   async getNextPoNumber(@Query('company') company: string) {
     const lastPo = await this.prisma.purchaseOrder.findFirst({
@@ -26,9 +26,10 @@ export class PurchaseOrdersController {
     return { poNumber: 'PO-000001' };
   }
 
+  // --- CREATE PURCHASE ORDER WITH SUPPLIER LINKAGE ---
   @Post()
   async createPurchaseOrder(@Body() data: any) {
-    const { company, items, isVatApplied, vatRate = 0.12, user, osReference, poNumber } = data;
+    const { company, items, isVatApplied, vatRate = 0.12, user, osReference, poNumber, supplierId } = data;
 
     if (!company || !items || items.length === 0 || !poNumber) {
       throw new BadRequestException('Missing required fields.');
@@ -37,6 +38,14 @@ export class PurchaseOrdersController {
     // Prevent duplicates
     const existing = await this.prisma.purchaseOrder.findUnique({ where: { poNumber } });
     if (existing) throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
+
+    // Verify and fetch supplier details if a supplierId is provided
+    let supplierName = null;
+    if (supplierId) {
+      const supplier = await this.prisma.supplier.findUnique({ where: { id: supplierId } });
+      if (!supplier) throw new BadRequestException('The selected supplier does not exist.');
+      supplierName = supplier.legalName;
+    }
 
     return await this.prisma.$transaction(async (tx) => {
       let calculatedSubtotal = 0;
@@ -59,10 +68,18 @@ export class PurchaseOrdersController {
 
       return await tx.purchaseOrder.create({
         data: {
-          poNumber, company, osReference, status: 'Generated', 
-          subtotal: calculatedSubtotal, vatApplied: isVatApplied,
-          vatRate: Number(vatRate), vatAmount: calculatedVat, grandTotal: calculatedGrandTotal,
+          poNumber, 
+          company, 
+          osReference, 
+          status: 'Generated', 
+          subtotal: calculatedSubtotal, 
+          vatApplied: isVatApplied,
+          vatRate: Number(vatRate), 
+          vatAmount: calculatedVat, 
+          grandTotal: calculatedGrandTotal,
           createdBy: user,
+          supplierId: supplierId || null, // Link to Supplier ID
+          supplierName: supplierName,     // Store the name directly for fast querying
           items: { create: cleanItems }
         },
         include: { items: true }
@@ -70,16 +87,22 @@ export class PurchaseOrdersController {
     });
   }
 
+  // --- LIST ALL PURCHASE ORDERS ---
   @Get()
   async listPurchaseOrders(@Query('company') company: string) {
     if (!company) throw new BadRequestException('Company is required.');
     return await this.prisma.purchaseOrder.findMany({
       where: { company },
-      include: { items: true },
+      include: { 
+        items: true,
+        // Include the full supplier object if you need deeper details like the TIN on the frontend
+        supplier: true 
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
 
+  // --- RECEIVE PURCHASE ORDER (Phase 8 logic intact) ---
   @Post(':id/receive')
   async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
     const { user, verifications } = data; 
@@ -132,6 +155,7 @@ export class PurchaseOrdersController {
     });
   }
 
+  // --- CANCEL PURCHASE ORDER ---
   @Delete(':id/cancel')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
     return this.prisma.$transaction(async tx => {
@@ -145,6 +169,7 @@ export class PurchaseOrdersController {
     });
   }
 
+  // --- HARD DELETE PURCHASE ORDER ---
   @Delete(':id')
   async hardDeletePurchaseOrder(@Param('id') id: string) {
     return this.prisma.purchaseOrder.delete({ where: { id } });

@@ -229,6 +229,26 @@ model Customer {
   shortages   Shortage[]
 }
 
+model Supplier {
+  id            String   @id @default(uuid())
+  company       String   // For multi-tenant workspace isolation
+  legalName     String
+  tradeName     String?
+  tin           String
+  address       String
+  contactPerson String?
+  phone         String?
+  email         String?
+  paymentTerms  String   @default("Cash on Delivery")
+  apBalance     Float    @default(0.00) // Accounts Payable running balance
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relational link to Purchase Orders
+  purchaseOrders PurchaseOrder[] 
+}
+
 model OrderSlip {
   id          String         @id @default(uuid())
   osNumber    String         @unique
@@ -331,6 +351,8 @@ model PurchaseOrder {
   osReference String?  // Links directly to the OS it was generated from
 
   items       PurchaseOrderItem[]
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id])
 }
 
 model PurchaseOrderItem {
