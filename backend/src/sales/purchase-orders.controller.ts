@@ -222,6 +222,17 @@ export class ProcurementController {
     });
   }
 
+  @Patch('suppliers/:id/catalog')
+  async updateSupplierCatalog(@Param('id') id: string, @Body() data: { catalog: any[] }) {
+    const supplier = await this.prisma.supplier.findUnique({ where: { id } });
+    if (!supplier) throw new NotFoundException('Supplier not found.');
+
+    return await this.prisma.supplier.update({
+      where: { id },
+      data: { catalog: data.catalog }
+    });
+  }
+
   @Delete('purchase-orders/:id/cancel')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
     return this.prisma.$transaction(async tx => {

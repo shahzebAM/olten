@@ -247,6 +247,7 @@ model Supplier {
 
   // Relational link to Purchase Orders
   purchaseOrders PurchaseOrder[] 
+  catalog Json? @default("[]")
 }
 
 model OrderSlip {
