@@ -113,24 +113,18 @@ export class ProcurementController {
     return await this.prisma.$transaction(async (tx) => {
       let calculatedSubtotal = 0;
       
-      // FIXED PARSER: Gracefully handles items without crashing database foreign keys
       const cleanItems = items.map((item: any) => {
         const lineTotal = Math.round((Number(item.requestedQty) * Number(item.unitCost)) * 100) / 100;
         calculatedSubtotal += lineTotal;
         
-        const cleanItem: any = {
+        return {
+          productId: Number(item.productId), // Safely parsing the 32-bit integer generated on frontend
           sku: item.sku,
           productName: item.productName,
           requestedQty: Number(item.requestedQty),
           unitCost: Number(item.unitCost),
           lineTotal
         };
-
-        if (item.productId) {
-          cleanItem.productId = Number(item.productId);
-        }
-
-        return cleanItem;
       });
 
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
