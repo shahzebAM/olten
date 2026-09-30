@@ -40,7 +40,8 @@ export class PurchaseOrdersController {
     if (existing) throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
 
     // Verify and fetch supplier details if a supplierId is provided
-    let supplierName = null;
+    let supplierName: string | null = null; // FIX: Explicitly type as string OR null
+    
     if (supplierId) {
       const supplier = await this.prisma.supplier.findUnique({ where: { id: supplierId } });
       if (!supplier) throw new BadRequestException('The selected supplier does not exist.');
@@ -93,16 +94,12 @@ export class PurchaseOrdersController {
     if (!company) throw new BadRequestException('Company is required.');
     return await this.prisma.purchaseOrder.findMany({
       where: { company },
-      include: { 
-        items: true,
-        // Include the full supplier object if you need deeper details like the TIN on the frontend
-        supplier: true 
-      },
+      include: { items: true },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  // --- RECEIVE PURCHASE ORDER (Phase 8 logic intact) ---
+  // --- RECEIVE PURCHASE ORDER ---
   @Post(':id/receive')
   async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
     const { user, verifications } = data; 
