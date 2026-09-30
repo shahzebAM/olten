@@ -4,13 +4,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 interface Supplier { id: string; legalName: string; }
 interface POItem { id?: string; productId?: number; sku: string; productName: string; requestedQty: number; unitCost: number; lineTotal?: number; confirmedQty?: number; shortageQty?: number; }
 interface PurchaseOrder { id: string; poNumber: string; supplierId?: string; supplierName?: string; osReference: string | null; status: string; subtotal: number; vatApplied: boolean; vatAmount: number; grandTotal: number; createdBy: string; createdAt: string; items: POItem[]; }
+interface AssignedProduct { productId: number; sku: string; name: string; supplierCost: number; }
 
 interface PurchaseOrdersModuleProps { selectedCompany: string; loginUsername: string; API_BASE_URL: string; onBack: () => void; }
 
 export default function PurchaseOrdersModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: PurchaseOrdersModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
-  // Set "generate" as the default tab
   const [activeTab, setActiveTab] = useState<'ledger' | 'generate'>('generate');
   
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -18,12 +18,10 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // Generate P.O. States
   const [nextPoNumber, setNextPoNumber] = useState('Loading...');
   const [poForm, setPoForm] = useState({ supplierId: '', osReference: '', isVatApplied: false });
   const [poItems, setPoItems] = useState<POItem[]>([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
 
-  // Modal States
   const [viewPo, setViewPo] = useState<PurchaseOrder | null>(null);
   const [receivePo, setReceivePo] = useState<PurchaseOrder | null>(null);
   const [receiveItems, setReceiveItems] = useState<any[]>([]);
@@ -33,7 +31,6 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     setTimeout(() => setToast(null), 3500);
   };
 
-  // --- DATA FETCHING ---
   const fetchPurchaseOrders = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -72,11 +69,42 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     if (activeTab === 'generate') {
       fetchSuppliers();
       fetchNextPoNumber();
-      setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]); // Reset
+      setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]); 
     }
   }, [activeTab, fetchPurchaseOrders, fetchSuppliers, fetchNextPoNumber]);
 
-  // --- GENERATE P.O. WORKFLOW ---
+  // --- AUTO POPULATE ITEMS ON SUPPLIER CHANGE ---
+  const handleSupplierChange = (supplierId: string) => {
+    setPoForm(prev => ({ ...prev, supplierId }));
+    
+    if (!supplierId) {
+      setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
+      return;
+    }
+
+    const savedLinks = localStorage.getItem(`supplier_products_${selectedCompany}`);
+    if (savedLinks) {
+      const parsedLinks: Record<string, AssignedProduct[]> = JSON.parse(savedLinks);
+      const supplierCatalog = parsedLinks[supplierId];
+      
+      if (supplierCatalog && supplierCatalog.length > 0) {
+        // Auto-populate the rows with the supplier's assigned products and pricing
+        const autoItems: POItem[] = supplierCatalog.map(p => ({
+          productId: p.productId,
+          sku: p.sku,
+          productName: p.name,
+          requestedQty: 1, // Default to 1
+          unitCost: Number(p.supplierCost) || 0
+        }));
+        setPoItems(autoItems);
+        showToast("Auto-filled assigned items for this vendor.", "success");
+      } else {
+        // Clear if they have no assigned products
+        setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
+      }
+    }
+  };
+
   const handleItemChange = (index: number, field: keyof POItem, value: any) => {
     const updated = [...poItems];
     updated[index] = { ...updated[index], [field]: value };
@@ -109,13 +137,13 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         osReference: poForm.osReference || null,
         isVatApplied: poForm.isVatApplied,
         vatRate: 0.12,
-        // Using safe 32-bit integers to prevent DB overflow
         items: poItems.map((i, index) => ({ 
           sku: i.sku || 'N/A', 
           productName: i.productName, 
           requestedQty: Number(i.requestedQty), 
           unitCost: Number(i.unitCost),
-          productId: 900000 + Math.floor(Math.random() * 90000) + index 
+          // Retain genuine product ID if auto-populated, otherwise generate a safe dummy ID
+          productId: i.productId || (900000 + Math.floor(Math.random() * 90000) + index)
         })) 
       };
 
@@ -138,7 +166,6 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     }
   };
 
-  // --- RECEIVE & MANAGE P.O. WORKFLOW ---
   const openReceiveModal = (po: PurchaseOrder) => {
     setReceivePo(po);
     setReceiveItems(po.items.map(i => ({ ...i, confirmedQty: i.confirmedQty !== undefined && i.confirmedQty !== null ? i.confirmedQty : i.requestedQty, shortageQty: i.shortageQty || 0 })));
@@ -280,7 +307,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                           <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{po.createdBy}</td>
                           <td className="py-3.5 px-6 text-right space-x-2">
                             {po.status !== 'Cancelled' && (
-                              <button onClick={() => openReceiveModal(po)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Receive</button>
+                              <button onClick={() => openReceiveModal(po)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Verify Delivery</button>
                             )}
                             <button onClick={() => setViewPo(po)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
                             {isAuthorizedAdmin && (
@@ -306,7 +333,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                 <div className="space-y-4 max-w-xl w-full">
                   <div>
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Select Supplier *</label>
-                    <select value={poForm.supplierId} onChange={e => setPoForm({...poForm, supplierId: e.target.value})} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-slate-800 bg-white">
+                    <select value={poForm.supplierId} onChange={e => handleSupplierChange(e.target.value)} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-sky-600 bg-white">
                       <option value="">-- Choose Vendor --</option>
                       {suppliers.map(sup => <option key={sup.id} value={sup.id}>{sup.legalName}</option>)}
                     </select>
@@ -319,7 +346,6 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                 
                 <div className="w-full sm:w-auto text-left sm:text-right">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">P.O. Number</label>
-                  {/* EDITABLE P.O. NUMBER FIELD */}
                   <input 
                     type="text" 
                     value={nextPoNumber} 
@@ -349,11 +375,11 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {poItems.map((item, idx) => (
-                      <tr key={idx}>
-                        <td className="p-2"><input type="text" value={item.sku} onChange={e => handleItemChange(idx, 'sku', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md font-mono text-xs outline-none focus:border-slate-400" placeholder="SKU-001"/></td>
-                        <td className="p-2"><input type="text" value={item.productName} onChange={e => handleItemChange(idx, 'productName', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-bold outline-none focus:border-slate-400" placeholder="Product Description"/></td>
-                        <td className="p-2"><input type="number" min="1" value={item.requestedQty} onChange={e => handleItemChange(idx, 'requestedQty', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-black text-center outline-none focus:border-slate-400"/></td>
-                        <td className="p-2"><input type="number" min="0" step="0.01" value={item.unitCost} onChange={e => handleItemChange(idx, 'unitCost', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-mono text-right outline-none focus:border-slate-400"/></td>
+                      <tr key={idx} className={item.productId ? 'bg-sky-50/20' : ''}>
+                        <td className="p-2"><input type="text" value={item.sku} onChange={e => handleItemChange(idx, 'sku', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md font-mono text-xs outline-none focus:border-slate-400 bg-white" placeholder="SKU-001"/></td>
+                        <td className="p-2"><input type="text" value={item.productName} onChange={e => handleItemChange(idx, 'productName', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-bold outline-none focus:border-slate-400 bg-white" placeholder="Product Description"/></td>
+                        <td className="p-2"><input type="number" min="1" value={item.requestedQty} onChange={e => handleItemChange(idx, 'requestedQty', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-black text-center outline-none focus:border-slate-400 bg-white"/></td>
+                        <td className="p-2"><input type="number" min="0" step="0.01" value={item.unitCost} onChange={e => handleItemChange(idx, 'unitCost', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-mono text-right outline-none focus:border-slate-400 bg-white"/></td>
                         <td className="p-2 text-right font-black font-mono text-slate-700 pr-4">₱{(item.requestedQty * item.unitCost).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                         <td className="p-2 text-center">
                           {poItems.length > 1 && (
@@ -364,9 +390,10 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                     ))}
                   </tbody>
                 </table>
-                <div className="p-3 bg-slate-50 border-t border-slate-200">
+                <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-2">Note: Assigned items load automatically</span>
                   <button onClick={addPoItem} className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-700 uppercase tracking-widest hover:bg-slate-100 transition-colors shadow-sm">
-                    + Add Row
+                    + Add Ad-hoc Row
                   </button>
                 </div>
               </div>
@@ -428,8 +455,8 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
               </table>
             </div>
             <div className="p-6 border-t border-slate-200 bg-slate-50 shrink-0 flex justify-between items-center">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Missing items automatically route to Shortages.</p>
-              <button onClick={handleReceiveSubmit} disabled={isLoading} className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">{isLoading ? "Processing..." : "Confirm Delivery"}</button>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">To process these items into active stock, go to Master Inventory {'>'} Receive.</p>
+              <button onClick={handleReceiveSubmit} disabled={isLoading} className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-black uppercase tracking-wider rounded-xl transition-colors shadow-lg">{isLoading ? "Processing..." : "Log Delivery"}</button>
             </div>
           </div>
         </div>

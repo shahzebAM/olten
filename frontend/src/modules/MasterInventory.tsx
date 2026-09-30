@@ -110,7 +110,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     let initialSource = '';
     let initialDest = '';
     
-    if (type === 'RECEIVE') { initialDest = 'MASTER'; }
+    // UPDATED: RECEIVE source is EXTERNAL, dest defaults to MASTER but can be changed to any warehouse
+    if (type === 'RECEIVE') { initialSource = 'EXTERNAL'; initialDest = 'MASTER'; }
     if (type === 'RETURN') { initialSource = 'MASTER'; }
     if (type === 'ISSUE') { initialDest = 'EXTERNAL'; }
 
@@ -1331,16 +1332,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     )}
                   </div>
 
-                  {/* DESTINATION SELECTION */}
+                  {/* DESTINATION SELECTION (UPDATED: RECEIVE CAN NOW SELECT WAREHOUSES) */}
                   <div className="flex flex-col gap-1.5">
                     <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RECEIVE' ? 'text-emerald-700' : txModal.type === 'RETURN' ? 'text-sky-700' : 'text-rose-700'}`}>To (Destination Location)</label>
-                    {txModal.type === 'RECEIVE' ? (
-                       <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">Master / Office Stock</div>
-                    ) : txModal.type === 'ISSUE' ? (
+                    {txModal.type === 'ISSUE' ? (
                        <div className="px-4 py-3 border border-slate-200 rounded-xl font-bold bg-white text-slate-800 shadow-sm">External (Client / Buyer)</div>
                     ) : (
                        <select required value={movForm.destId} onChange={e=>setMovForm({...movForm, destId: e.target.value})} className="px-4 py-3 border border-white/50 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-slate-400 cursor-pointer">
                          <option value="">Select Destination...</option>
+                         <option value="MASTER">Master / Office Stock</option>
                          {warehouses.map(w => <option key={w.id} value={w.id} disabled={movForm.sourceId === String(w.id)}>{w.name}</option>)}
                        </select>
                     )}

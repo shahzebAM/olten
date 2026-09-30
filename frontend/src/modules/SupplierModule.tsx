@@ -13,6 +13,9 @@ interface Supplier {
   apBalance: number;
 }
 
+interface Product { id: number; name: string; sku: string; purchasePrice: number; }
+interface AssignedProduct { productId: number; sku: string; name: string; supplierCost: number; }
+
 interface SupplierModuleProps {
   selectedCompany: string;
   loginUsername: string;
@@ -22,6 +25,13 @@ interface SupplierModuleProps {
 
 export default function SupplierModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: SupplierModuleProps) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  // Use localStorage as a lightweight linking table for supplier products
+  const [supplierProducts, setSupplierProducts] = useState<Record<string, AssignedProduct[]>>(() => {
+    const saved = localStorage.getItem(`supplier_products_${selectedCompany}`);
+    return saved ? JSON.parse(saved) : {};
+  });
+
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -31,29 +41,36 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     legalName: '', tradeName: '', tin: '', address: '', contactPerson: '', phone: '', email: '', paymentTerms: 'Cash on Delivery'
   });
 
+  const [activeProductsModal, setActiveProductsModal] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  const fetchSuppliers = useCallback(async () => {
+  const fetchAllData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSuppliers(data || []);
-      }
+      const [supRes, prodRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`)
+      ]);
+      if (supRes.ok) setSuppliers(await supRes.json());
+      if (prodRes.ok) setCatalogProducts(await prodRes.json());
     } catch (e) {
-      showToast("Error loading suppliers.", "error");
+      showToast("Error loading data.", "error");
     } finally {
       setIsLoading(false);
     }
   }, [selectedCompany, API_BASE_URL]);
 
-  useEffect(() => { 
-    fetchSuppliers(); 
-  }, [fetchSuppliers]);
+  useEffect(() => { fetchAllData(); }, [fetchAllData]);
+
+  // Persist supplier product linkages
+  useEffect(() => {
+    localStorage.setItem(`supplier_products_${selectedCompany}`, JSON.stringify(supplierProducts));
+  }, [supplierProducts, selectedCompany]);
 
   const openAddSupplier = () => {
     setSupplierForm({ legalName: '', tradeName: '', tin: '', address: '', contactPerson: '', phone: '', email: '', paymentTerms: 'Cash on Delivery' });
@@ -84,7 +101,7 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
       if (!res.ok) throw new Error();
       showToast(editingSupplierId ? "Supplier updated." : "Supplier registered.", "success");
       setIsSupplierModalOpen(false);
-      fetchSuppliers();
+      fetchAllData();
     } catch (err) {
       showToast("Failed to save supplier.", "error");
     } finally {
@@ -98,16 +115,46 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast("Supplier deleted.", "success");
-      fetchSuppliers();
+      
+      setSupplierProducts(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+
+      fetchAllData();
     } catch (err) {
       showToast("Failed to delete supplier. They may have active POs.", "error");
     }
   };
 
+  const toggleProductAssignment = (supplierId: string, product: Product) => {
+    setSupplierProducts(prev => {
+      const currentList = prev[supplierId] || [];
+      const exists = currentList.find(p => p.productId === product.id);
+      
+      if (exists) {
+        return { ...prev, [supplierId]: currentList.filter(p => p.productId !== product.id) };
+      } else {
+        return { ...prev, [supplierId]: [...currentList, { productId: product.id, sku: product.sku, name: product.name, supplierCost: product.purchasePrice }] };
+      }
+    });
+  };
+
+  const updateSupplierCost = (supplierId: string, productId: number, newCost: string) => {
+    setSupplierProducts(prev => {
+      const currentList = prev[supplierId] || [];
+      return {
+        ...prev,
+        [supplierId]: currentList.map(p => p.productId === productId ? { ...p, supplierCost: Number(newCost) } : p)
+      };
+    });
+  };
+
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[200] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+        <div className={`fixed bottom-6 right-6 z-[300] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
@@ -142,13 +189,14 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Contact Person</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">TIN</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center">Terms</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center">Assigned Items</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-right">A/P Balance</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {suppliers.length === 0 ? (
-                    <tr><td colSpan={6} className="py-20 text-center text-slate-400 font-medium">No suppliers registered in this workspace.</td></tr>
+                    <tr><td colSpan={7} className="py-20 text-center text-slate-400 font-medium">No suppliers registered in this workspace.</td></tr>
                   ) : (
                     suppliers.map(sup => (
                       <tr key={sup.id} className="hover:bg-slate-50 transition-colors">
@@ -166,6 +214,11 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                             {sup.paymentTerms}
                           </span>
                         </td>
+                        <td className="py-3 px-6 text-center">
+                          <button onClick={() => setActiveProductsModal(sup.id)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm">
+                            {supplierProducts[sup.id]?.length || 0} Products
+                          </button>
+                        </td>
                         <td className="py-3 px-6 text-right font-black text-slate-900 font-mono">
                           ₱{Number(sup.apBalance || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}
                         </td>
@@ -182,6 +235,86 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
           </div>
         </div>
       </main>
+
+      {/* ASSIGN PRODUCTS TO SUPPLIER MODAL */}
+      {activeProductsModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center items-center p-4 sm:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-full animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-50 shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-indigo-900 tracking-tight">Supplier Catalog Link</h3>
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mt-1">
+                  Assign products and set vendor-specific cost pricing
+                </p>
+              </div>
+              <button onClick={() => setActiveProductsModal(null)} className="p-2 text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-4 border-b border-slate-200 bg-white shrink-0">
+              <input 
+                type="text" 
+                placeholder="Search Master Catalog by Name or SKU..." 
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full px-5 py-3 border border-slate-300 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto p-0 bg-slate-50 relative">
+              <table className="w-full text-left text-sm whitespace-nowrap border-collapse">
+                <thead className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-6 w-12 text-center">Status</th>
+                    <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product / SKU</th>
+                    <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Default System Cost</th>
+                    <th className="py-3 px-6 font-black text-indigo-600 uppercase tracking-widest text-[10px] w-48 text-right bg-indigo-50">Custom Supplier Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {catalogProducts.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.sku.toLowerCase().includes(searchTerm.toLowerCase())).map(p => {
+                    const isLinked = (supplierProducts[activeProductsModal] || []).some(linked => linked.productId === p.id);
+                    const linkedProduct = (supplierProducts[activeProductsModal] || []).find(linked => linked.productId === p.id);
+                    
+                    return (
+                      <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${isLinked ? 'bg-indigo-50/20' : ''}`}>
+                        <td className="py-3 px-6 text-center">
+                          <input 
+                            type="checkbox" 
+                            checked={isLinked} 
+                            onChange={() => toggleProductAssignment(activeProductsModal, p)}
+                            className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-3 px-6">
+                          <div className={`font-black text-sm uppercase ${isLinked ? 'text-indigo-900' : 'text-slate-900'}`}>{p.name}</div>
+                          <div className="text-[10px] font-mono font-bold text-slate-400 mt-0.5">{p.sku}</div>
+                        </td>
+                        <td className="py-3 px-6 text-right font-mono text-slate-400">
+                          ₱{Number(p.purchasePrice).toLocaleString('en-PH', {minimumFractionDigits: 2})}
+                        </td>
+                        <td className="py-2 px-6 bg-indigo-50/30">
+                          <input 
+                            type="number" 
+                            min="0" step="0.01"
+                            disabled={!isLinked}
+                            value={linkedProduct ? linkedProduct.supplierCost : ''}
+                            onChange={e => updateSupplierCost(activeProductsModal, p.id, e.target.value)}
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-black font-mono text-right text-indigo-700 outline-none focus:border-indigo-500 disabled:opacity-30 disabled:bg-slate-100 shadow-inner"
+                            placeholder="₱0.00"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {catalogProducts.length === 0 && (
+                    <tr><td colSpan={4} className="py-12 text-center text-sm font-medium text-slate-400 uppercase">Master catalog is empty.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ADD/EDIT SUPPLIER MODAL */}
       {isSupplierModalOpen && (
