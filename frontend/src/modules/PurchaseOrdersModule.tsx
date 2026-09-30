@@ -10,7 +10,9 @@ interface PurchaseOrdersModuleProps { selectedCompany: string; loginUsername: st
 export default function PurchaseOrdersModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: PurchaseOrdersModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
-  const [activeTab, setActiveTab] = useState<'ledger' | 'generate'>('ledger');
+  // Set "generate" as the default tab
+  const [activeTab, setActiveTab] = useState<'ledger' | 'generate'>('generate');
+  
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,6 +94,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
   const handleGeneratePO = async () => {
     if (!poForm.supplierId) return showToast("Please select a supplier.", "error");
+    if (!nextPoNumber.trim()) return showToast("P.O. Number cannot be blank.", "error");
     if (poItems.length === 0 || poItems.some(i => !i.productName || i.requestedQty <= 0)) {
       return showToast("Ensure all items have a name and valid quantity.", "error");
     }
@@ -101,25 +104,28 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       const payload = {
         company: selectedCompany,
         user: loginUsername,
-        poNumber: nextPoNumber,
+        poNumber: nextPoNumber.trim(), // Use the editable value
         supplierId: poForm.supplierId,
         osReference: poForm.osReference || null,
         isVatApplied: poForm.isVatApplied,
         vatRate: 0.12,
-        items: poItems.map(i => ({ ...i, productId: Date.now() + Math.floor(Math.random() * 1000) })) // Mocking productId for standalone module
+        items: poItems.map(i => ({ ...i, productId: Date.now() + Math.floor(Math.random() * 1000) })) 
       };
 
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to generate P.O.");
+      }
       
       showToast("Purchase Order generated successfully!", "success");
       setPoForm({ supplierId: '', osReference: '', isVatApplied: false });
       setActiveTab('ledger');
-    } catch (e) {
-      showToast("Failed to generate P.O.", "error");
+    } catch (e: any) {
+      showToast(e.message || "Failed to generate P.O.", "error");
     } finally {
       setIsLoading(false);
     }
@@ -211,11 +217,12 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       </header>
 
       <div className="bg-white border-b border-slate-200 px-8 py-3 flex gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
-        <button onClick={() => setActiveTab('ledger')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'ledger' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
-          P.O. Ledger
-        </button>
+        {/* Buttons swapped and highlighted correctly */}
         <button onClick={() => setActiveTab('generate')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'generate' ? 'bg-sky-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
           Generate P.O.
+        </button>
+        <button onClick={() => setActiveTab('ledger')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'ledger' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+          P.O. Ledger
         </button>
       </div>
 
@@ -289,7 +296,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
           {activeTab === 'generate' && (
             <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
               
-              <div className="flex justify-between items-start border-b border-slate-200 pb-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start border-b border-slate-200 pb-6 gap-6">
                 <div className="space-y-4 max-w-xl w-full">
                   <div>
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Select Supplier *</label>
@@ -304,10 +311,17 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                   </div>
                 </div>
                 
-                <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Generated P.O. Number</p>
-                  <div className="text-3xl font-black font-mono text-sky-700">{nextPoNumber}</div>
-                  <label className="flex items-center justify-end gap-2 mt-4 cursor-pointer">
+                <div className="w-full sm:w-auto text-left sm:text-right">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">P.O. Number</label>
+                  {/* EDITABLE P.O. NUMBER FIELD */}
+                  <input 
+                    type="text" 
+                    value={nextPoNumber} 
+                    onChange={(e) => setNextPoNumber(e.target.value)}
+                    className="text-3xl font-black font-mono text-sky-700 w-full sm:w-64 outline-none border-b-2 border-transparent hover:border-slate-200 focus:border-sky-300 bg-transparent transition-colors text-left sm:text-right"
+                    placeholder="PO-000000"
+                  />
+                  <label className="flex items-center justify-start sm:justify-end gap-2 mt-4 cursor-pointer">
                     <input type="checkbox" checked={poForm.isVatApplied} onChange={e => setPoForm({...poForm, isVatApplied: e.target.checked})} className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900" />
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Apply 12% VAT</span>
                   </label>
