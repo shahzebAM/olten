@@ -64,9 +64,16 @@ export default function CompanyModule({
         .then(res => res.json())
         .then(data => {
           if (!Array.isArray(data)) return; // Prevents crash if DB returns irregular data
+          
+          // STRICT FILTER: Only keep users who are online
+          const onlineUsersOnly = data.filter((u: any) => 
+            u.isOnline === true || // If your backend tracks session state
+            (loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase()) // Always show myself
+          );
+
           const colors = ['bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700', 'bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700', 'bg-indigo-100 text-indigo-700'];
           
-          const formattedUsers = data.map((u: any, index: number) => {
+          const formattedUsers = onlineUsersOnly.map((u: any, index: number) => {
             const isMe = loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase();
             return {
               id: u.id || index,
