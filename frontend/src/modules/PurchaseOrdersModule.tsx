@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface Supplier { id: string; legalName: string; }
+interface Supplier { 
+  id: string; 
+  legalName: string; 
+  catalog?: any[]; 
+}
 interface POItem { id?: string; productId?: number; sku: string; productName: string; requestedQty: number; unitCost: number; lineTotal?: number; confirmedQty?: number; shortageQty?: number; }
 interface PurchaseOrder { id: string; poNumber: string; supplierId?: string; supplierName?: string; osReference: string | null; status: string; subtotal: number; vatApplied: boolean; vatAmount: number; grandTotal: number; createdBy: string; createdAt: string; items: POItem[]; }
 interface AssignedProduct { productId: number; sku: string; name: string; supplierCost: number; }
