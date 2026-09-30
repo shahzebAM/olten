@@ -45,6 +45,7 @@ model Admin {
   modules  Json?
   status   String  @default("Active")
   moduleOrder   String[] @default([])
+  isOnline Boolean @default(false)
 }
 
 model Settings {

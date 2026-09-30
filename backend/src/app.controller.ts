@@ -75,7 +75,8 @@ export class AppController {
       role: a.role || 'Admin', 
       modules: a.modules || { payroll: false, ai_docs: false, inventory: false, sales: false, purchasing: false }, 
       moduleOrder: a.moduleOrder || [], // <--- ADDED THIS LINE
-      status: 'Active'
+      status: 'Active',
+      isOnline: a.isOnline || false // <--- ADD THIS EXACT LINE
     }));
   }
 
@@ -197,5 +198,24 @@ export class AppController {
     });
     
     return { message: "Preferences updated successfully" };
+  }
+
+  // ==========================================
+  // ACTIVE SESSIONS TRIGGER
+  // ==========================================
+  @Patch(['admins/:id/status', 'api/admins/:id/status'])
+  async updateAdminStatus(
+    @Param('id', ParseIntPipe) id: number, 
+    @Body() body: { isOnline: boolean }
+  ) {
+    const targetAdmin = await prisma.admin.findUnique({ where: { id } });
+    if (!targetAdmin) throw new NotFoundException("Admin not found");
+
+    await prisma.admin.update({ 
+      where: { id }, 
+      data: { isOnline: body.isOnline } 
+    });
+    
+    return { message: "Online status updated" };
   }
 }
