@@ -42,12 +42,13 @@ export default function CompanyModule({
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  // --- DRAG AND DROP STATES & CONFIG ---
+  // --- WIDGET & DRAG AND DROP STATES ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
+  const [isOnlineWidgetOpen, setIsOnlineWidgetOpen] = useState(true); // Online Status Widget State
   
-  // Check if current user is allowed to rearrange modules
-  const isAdmin = currentUser?.role === 'Super Admin';
+  // Check if current user is allowed to rearrange modules and view admin tools
+  const isAdmin = currentUser?.role === 'Super Admin' || hasUsers;
 
   // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
   const sensors = useSensors(
@@ -61,10 +62,7 @@ export default function CompanyModule({
 
     const activeIds: string[] = [];
     if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
-    
-    // --> Added 'suppliers' module here alongside 'purchase_orders' <--
     if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
-    
     if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory');
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
@@ -79,21 +77,17 @@ export default function CompanyModule({
       ...activeIds.filter((id: string) => !savedOrder.includes(id))
     ];
     
-    // Smart update: Only change the visual grid if the other device actually changed the order
     setModuleOrder((prev) => {
-      if (JSON.stringify(prev) !== JSON.stringify(mergedOrder)) {
-        return mergedOrder;
-      }
+      if (JSON.stringify(prev) !== JSON.stringify(mergedOrder)) return mergedOrder;
       return prev;
     });
   }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
-    if (!isAdmin) return; // Instantly cancel drop if not an admin
+    if (!isAdmin) return;
     
     const { active, over } = event;
-    
     if (over && active.id !== over.id) {
       const oldIndex = moduleOrder.indexOf(active.id as string);
       const newIndex = moduleOrder.indexOf(over.id as string);
@@ -102,7 +96,6 @@ export default function CompanyModule({
       setModuleOrder(newOrder);
       localStorage.setItem(`module_order_${loginUsername}`, JSON.stringify(newOrder));
       
-      // Stop and warn if App.tsx forgot to pass the URL prop
       if (!API_BASE_URL) {
         showToast("Error: API_BASE_URL prop is missing from App.tsx!", "error");
         return; 
@@ -110,16 +103,10 @@ export default function CompanyModule({
 
       try {
         const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ moduleOrder: newOrder })
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ moduleOrder: newOrder })
         });
-        
-        if (res.ok) {
-          showToast("Layout synced across devices.", "success");
-        } else {
-          showToast(`Database sync failed: ${res.status}`, "error");
-        }
+        if (res.ok) showToast("Layout synced across devices.", "success");
+        else showToast(`Database sync failed: ${res.status}`, "error");
       } catch (err) {
         console.warn("Failed to save layout to DB", err);
         showToast("Network error. Saved locally.", "error");
@@ -136,10 +123,7 @@ export default function CompanyModule({
     e.preventDefault();
     const trimmed = newCompany.trim();
     if (trimmed) {
-      if (companiesList.includes(trimmed)) {
-        showToast("A workspace with this name already exists.", "error");
-        return;
-      }
+      if (companiesList.includes(trimmed)) return showToast("A workspace with this name already exists.", "error");
       onAddCompany(trimmed);
       showToast(`Workspace "${trimmed}" created successfully.`, "success");
       setNewCompany('');
@@ -150,7 +134,6 @@ export default function CompanyModule({
   const handleRemoveClick = (e: React.MouseEvent, company: string) => {
     e.stopPropagation();
     const confirmName = window.prompt(`CRITICAL WARNING: This will remove the "${company}" workspace from the system.\n\nPlease type "${company}" to confirm:`);
-    
     if (confirmName === company) {
       onRemoveCompany(company);
       showToast(`Workspace "${company}" deleted securely.`, "success");
@@ -167,7 +150,59 @@ export default function CompanyModule({
     return { title: 'text-slate-900', sub: 'Workspace Environment', iconBg: 'bg-slate-100', icon: 'text-slate-600', borderHover: 'hover:border-slate-400' };
   };
 
-  // --- RENDER DYNAMIC MODULE CARDS (FULLY UPDATED LAYOUT) ---
+  // --- ONLINE STATUS WIDGET (SUPER ADMIN ONLY) ---
+  const renderOnlineWidget = () => {
+    if (!isAdmin) return null; // Restrict visibility to Super Admins only
+
+    // Simulated Active Sessions (Replace with real-time backend data later)
+    const activeUsersList = [
+      { id: 1, name: loginUsername || 'Admin', company: selectedCompany || 'Gateway Entry', initials: loginUsername?.substring(0, 2).toUpperCase() || 'AD', color: 'bg-sky-100 text-sky-700' },
+      { id: 2, name: 'Shahzeb', company: 'Surgicom', initials: 'SH', color: 'bg-emerald-100 text-emerald-700' },
+      { id: 3, name: 'Agent01', company: 'Olten', initials: 'AG', color: 'bg-purple-100 text-purple-700' }
+    ];
+
+    return (
+      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[150] w-[calc(100vw-2rem)] sm:w-72 shadow-2xl rounded-2xl overflow-hidden animate-in slide-in-from-bottom-8 fade-in duration-500 flex flex-col border border-slate-200/60 transition-all">
+        {/* Widget Header (Toggle) */}
+        <div onClick={() => setIsOnlineWidgetOpen(!isOnlineWidgetOpen)} className="bg-slate-900/95 backdrop-blur px-4 py-3 flex items-center justify-between cursor-pointer border-b border-white/10 hover:bg-slate-800 transition-colors">
+          <div className="flex items-center gap-2.5">
+            <div className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+            </div>
+            <span className="text-[11px] font-black text-white uppercase tracking-widest">Active Sessions</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md">{activeUsersList.length} Online</span>
+            <svg className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOnlineWidgetOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+          </div>
+        </div>
+        
+        {/* Widget Body (Collapsible) */}
+        {isOnlineWidgetOpen && (
+          <div className="flex flex-col max-h-56 overflow-y-auto bg-white/95 backdrop-blur divide-y divide-slate-100">
+             {activeUsersList.map(u => (
+               <div key={u.id} className="px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black uppercase shadow-sm ${u.color}`}>
+                      {u.initials}
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-black text-slate-800 leading-none">{u.name}</span>
+                      <span className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-wider truncate max-w-[140px]">{u.company}</span>
+                    </div>
+                  </div>
+                  {/* Static Green Indicator per user */}
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></div>
+               </div>
+             ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // --- RENDER DYNAMIC MODULE CARDS ---
   const renderModuleCard = (id: string) => {
     const rightArrow = (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -188,9 +223,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage vendors and compliance profiles.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-fuchsia-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-fuchsia-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'customers':
@@ -205,9 +238,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage clients and view profiles.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-emerald-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-emerald-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'create_os':
@@ -222,9 +253,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Draft and process new customer orders.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-teal-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-teal-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'sales_orders':
@@ -239,9 +268,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">View, print, and manage order slips.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-violet-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-violet-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'purchase_orders':
@@ -256,9 +283,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage POs, verify deliveries & track.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-sky-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-sky-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'inventory':
@@ -273,9 +298,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Catalog, stock ledger, and facilities.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-blue-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-blue-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'payroll':
@@ -290,9 +313,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage salaries, bonuses, and deductions.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-indigo-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-indigo-500 transition-colors">{rightArrow}</div>
           </button>
         );
       case 'ai_docs':
@@ -307,9 +328,7 @@ export default function CompanyModule({
                 <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Generate letters, SOPs, & docs.</p>
               </div>
             </div>
-            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-rose-500 transition-colors">
-              {rightArrow}
-            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-rose-500 transition-colors">{rightArrow}</div>
           </button>
         );
       default:
@@ -317,15 +336,16 @@ export default function CompanyModule({
     }
   };
 
-  // --- WORKSPACE LIST VIEW ---
+  // --- WORKSPACE LIST VIEW (GATEWAY OFF) ---
   if (!isGateway) {
     const available = companiesList.filter((c: string) => allowedCompanies[c]);
 
     return (
-      <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
+      <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200 relative pb-24">
         
+        {/* TOAST MOVED TO TOP RIGHT */}
         {toast && (
-          <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 fade-in border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+          <div className={`fixed top-6 right-6 z-[200] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-top-8 fade-in border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
             {toast.message}
           </div>
         )}
@@ -412,17 +432,20 @@ export default function CompanyModule({
             })}
           </div>
         </div>
+
+        {/* INJECT ONLINE WIDGET HERE */}
+        {renderOnlineWidget()}
       </div>
     );
   }
 
   // --- GATEWAY VIEW (WITH DRAG & DROP) ---
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200 relative pb-24">
       
-      {/* GATEWAY TOAST ALERTS */}
+      {/* TOAST MOVED TO TOP RIGHT */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-right-8 fade-in border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+        <div className={`fixed top-6 right-6 z-[200] px-5 py-3.5 rounded-xl shadow-xl font-semibold flex items-center gap-3 animate-in slide-in-from-top-8 fade-in border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
@@ -447,7 +470,6 @@ export default function CompanyModule({
       >
         <SortableContext items={moduleOrder} strategy={rectSortingStrategy}>
           
-          {/* UPDATED DRAGGABLE GRID */}
           <div className="w-full max-w-[1440px] mx-auto px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             
             {moduleOrder.map(moduleId => (
@@ -459,6 +481,9 @@ export default function CompanyModule({
           </div>
         </SortableContext>
       </DndContext>
+
+      {/* INJECT ONLINE WIDGET HERE */}
+      {renderOnlineWidget()}
     </div>
   );
 }
