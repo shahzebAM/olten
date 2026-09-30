@@ -42,11 +42,11 @@ export default function CompanyModule({
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-// --- DRAG AND DROP STATES & CONFIG ---
+  // --- DRAG AND DROP STATES & CONFIG ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
   
- // Check if current user is allowed to rearrange modules
+  // Check if current user is allowed to rearrange modules
   const isAdmin = currentUser?.role === 'Super Admin';
 
   // The delay makes it so a quick click triggers the button, but holding for 250ms starts the drag.
@@ -55,7 +55,7 @@ export default function CompanyModule({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
   );
 
-useEffect(() => {
+  useEffect(() => {
     // Skip sync if not in gateway OR if the user is currently holding a card
     if (!isGateway || isDraggingGrid) return; 
 
@@ -85,7 +85,7 @@ useEffect(() => {
     });
   }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
 
-const handleDragEnd = async (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
     if (!isAdmin) return; // Instantly cancel drop if not an admin
     
@@ -164,115 +164,130 @@ const handleDragEnd = async (event: DragEndEvent) => {
     return { title: 'text-slate-900', sub: 'Workspace Environment', iconBg: 'bg-slate-100', icon: 'text-slate-600', borderHover: 'hover:border-slate-400' };
   };
 
-  // --- RENDER DYNAMIC MODULE CARDS ---
- // --- RENDER DYNAMIC MODULE CARDS ---
+  // --- RENDER DYNAMIC MODULE CARDS (FULLY UPDATED LAYOUT) ---
   const renderModuleCard = (id: string) => {
     const rightArrow = (
-      <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+      </svg>
     );
 
     switch (id) {
       case 'customers':
         return (
-          <button onClick={() => onSelectModule('customers')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-emerald-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-emerald-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+          <button onClick={() => onSelectModule('customers')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-emerald-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-emerald-800">Customer Directory</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage clients and view profiles.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-emerald-800">Customer Directory</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Manage clients and view profiles.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-emerald-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'create_os':
         return (
-          <button onClick={() => onSelectModule('create_os')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-teal-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-teal-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          <button onClick={() => onSelectModule('create_os')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-teal-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-teal-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-teal-800">Create Order Slip</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Draft and process new customer orders.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-teal-800">Create Order Slip</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Draft and process new customer orders.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-teal-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-teal-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'sales_orders':
         return (
-          <button onClick={() => onSelectModule('sales_orders')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-violet-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-violet-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          <button onClick={() => onSelectModule('sales_orders')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-violet-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-violet-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-violet-800">O.S. Ledger</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">View, print, and manage order slips.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-violet-800">O.S. Ledger</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">View, print, and manage order slips.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-violet-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-violet-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'purchase_orders':
         return (
-          <button onClick={() => onSelectModule('purchase_orders')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-sky-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-sky-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+          <button onClick={() => onSelectModule('purchase_orders')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-sky-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-sky-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-sky-800">Procurement (P.O.)</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage POs, verify deliveries & track.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-sky-800">Procurement (P.O.)</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Manage POs, verify deliveries & track.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-sky-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-sky-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'inventory':
         return (
-          <button onClick={() => onSelectModule('inventory')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-blue-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-blue-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+          <button onClick={() => onSelectModule('inventory')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-blue-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-blue-800">Master Inventory</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Catalog, stock ledger, and facilities.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-blue-800">Master Inventory</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Catalog, stock ledger, and facilities.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-blue-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'payroll':
         return (
-          <button onClick={() => onSelectModule('payroll')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-indigo-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-indigo-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          <button onClick={() => onSelectModule('payroll')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-indigo-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-indigo-800">Payroll Engine</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage salaries, bonuses, and deductions.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-indigo-800">Payroll Engine</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Manage salaries, bonuses, and deductions.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-indigo-500 transition-colors">
               {rightArrow}
             </div>
           </button>
         );
       case 'ai_docs':
         return (
-          <button onClick={() => onSelectModule('ai_docs')} className="group w-full bg-white p-4 rounded-[14px] border border-slate-200 hover:border-rose-300 shadow-sm hover:shadow transition-all text-left flex items-center gap-4 h-full min-h-[88px]">
-            <div className="w-[42px] h-[42px] shrink-0 bg-rose-50 rounded-[10px] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <svg className="w-[20px] h-[20px] text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          <button onClick={() => onSelectModule('ai_docs')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-rose-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-rose-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-rose-800">AI Docs Engine</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Generate letters, SOPs, & docs.</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-[14px] font-bold text-slate-900 truncate transition-colors group-hover:text-rose-800">AI Docs Engine</h2>
-              <p className="text-[12.5px] text-slate-500 mt-0.5 leading-tight truncate">Generate letters, SOPs, & docs.</p>
-            </div>
-            <div className="text-slate-300 group-hover:text-rose-500 group-hover:translate-x-1 transition-all shrink-0 pr-1">
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-rose-500 transition-colors">
               {rightArrow}
             </div>
           </button>
@@ -381,7 +396,7 @@ const handleDragEnd = async (event: DragEndEvent) => {
     );
   }
 
-// --- GATEWAY VIEW (WITH DRAG & DROP) ---
+  // --- GATEWAY VIEW (WITH DRAG & DROP) ---
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200">
       
@@ -392,7 +407,8 @@ const handleDragEnd = async (event: DragEndEvent) => {
         </div>
       )}
 
-      <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 sm:mb-12">
+      {/* GATEWAY HEADER */}
+      <div className="w-full max-w-[1440px] mx-auto px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-10">
         <div className="w-full sm:w-auto">
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{selectedCompany} Workspace</h1>
           <p className="text-slate-500 text-sm mt-1">Logged in as <span className="font-bold text-slate-700">{loginUsername}</span> ({currentUser?.role || 'Admin'})</p>
@@ -403,17 +419,18 @@ const handleDragEnd = async (event: DragEndEvent) => {
         </div>
       </div>
 
-     <DndContext 
+      <DndContext 
         sensors={sensors} 
         collisionDetection={closestCenter} 
         onDragStart={() => setIsDraggingGrid(true)} 
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={moduleOrder} strategy={rectSortingStrategy}>
-          {/* Expanded max-w to 7xl and added xl:grid-cols-4 for the new layout */}
-          <div className="w-full max-w-7xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+          
+          {/* UPDATED DRAGGABLE GRID */}
+          <div className="w-full max-w-[1440px] mx-auto px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             
-           {moduleOrder.map(moduleId => (
+            {moduleOrder.map(moduleId => (
               <SortableModuleCard key={moduleId} id={moduleId} disabled={!isAdmin}>
                 {renderModuleCard(moduleId)}
               </SortableModuleCard>
