@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 @Controller('procurement/purchase-orders')
 export class PurchaseOrdersController {
   private readonly prisma = new PrismaClient();
-
+  
   // --- FETCH NEXT P.O. NUMBER ---
   @Get('next-po-number')
   async getNextPoNumber(@Query('company') company: string) {
