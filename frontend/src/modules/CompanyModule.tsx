@@ -61,7 +61,10 @@ export default function CompanyModule({
 
     const activeIds: string[] = [];
     if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
-    if (hasPurchasing) activeIds.push('purchase_orders');
+    
+    // --> Added 'suppliers' module here alongside 'purchase_orders' <--
+    if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
+    
     if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory');
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
@@ -173,6 +176,23 @@ export default function CompanyModule({
     );
 
     switch (id) {
+      case 'suppliers':
+        return (
+          <button onClick={() => onSelectModule('suppliers')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-fuchsia-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-fuchsia-50 group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6 text-fuchsia-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-fuchsia-800">Supplier Directory</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage vendors and compliance profiles.</p>
+              </div>
+            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-fuchsia-500 transition-colors">
+              {rightArrow}
+            </div>
+          </button>
+        );
       case 'customers':
         return (
           <button onClick={() => onSelectModule('customers')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
