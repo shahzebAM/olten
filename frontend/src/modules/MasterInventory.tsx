@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 
 // --- INTERFACES ---
 interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number; sellingPrice: number; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
-interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; employee?: { firstName: string; lastName: string; }; }
+interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; }
 interface Warehouse { id: string; name: string; address: string; status: string; }
 interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
 
@@ -13,14 +13,14 @@ let currentValidImages: Record<string, string> = {};
 let deletedImageVault: Record<string, string> = {}; 
 
 export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
-  
   const isAuthorizedAdmin = loginUsername?.toLowerCase() === 'admin' || loginUsername?.toLowerCase() === 'ali' || loginUsername?.toLowerCase() === 'super admin';
 
-  const [activeView, setActiveView] = useState<'products' | 'movements' | 'warehouses'>('products');
+  const [activeView, setActiveView] = useState<'products' | 'movements' | 'warehouses' | 'receiving'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [hubStock, setHubStock] = useState<WarehouseStock[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]); // New state for POs
   
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -35,7 +35,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   // --- MODAL CONTROLLERS ---
   const [activeWarehouseModal, setActiveWarehouseModal] = useState<'REGISTER' | 'ADJUST' | 'TRANSFER' | null>(null);
-
   const [ledgerFilterType, setLedgerFilterType] = useState('ALL');
   const [ledgerStartDate, setLedgerStartDate] = useState('');
   const [ledgerEndDate, setLedgerEndDate] = useState('');
@@ -43,11 +42,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
   const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
 
+  // --- RECEIVING MODAL STATES ---
+  const [placementPo, setPlacementPo] = useState<any>(null);
+  const [placementDestinations, setPlacementDestinations] = useState<Record<string, string>>({});
+
   const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
-  // --- UNIFIED TX MODAL STATE ---
   const [movForm, setMovForm] = useState({ sourceId: '', destId: '' });
   const [movQtys, setMovQtys] = useState<Record<number, string>>({});
   
@@ -58,7 +60,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
 
-  // --- HUB TRANSFER STATE ---
   const [hubTransferForm, setHubTransferForm] = useState({ sourceId: '', destId: '', productId: '', quantity: '' });
   const [hubTransferSearch, setHubTransferSearch] = useState('');
   const [isHubDropdownOpen, setIsHubDropdownOpen] = useState(false);
@@ -82,20 +83,24 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const fetchAllData = async () => {
     try {
-      const [prodRes, movRes, whRes, stkRes] = await Promise.all([
+      const [prodRes, movRes, whRes, stkRes, poRes] = await Promise.all([
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/inventory-movements?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouse-stock?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/warehouse-stock?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${selectedCompany}`)
       ]);
       if (prodRes.ok) { const p = await prodRes.json(); updateImageVault(p); setProducts(p); }
       if (movRes.ok) setMovements(await movRes.json());
       if (whRes.ok) setWarehouses(await whRes.json());
       if (stkRes.ok) setHubStock(await stkRes.json());
+      if (poRes.ok) setPurchaseOrders(await poRes.json());
     } catch (e) { console.error("API Error", e); }
   };
 
   useEffect(() => { fetchAllData(); }, [selectedCompany]);
+
+  const pendingReceivables = purchaseOrders.filter(po => po.status === 'Received' || po.status === 'Partially Received');
 
   const toggleSelection = (id: number) => setSelectedProductIds((prev: number[]) => prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]);
   const toggleSelectAll = (filtered: Product[]) => {
@@ -110,7 +115,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     let initialSource = '';
     let initialDest = '';
     
-    // UPDATED: RECEIVE source is EXTERNAL, dest defaults to MASTER but can be changed to any warehouse
     if (type === 'RECEIVE') { initialSource = 'EXTERNAL'; initialDest = 'MASTER'; }
     if (type === 'RETURN') { initialSource = 'MASTER'; }
     if (type === 'ISSUE') { initialDest = 'EXTERNAL'; }
@@ -143,26 +147,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const maxDim = 1200; 
 
         if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
+          if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; } 
+          else { width = Math.round((width * maxDim) / height); height = maxDim; }
         }
-
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-          setProductForm((prev: any) => ({
-            ...prev,
-            previousImageUrl: prev.imageUrl || prev.previousImageUrl || '',
-            imageUrl: compressedBase64
-          }));
+          setProductForm((prev: any) => ({ ...prev, previousImageUrl: prev.imageUrl || prev.previousImageUrl || '', imageUrl: compressedBase64 }));
         }
       };
       img.src = event.target?.result as string;
@@ -175,18 +168,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setIsProcessing(true);
     
     const cleanPayload: any = {
-      name: productForm.name,
-      sku: productForm.sku,
-      category: productForm.category || 'General',
-      purchasePrice: parseFloat(productForm.purchasePrice) || 0,
-      sellingPrice: parseFloat(productForm.sellingPrice) || 0,
-      minQuantity: parseInt(productForm.minQuantity) || 10,
-      reorderLevel: parseInt(productForm.reorderLevel) || 20,
-      unit: productForm.unit || 'pcs',
-      vatSetting: productForm.vatSetting || 'NONE',
-      imageUrl: productForm.imageUrl || null,
-      barcode: productForm.barcode || productForm.sku.toUpperCase(),
-      company: selectedCompany,
+      name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
+      purchasePrice: parseFloat(productForm.purchasePrice) || 0, sellingPrice: parseFloat(productForm.sellingPrice) || 0,
+      minQuantity: parseInt(productForm.minQuantity) || 10, reorderLevel: parseInt(productForm.reorderLevel) || 20,
+      unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
+      barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
     };
 
     if (!productModal.editingId) {
@@ -198,15 +184,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     setProducts((prev: Product[]) => {
-      if (productModal.editingId) {
-        return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload } as Product : p);
-      }
+      if (productModal.editingId) return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload } as Product : p);
       return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0 } as Product, ...prev];
     });
 
-    if (cleanPayload.sku && cleanPayload.imageUrl) {
-      globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
-    }
+    if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
 
     setProductModal({ isOpen: false, editingId: null });
     setProductForm(initialProductForm);
@@ -215,47 +197,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     Promise.resolve().then(async () => {
       try {
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
-        const res = await fetch(url, { 
-          method: productModal.editingId ? 'PATCH' : 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify(cleanPayload) 
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => null);
-          throw new Error(err?.message || `Server rejected request (${res.status})`);
-        }
+        const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
+        if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
         fetchAllData(); 
       } catch (error: any) { 
-        console.error("Save error:", error);
-        showToast(`Sync Error: ${error.message}`, "error"); 
-        fetchAllData(); 
+        showToast(`Sync Error: ${error.message}`, "error"); fetchAllData(); 
       }
     }).finally(() => setIsProcessing(false));
-  };
-
-  const handleBulkDelete = () => {
-    if (!window.confirm(`Permanently delete ${selectedProductIds.length} items?`)) return;
-    setProducts((prev: Product[]) => prev.filter(p => !selectedProductIds.includes(p.id)));
-    
-    Promise.all(selectedProductIds.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })))
-      .then(() => {
-        showToast("Products deleted silently.", "success");
-        setSelectedProductIds([]);
-        fetchAllData();
-      })
-      .catch(() => showToast("Sync Error.", "error"));
-  };
-
-  const handleProductDelete = (id: number) => {
-    if (!window.confirm("Permanently delete this product?")) return;
-    setProducts((prev: Product[]) => prev.filter(p => p.id !== id));
-    setSelectedProductIds((prev: number[]) => prev.filter(pid => pid !== id));
-    showToast("Product deleted silently.", "success");
-    
-    fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' }).then(() => {
-      fetchAllData();
-    }).catch(() => { showToast("Sync Error.", "error"); fetchAllData(); });
   };
 
   const processDirectWarehouseAdjustment = async (warehouseId: string, prod: Product, deltaQty: number, remarks: string) => {
@@ -264,9 +212,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     const absQty = Math.abs(deltaQty);
 
     const currentHubStock = hubStock.find(h => String(h.warehouseId) === String(warehouseId) && Number(h.productId) === Number(prod.id))?.quantity || 0;
-    if (!isAdd && currentHubStock < absQty) {
-      setIsProcessing(false); return showToast("Insufficient stock in this specific warehouse.", "error");
-    }
+    if (!isAdd && currentHubStock < absQty) { setIsProcessing(false); return showToast("Insufficient stock in this specific warehouse.", "error"); }
 
     setHubStock((prev: WarehouseStock[]) => {
       const next = [...prev];
@@ -283,11 +229,70 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       ]);
       showToast("Warehouse stock successfully adjusted.", "success");
       fetchAllData();
-    } catch (e) {
-      showToast("Failed to adjust warehouse stock.", "error");
+    } catch (e) { showToast("Failed to adjust warehouse stock.", "error"); fetchAllData(); } finally { setIsProcessing(false); }
+  };
+
+  // --- NEW: HANDLE PHYSICAL PLACEMENT OF P.O. ITEMS ---
+  const handlePlacePoItems = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!placementPo) return;
+    setIsProcessing(true);
+
+    const apiPromises: Promise<any>[] = []; 
+    let nextProducts = [...products];
+    let nextHubStock = [...hubStock];
+
+    try {
+      for (const item of placementPo.items) {
+        if (!item.confirmedQty || item.confirmedQty <= 0) continue; // Skip unreceived items
+
+        const prod = products.find(p => p.sku === item.sku || String(p.id) === String(item.productId));
+        if (!prod) continue; // Skip items not registered in Master Catalog
+
+        const destId = placementDestinations[item.id] || 'MASTER';
+        const q = item.confirmedQty;
+        
+        let currentMasterStock = Number(prod.currentStock) || 0;
+        const pIdx = nextProducts.findIndex(p => p.id === prod.id);
+
+        if (destId === 'MASTER') {
+          const prevMaster = currentMasterStock;
+          currentMasterStock += q;
+          if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
+          
+          apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevMaster, newStock: currentMasterStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
+        } else {
+          const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(destId) && Number(h.productId) === Number(prod.id));
+          const prevHubStock = dIdx > -1 ? nextHubStock[dIdx].quantity : 0;
+          const newHubStock = prevHubStock + q;
+
+          if(dIdx > -1) nextHubStock[dIdx].quantity = newHubStock;
+          else nextHubStock.push({ id: 'temp', warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: q });
+
+          apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: q }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevHubStock, newStock: newHubStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: destId }) }));
+        }
+      }
+
+      // Mark PO as physically stocked
+      apiPromises.push(fetch(`${API_BASE_URL}/procurement/purchase-orders/${placementPo.id}/status`, { 
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Stocked', user: loginUsername }) 
+      }));
+
+      setProducts(nextProducts);
+      setHubStock(nextHubStock);
+      setPlacementPo(null);
+      setPlacementDestinations({});
+      showToast(`P.O. successfully routed to inventory.`, "success");
+
+      await Promise.all(apiPromises);
       fetchAllData();
-    } finally {
-      setIsProcessing(false);
+
+    } catch (e: any) { 
+      showToast("Error placing stock.", "error"); 
+    } finally { 
+      setIsProcessing(false); 
     }
   };
 
@@ -307,12 +312,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const handleHubTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hubTransferForm.sourceId || !hubTransferForm.destId || !hubTransferForm.productId || !hubTransferForm.quantity || hubTransferForm.quantity === '0') {
-        return showToast("Please fill all fields with a valid quantity.", "error");
-    }
-    if (hubTransferForm.sourceId === hubTransferForm.destId) {
-        return showToast("Source and Destination cannot be the same.", "error");
-    }
+    if (!hubTransferForm.sourceId || !hubTransferForm.destId || !hubTransferForm.productId || !hubTransferForm.quantity || hubTransferForm.quantity === '0') return showToast("Please fill all fields with a valid quantity.", "error");
+    if (hubTransferForm.sourceId === hubTransferForm.destId) return showToast("Source and Destination cannot be the same.", "error");
     
     const prod = products.find(p => String(p.id) === String(hubTransferForm.productId));
     if (!prod) return showToast("Product not found.", "error");
@@ -324,7 +325,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     if (currentSourceStock < qty) return showToast("Insufficient stock in Source Warehouse.", "error");
 
     setIsProcessing(true);
-
     setHubStock(prev => {
        const next = [...prev];
        const sIdx = next.findIndex(h => String(h.warehouseId) === hubTransferForm.sourceId && Number(h.productId) === Number(prod.id));
@@ -333,7 +333,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
        const dIdx = next.findIndex(h => String(h.warehouseId) === hubTransferForm.destId && Number(h.productId) === Number(prod.id));
        if (dIdx > -1) next[dIdx].quantity += qty;
        else next.push({ id: 'temp', warehouseId: hubTransferForm.destId, productId: prod.id, sku: prod.sku, quantity: qty });
-       
        return next;
     });
 
@@ -348,21 +347,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
        setHubTransferSearch('');
        setActiveWarehouseModal(null);
        fetchAllData();
-    } catch (e) {
-       showToast("Transfer failed.", "error");
-       fetchAllData();
-    } finally {
-       setIsProcessing(false);
-    }
+    } catch (e) { showToast("Transfer failed.", "error"); fetchAllData(); } finally { setIsProcessing(false); }
   };
 
   const handleEditWarehouseStock = async (warehouseId: string, product: Product, currentQty: number) => {
     const input = window.prompt(`Adjust stock for [${product.sku}] ${product.name}\nCurrent quantity: ${currentQty}\n\nEnter the NEW TOTAL quantity for this facility:`, String(currentQty));
     if (input === null || input.trim() === '') return;
-    
     const newQty = Number(input);
     if (isNaN(newQty) || newQty < 0) return showToast("Enter a valid positive number or 0.", "error");
-    
     const delta = newQty - currentQty;
     if (delta === 0) return;
     await processDirectWarehouseAdjustment(warehouseId, product, delta, 'Inline Stock Revision');
@@ -379,11 +371,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     try {
       const url = editingWarehouseId ? `${API_BASE_URL}/warehouses/${editingWarehouseId}` : `${API_BASE_URL}/warehouses`;
       const method = editingWarehouseId ? 'PATCH' : 'POST';
-
-      const response = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...warehouseForm, company: selectedCompany })
-      });
+      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...warehouseForm, company: selectedCompany }) });
       if (response.ok) {
         showToast(`Warehouse ${editingWarehouseId ? 'updated' : 'registered'}.`, "success");
         setWarehouseForm({ name: '', address: '', status: 'Active' });
@@ -391,8 +379,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setActiveWarehouseModal(null);
         fetchAllData();
       }
-    } catch (e) { showToast("Failed to process warehouse.", "error"); }
-    finally { setIsProcessing(false); }
+    } catch (e) { showToast("Failed to process warehouse.", "error"); } finally { setIsProcessing(false); }
   };
 
   const handleWarehouseDelete = async (id: string) => {
@@ -402,22 +389,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       await fetch(`${API_BASE_URL}/warehouses/${id}`, { method: 'DELETE' });
       showToast("Warehouse and internal stocks deleted.", "success");
       fetchAllData();
-    } catch (e) { showToast("Failed to delete warehouse.", "error"); }
-    finally { setIsProcessing(false); }
-  };
-
-  const handleClearAllHubStocks = async () => {
-    if (!window.confirm("CRITICAL WARNING: This will permanently wipe ALL stock quantities across ALL warehouses. Your Master/Office Stock will NOT be touched. Proceed?")) return;
-    setIsProcessing(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/warehouse-stock/clear/${selectedCompany}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error("Backend not updated yet. Redeploy your live backend.");
-      showToast("All hub stocks wiped successfully.", "success");
-      fetchAllData();
-    } catch (e: any) { 
-      showToast(e.message || "Failed to clear hub stocks.", "error"); 
-      fetchAllData();
-    } finally { setIsProcessing(false); }
+    } catch (e) { showToast("Failed to delete warehouse.", "error"); } finally { setIsProcessing(false); }
   };
 
   const executeTransaction = async (e: React.FormEvent) => {
@@ -459,7 +431,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
         const prevMasterForLog = currentMasterStock;
 
-        // 1. DEDUCT FROM SOURCE
         if (source === 'MASTER') {
           if (currentMasterStock < q) throw new Error(`Not enough Master Stock for ${prod.sku}.`);
           currentMasterStock -= q;
@@ -471,7 +442,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
         }
 
-        // 2. ADD TO DESTINATION
         if (dest === 'MASTER') {
           currentMasterStock += q;
         } else if (dest !== 'EXTERNAL') {
@@ -481,11 +451,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
         }
 
-        // 3. LOG MOVEMENT
         const logWarehouseId = (dest !== 'MASTER' && dest !== 'EXTERNAL') ? dest : ((source !== 'MASTER' && source !== 'EXTERNAL') ? source : null);
         apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
 
-        // 4. MASTER STOCK PATCH
         if (currentMasterStock !== (Number(prod.currentStock) || 0)) {
           if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
           apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
@@ -502,139 +470,23 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         showToast("Warning: Background sync delay. Verifying data.", "error");
         fetchAllData(); 
       });
-
-    } catch (e: any) { showToast(e.message || "Validation failed.", "error"); } 
-    finally { setIsProcessing(false); }
-  };
-
-  const handleBulkPrintReceipt = (type: string, receiptProducts: Product[], qtys: Record<number, string>, form: any, destId: string) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return showToast("Pop-ups blocked. Allow them to print receipts.", "error");
-
-    const destName = (destId === 'MASTER' || !destId) ? 'Master Office Stock' : (destId === 'EXTERNAL' ? 'External / Client' : warehouses.find(w => String(w.id) === String(destId))?.name);
-
-    const rowsHtml = receiptProducts.map(p => {
-       const q = Number(qtys[p.id]) || 0;
-       if (q <= 0 && type !== 'DELETE') return '';
-       return `
-        <tr>
-          <td>${p.name}</td>
-          <td>${p.sku}</td>
-          <td style="text-align: right; font-size: 16px; font-weight: 900;">${type === 'DELETE' ? p.currentStock : q}</td>
-        </tr>
-       `;
-    }).join('');
-
-    const html = `
-      <html>
-        <head>
-          <title>Document: BATCH-${Date.now().toString().substring(7)}</title>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap" rel="stylesheet">
-          <style>
-            body { font-family: 'Inter', sans-serif; padding: 50px; color: #0f172a; max-width: 900px; margin: 0 auto; }
-            .header { display: flex; justify-content: space-between; border-bottom: 4px solid #0f172a; padding-bottom: 24px; margin-bottom: 32px; align-items: flex-end; }
-            .company-name { font-size: 36px; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; margin: 0; }
-            .doc-type { font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 3px; margin-top: 4px; }
-            .receipt-title { font-size: 28px; font-weight: 900; margin: 0; text-align: right; text-transform: uppercase; letter-spacing: 1px; 
-                             color: ${type === 'RECEIVE' ? '#059669' : type === 'RETURN' ? '#0284c7' : type === 'ISSUE' || type === 'DELETE' ? '#e11d48' : type === 'ADJUST' ? '#4f46e5' : '#d97706'}; }
-            .tx-details { font-size: 13px; color: #64748b; text-align: right; font-weight: 600; margin-top: 6px; }
-            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 40px; background: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; }
-            .info-block span { display: block; font-size: 11px; text-transform: uppercase; font-weight: 900; color: #94a3b8; margin-bottom: 6px; letter-spacing: 1px; }
-            .info-block strong { font-size: 16px; font-weight: 600; color: #0f172a; }
-            .table { width: 100%; border-collapse: collapse; margin-bottom: 50px; }
-            .table th { text-align: left; padding: 14px 16px; border-bottom: 3px solid #cbd5e1; font-size: 12px; font-weight: 900; text-transform: uppercase; color: #475569; letter-spacing: 1px; }
-            .table td { padding: 16px; border-bottom: 1px solid #e2e8f0; font-size: 15px; font-weight: 600; color: #0f172a; }
-            .signature-area { margin-top: 80px; display: flex; justify-content: space-between; }
-            .sig-line { width: 250px; border-top: 2px solid #cbd5e1; padding-top: 10px; font-size: 13px; font-weight: 600; text-align: center; color: #64748b; text-transform: uppercase; letter-spacing: 1px;}
-            .footer-tag { margin-top: 60px; text-align: center; font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;}
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1 class="company-name">${selectedCompany}</h1>
-              <p class="doc-type">Official Stock Ledger Document</p>
-            </div>
-            <div>
-              <h2 class="receipt-title">${receiptProducts.length > 1 ? 'BULK ' : ''}${type}</h2>
-              <p class="tx-details">TX-${Date.now().toString().substring(5)} | ${new Date().toLocaleString()}</p>
-            </div>
-          </div>
-          <div class="info-grid">
-            <div class="info-block"><span>Facility / Location</span><strong>${destName}</strong></div>
-            <div class="info-block"><span>Processed By</span><strong>${loginUsername}</strong></div>
-            <div class="info-block"><span>Reference Code</span><strong>${form.reference || 'N/A'}</strong></div>
-            <div class="info-block"><span>Batch & Expiration</span><strong>${form.batchNumber ? `Batch: ${form.batchNumber}` : 'N/A'} ${form.expirationDate ? ` | Exp: ${form.expirationDate.split('T')[0]}` : ''}</strong></div>
-          </div>
-          <table class="table">
-            <thead><tr><th>Item Description</th><th>SKU</th><th style="text-align: right;">Quantity</th></tr></thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-          <div style="font-size: 14px; color: #475569; line-height: 1.6; background: #f8fafc; padding: 16px; border-left: 4px solid #cbd5e1;">
-            <strong>Remarks:</strong> ${form.remarks || 'No additional remarks provided for this transaction.'}
-          </div>
-          <div class="signature-area">
-            <div class="sig-line">Prepared By</div>
-            <div class="sig-line">Received / Verified By</div>
-          </div>
-          <div class="footer-tag">System Generated Digital Ledger Receipt</div>
-          <script>window.onload = function() { setTimeout(() => { window.print(); window.close(); }, 500); }</script>
-        </body>
-      </html>
-    `;
-    printWindow.document.write(html);
-    printWindow.document.close();
-  };
-
-  const handlePrintReceipt = (m: Movement) => {
-    const related = movements.filter(mov => 
-      mov.type === m.type && 
-      mov.user === m.user &&
-      Math.abs(new Date(mov.date).getTime() - new Date(m.date).getTime()) < 5000
-    );
-
-    const receiptProds = related.map(r => ({ id: r.productId, name: r.productName, sku: r.sku, currentStock: r.newStock } as any));
-    const qtys = Object.fromEntries(related.map(r => [r.productId, String(r.quantity)]));
-    const form = { reference: m.reference, remarks: m.remarks, batchNumber: m.batchNumber, expirationDate: m.expirationDate };
-
-    handleBulkPrintReceipt(m.type, receiptProds, qtys, form, m.warehouseId || 'MASTER');
-  };
-
-  const handleClearHistory = async () => {
-    if (!window.confirm("CRITICAL WARNING: Permanently wipe the audit trail? Physical balances remain unchanged.")) return;
-    setIsProcessing(true);
-    try {
-      await fetch(`${API_BASE_URL}/inventory-movements/clear/${selectedCompany}`, { method: 'DELETE' });
-      showToast("Movement history cleared.", "success");
-      fetchAllData();
-    } catch (e) { showToast("Failed to clear history.", "error"); }
-    finally { setIsProcessing(false); }
+    } catch (e: any) { showToast(e.message || "Validation failed.", "error"); } finally { setIsProcessing(false); }
   };
 
   const handleExportExcel = () => {
     try {
       const exportData = products.map(p => ({
-        "SKU": p.sku,
-        "Product Name": p.name,
-        "Category": p.category,
-        "Cost Price (₱)": p.purchasePrice,
-        "Selling Price (₱)": p.sellingPrice,
-        "Master Stock": p.currentStock,
-        "Unit": p.unit,
-        "Reorder Level": p.reorderLevel,
-        "Barcode": p.barcode || 'N/A',
-        "Status": p.isActive ? "Active" : "Inactive"
+        "SKU": p.sku, "Product Name": p.name, "Category": p.category,
+        "Cost Price (₱)": p.purchasePrice, "Selling Price (₱)": p.sellingPrice,
+        "Master Stock": p.currentStock, "Unit": p.unit, "Reorder Level": p.reorderLevel,
+        "Barcode": p.barcode || 'N/A', "Status": p.isActive ? "Active" : "Inactive"
       }));
-
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Master Catalog");
       XLSX.writeFile(wb, `${selectedCompany}_Master_${new Date().toISOString().split('T')[0]}.xlsx`);
       showToast("Excel exported successfully.", "success");
-    } catch (error) {
-      console.error("Export Error:", error);
-      showToast("Failed to export Excel file.", "error");
-    }
+    } catch (error) { showToast("Failed to export Excel file.", "error"); }
   };
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -649,18 +501,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     return keep;
   });
 
-  // --- WAREHOUSE DIRECTORY SEARCH FILTER LOGIC ---
   const displayedWarehouses = warehouses.filter(w => {
     if (!warehouseSearchQuery) return true;
     const q = warehouseSearchQuery.toLowerCase();
     if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
-    
     const wStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
-    const hasMatchingStock = wStocks.some(stk => {
+    return wStocks.some(stk => {
        const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
        return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
     });
-    return hasMatchingStock;
   });
 
   return (
@@ -672,14 +521,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
-      {/* LIGHTBOX */}
       {previewImage && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[200] flex items-center justify-center p-8" onClick={() => setPreviewImage(null)}>
           <img src={previewImage} alt="Preview" className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
 
-      {/* SIDEBAR */}
+      {/* SIDEBAR NAVIGATION[cite: 8] */}
       <aside className={`fixed inset-y-0 left-0 z-50 bg-[#0F172A] text-slate-300 w-64 transition-transform duration-300 md:relative md:translate-x-0 flex flex-col shadow-xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-[#0B1120]">
           <h1 className="text-xl font-black text-white uppercase tracking-wider truncate">{selectedCompany}</h1>
@@ -689,23 +537,27 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {[
             { id: 'products', label: 'Master Catalog' },
             { id: 'movements', label: 'Stock Ledger' },
-            { id: 'warehouses', label: 'Warehouses' }
+            { id: 'warehouses', label: 'Warehouses' },
+            { id: 'receiving', label: 'Receiving', badge: pendingReceivables.length } // NEW MENU ITEM
           ].map(view => (
-            <button key={view.id} onClick={() => { setActiveView(view.id as any); setIsMobileMenuOpen(false); }} className={`w-full text-left px-4 py-3 text-sm font-bold uppercase tracking-wider transition-all rounded-xl ${activeView === view.id ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+            <button key={view.id} onClick={() => { setActiveView(view.id as any); setIsMobileMenuOpen(false); }} className={`w-full text-left px-4 py-3 text-sm font-bold uppercase tracking-wider transition-all rounded-xl flex justify-between items-center ${activeView === view.id ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
               {view.label}
+              {view.badge !== undefined && view.badge > 0 && (
+                <span className="animate-pulse bg-rose-500 text-white px-2 py-0.5 rounded-full text-[10px] font-black">{view.badge}</span>
+              )}
             </button>
           ))}
         </div>
       </aside>
 
-      {/* MAIN CONTENT */}
+      {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
           <div className="flex items-center gap-4">
             <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden font-black text-slate-900 px-3 py-1 bg-slate-100 rounded-lg">MENU</button>
             <div>
               <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">
-                {activeView === 'products' ? 'Product Catalog' : activeView === 'movements' ? 'Historical Ledger' : 'Warehouses'}
+                {activeView === 'products' ? 'Product Catalog' : activeView === 'movements' ? 'Historical Ledger' : activeView === 'warehouses' ? 'Warehouses' : 'Physical Receiving'}
               </h2>
             </div>
           </div>
@@ -722,27 +574,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             <div className="space-y-6 max-w-7xl mx-auto">
               <div className="flex flex-col sm:flex-row justify-between gap-4">
                 <div className="flex flex-1 flex-col sm:flex-row gap-3">
-                  <input 
-                    type="text" 
-                    placeholder="SEARCH SKU OR NAME..." 
-                    value={searchQuery} 
-                    onChange={(e) => setSearchQuery(e.target.value)} 
-                    className="w-full sm:w-80 px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" 
-                  />
-                  
-                  {/* WAREHOUSE SELECTOR DROPDOWN */}
-                  <select
-                    value={selectedHubFilter}
-                    onChange={(e) => setSelectedHubFilter(e.target.value)}
-                    className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-auto"
-                  >
+                  <input type="text" placeholder="SEARCH SKU OR NAME..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full sm:w-80 px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" />
+                  <select value={selectedHubFilter} onChange={(e) => setSelectedHubFilter(e.target.value)} className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-auto">
                     <option value="ALL">All Hubs (Combined)</option>
-                    {warehouses.map(w => (
-                      <option key={w.id} value={String(w.id)}>{w.name}</option>
-                    ))}
+                    {warehouses.map(w => <option key={w.id} value={String(w.id)}>{w.name}</option>)}
                   </select>
                 </div>
-
                 <div className="flex flex-wrap gap-3">
                   {isAuthorizedAdmin && (
                     <button onClick={handleExportExcel} className="px-5 py-3 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
@@ -759,9 +596,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600">Return to Hub</button>
                     <button onClick={() => openBulkTx('ISSUE')} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-rose-600">Issue</button>
                     <button onClick={() => openBulkTx('ADJUST')} className="px-4 py-2 bg-indigo-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-indigo-600">Adjust Master</button>
-                    {isAuthorizedAdmin && (
-                      <button onClick={handleBulkDelete} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 ml-4">Delete</button>
-                    )}
                   </div>
                 </div>
               )}
@@ -778,9 +612,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Pricing</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Master Stock</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">
-                        {selectedHubFilter === 'ALL'
-                          ? 'Hub Stock (All)'
-                          : `Hub: ${warehouses.find(w => String(w.id) === selectedHubFilter)?.name || 'Selected'}`}
+                        {selectedHubFilter === 'ALL' ? 'Hub Stock (All)' : `Hub: ${warehouses.find(w => String(w.id) === selectedHubFilter)?.name || 'Selected'}`}
                       </th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500 text-right">Settings</th>
                     </tr>
@@ -804,9 +636,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             </div>
                           </div>
                         </td>
-                        <td className="py-4 px-5">
-                           <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-black uppercase rounded-md border border-slate-200">{p.category}</span>
-                        </td>
+                        <td className="py-4 px-5"><span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-black uppercase rounded-md border border-slate-200">{p.category}</span></td>
                         <td className="py-4 px-5">
                           <div className="text-sm font-black text-slate-900">₱{p.sellingPrice}</div>
                           <div className="text-xs font-medium text-slate-500">Cost: ₱{p.purchasePrice}</div>
@@ -819,18 +649,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             const filteredHubList = hubStock.filter(h => {
                               const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
                               if (!isMatch) return false;
-                              if (selectedHubFilter === 'ALL') {
-                                return warehouses.some(w => String(w.id) === String(h.warehouseId));
-                              }
+                              if (selectedHubFilter === 'ALL') return warehouses.some(w => String(w.id) === String(h.warehouseId));
                               return String(h.warehouseId) === String(selectedHubFilter);
                             });
                             const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
-
-                            return (
-                              <div className="text-lg font-black text-slate-700">
-                                {displayQty} <span className="text-xs text-slate-400">{p.unit}</span>
-                              </div>
-                            );
+                            return <div className="text-lg font-black text-slate-700">{displayQty} <span className="text-xs text-slate-400">{p.unit}</span></div>;
                           })()}
                         </td>
                         <td className="py-4 px-5 text-right">
@@ -840,9 +663,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue to External Client">Iss</button>
                             <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Physical Master Stock">Adj</button>
                             <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
-                            {isAuthorizedAdmin && (
-                              <button onClick={() => handleProductDelete(p.id)} className="px-2.5 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-50 transition-colors">Del</button>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -853,11 +673,74 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
           )}
 
+          {/* VIEW: RECEIVING (NEW P.O. PLACEMENT QUEUE) */}
+          {activeView === 'receiving' && (
+            <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300">
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
+                <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                  <div>
+                    <h3 className="font-bold text-slate-800 uppercase tracking-widest text-sm">Delivery Placement Queue</h3>
+                    <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Assign delivered P.O. items to physical facilities</p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-auto w-full">
+                  <table className="w-full text-left text-sm whitespace-nowrap min-w-[800px] border-collapse">
+                    <thead className="bg-white shadow-sm sticky top-0 z-20">
+                      <tr>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Ref / P.O. Number</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Supplier Origin</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items to Place</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Delivery Status</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {pendingReceivables.length === 0 ? (
+                        <tr><td colSpan={5} className="py-20 text-center text-slate-400 font-medium">No verified deliveries pending placement.</td></tr>
+                      ) : (
+                        pendingReceivables.map(po => {
+                          const itemsToPlace = po.items?.filter((i: any) => i.confirmedQty && i.confirmedQty > 0) || [];
+                          return (
+                            <tr key={po.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-4 px-6">
+                                <div className="font-mono text-sm font-black text-sky-700">{po.poNumber}</div>
+                                <div className="text-[10px] font-bold text-slate-400 mt-0.5">Ref: {po.osReference || 'N/A'}</div>
+                              </td>
+                              <td className="py-4 px-6 font-bold text-slate-700 uppercase">{po.supplierName || 'Unknown Vendor'}</td>
+                              <td className="py-4 px-6 text-center font-black text-slate-700">
+                                {itemsToPlace.length} Lines
+                              </td>
+                              <td className="py-4 px-6 text-center">
+                                <span className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-md ${po.status === 'Partially Received' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'}`}>
+                                  {po.status}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right">
+                                <button onClick={() => { 
+                                    setPlacementPo(po); 
+                                    const initDest: Record<string, string> = {};
+                                    itemsToPlace.forEach((i: any) => initDest[i.id] = 'MASTER');
+                                    setPlacementDestinations(initDest);
+                                  }} 
+                                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm"
+                                >
+                                  Place Stock
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* VIEW: MOVEMENTS (LEDGER) */}
           {activeView === 'movements' && (
             <div className="max-w-7xl mx-auto space-y-4">
-              
-              {/* FILTER BAR */}
               <div className="flex flex-wrap gap-4 items-center bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
                 <div className="flex flex-col gap-1 w-full sm:w-auto">
                   <label className="text-[10px] font-bold uppercase text-slate-500">Transaction Type</label>
@@ -880,9 +763,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
                 <div className="flex gap-2 w-full sm:w-auto sm:ml-auto mt-4 sm:mt-0 items-end">
                   <button onClick={() => { setLedgerFilterType('ALL'); setLedgerStartDate(''); setLedgerEndDate(''); }} className="px-5 py-2.5 border border-slate-200 rounded-xl font-bold uppercase text-xs hover:bg-slate-50 transition-colors h-[42px]">Clear Filters</button>
-                  {isAuthorizedAdmin && (
-                    <button onClick={handleClearHistory} disabled={isProcessing || movements.length === 0} className="px-5 py-2.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold uppercase text-xs hover:bg-rose-100 transition-colors h-[42px] disabled:opacity-50">Wipe History</button>
-                  )}
                 </div>
               </div>
 
@@ -894,12 +774,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Item</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Type / Qty</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Audit Info</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredMovements.map(m => (
-                      <tr key={m.id} className="hover:bg-slate-50 transition-colors group">
+                      <tr key={m.id} className="hover:bg-slate-50 transition-colors">
                         <td className="py-4 px-5 text-xs font-medium text-slate-500">{new Date(m.date).toLocaleString()}</td>
                         <td className="py-4 px-5">
                           <div className="font-black text-slate-900 text-sm uppercase">{m.productName}</div>
@@ -910,20 +789,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <span className="ml-3 font-black text-slate-900">{m.quantity}</span>
                         </td>
                         <td className="py-4 px-5">
-                          <div className="text-xs font-bold text-slate-900">{m.warehouse?.name || (m.type === 'TRANSFER' || m.type === 'RETURN' ? 'Transfer / Return Log' : 'Master Adjustment')}</div>
+                          <div className="text-xs font-bold text-slate-900">{m.warehouse?.name || (m.type === 'TRANSFER' || m.type === 'RETURN' ? 'Transfer / Return Log' : 'Master Placement')}</div>
                           <div className="text-[10px] font-medium text-slate-500 mt-1">Ref: {m.reference || 'N/A'} | User: {m.user} | Bal: {m.previousStock} → {m.newStock}</div>
-                          {(m.batchNumber || m.expirationDate) && (
-                            <div className="text-[10px] font-bold text-blue-600 mt-1 uppercase">Batch: {m.batchNumber || '-'} | Exp: {m.expirationDate?.split('T')[0] || '-'}</div>
-                          )}
-                        </td>
-                        <td className="py-4 px-5 text-right">
-                           <button onClick={() => handlePrintReceipt(m)} className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 text-[10px] font-bold uppercase hover:bg-slate-50 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 shadow-sm">PDF Receipt</button>
+                          {m.remarks && <div className="text-[10px] font-bold text-sky-700 mt-1 uppercase bg-sky-50 inline-block px-1.5 py-0.5 rounded">{m.remarks}</div>}
                         </td>
                       </tr>
                     ))}
-                    {filteredMovements.length === 0 && (
-                      <tr><td colSpan={5} className="py-12 text-center text-sm font-medium text-slate-400 uppercase">No movements match current filters.</td></tr>
-                    )}
+                    {filteredMovements.length === 0 && <tr><td colSpan={4} className="py-12 text-center text-sm font-medium text-slate-400 uppercase">No movements match current filters.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -933,37 +805,20 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {/* VIEW: WAREHOUSES */}
           {activeView === 'warehouses' && (
             <div className="max-w-7xl mx-auto space-y-8">
-              
-              {/* SEARCH & WIPE HEADER */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-4">
                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouse Control Center</h2>
                  <div className="flex items-center gap-3 w-full sm:w-auto">
                    <div className="relative w-full sm:w-80">
                      <svg className="w-5 h-5 absolute left-3 top-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                     <input 
-                        type="text" 
-                        placeholder="SEARCH HUBS OR ITEMS..." 
-                        value={warehouseSearchQuery} 
-                        onChange={(e) => setWarehouseSearchQuery(e.target.value)} 
-                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" 
-                     />
+                     <input type="text" placeholder="SEARCH HUBS OR ITEMS..." value={warehouseSearchQuery} onChange={(e) => setWarehouseSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
                    </div>
-                   {isAuthorizedAdmin && (
-                     <button onClick={handleClearAllHubStocks} disabled={isProcessing} className="px-5 py-2.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold uppercase text-xs hover:bg-rose-100 transition-colors disabled:opacity-50 whitespace-nowrap shadow-sm">Wipe All Hubs</button>
-                   )}
                  </div>
               </div>
-
-              {/* MINI TABS / ACTION BUTTONS */}
               <div className="flex flex-wrap gap-3">
-                {isAuthorizedAdmin && (
-                  <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-slate-800 transition-colors">+ Register Warehouse</button>
-                )}
+                {isAuthorizedAdmin && ( <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-slate-800 transition-colors">+ Register Warehouse</button> )}
                 <button onClick={() => setActiveWarehouseModal('ADJUST')} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-indigo-700 transition-colors">Adjust Hub Stock</button>
                 <button onClick={() => setActiveWarehouseModal('TRANSFER')} className="px-5 py-2.5 bg-amber-500 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-amber-600 transition-colors">Transfer Between Hubs</button>
               </div>
-
-              {/* WAREHOUSE DIRECTORY TABLE (MOVED TO TOP) */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[800px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
@@ -971,13 +826,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Warehouse / Code</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Location</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Stored Assets</th>
-                      {isAuthorizedAdmin && <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500 text-right">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {displayedWarehouses.map(w => {
                       const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
-                      
                       const filteredWhStocks = whStocks.filter(stk => {
                         if (!warehouseSearchQuery) return true;
                         const q = warehouseSearchQuery.toLowerCase();
@@ -985,214 +838,91 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
                         return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
                       });
-
                       return (
-                        <tr key={w.id} className="hover:bg-slate-50 transition-colors items-start group">
+                        <tr key={w.id} className="hover:bg-slate-50 transition-colors items-start">
                           <td className="py-5 px-5 align-top"><div className="font-black text-slate-900 uppercase text-sm">{w.name}</div><div className="text-[10px] font-bold text-slate-400 mt-1">WH-{w.id.toString().padStart(3, '0')}</div></td>
                           <td className="py-5 px-5 text-xs font-medium text-slate-500 align-top max-w-[250px] leading-relaxed">{w.address}</td>
                           <td className="py-5 px-5 align-top">
                             <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-2">
-                              {whStocks.length === 0 ? (
-                                <span className="text-xs text-slate-400 font-medium italic">Facility is currently empty</span>
-                              ) : filteredWhStocks.length === 0 && warehouseSearchQuery ? (
-                                <span className="text-xs text-slate-400 font-medium italic">No matching items found</span>
-                              ) : (
+                              {whStocks.length === 0 ? ( <span className="text-xs text-slate-400 font-medium italic">Facility is empty</span> ) : filteredWhStocks.length === 0 && warehouseSearchQuery ? ( <span className="text-xs text-slate-400 font-medium italic">No matching items</span> ) : (
                                 filteredWhStocks.map(stk => {
                                   const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
                                   return (
                                     <div key={stk.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:border-blue-300 transition-colors">
                                       <div className="text-[10px] font-bold uppercase text-slate-700 truncate mr-3">{p?.name || stk.sku}</div>
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        <div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{stk.quantity} {p?.unit}</div>
-                                        {isAuthorizedAdmin && p && (
-                                          <div className="flex gap-1">
-                                            <button onClick={() => handleEditWarehouseStock(w.id, p, stk.quantity)} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Adjust"><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg></button>
-                                            <button onClick={() => handleDeleteWarehouseStock(w.id, p, stk.quantity)} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Remove"><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-                                          </div>
-                                        )}
-                                      </div>
+                                      <div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{stk.quantity} {p?.unit}</div>
                                     </div>
                                   )
                                 })
                               )}
                             </div>
                           </td>
-                          {isAuthorizedAdmin && (
-                            <td className="py-5 px-5 text-right align-top">
-                              <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => { setEditingWarehouseId(w.id); setWarehouseForm({ name: w.name, address: w.address, status: w.status }); setActiveWarehouseModal('REGISTER'); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors">Edit</button>
-                                <button onClick={() => handleWarehouseDelete(w.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors">Delete</button>
-                              </div>
-                            </td>
-                          )}
                         </tr>
                       );
                     })}
-                    {displayedWarehouses.length === 0 && (
-                      <tr><td colSpan={4} className="py-12 text-center text-sm font-medium text-slate-400 uppercase">No facilities or assets match your search.</td></tr>
-                    )}
                   </tbody>
                 </table>
               </div>
-
-              {/* WAREHOUSE MODALS */}
-              
-              {/* 1. REGISTER WAREHOUSE MODAL */}
-              {activeWarehouseModal === 'REGISTER' && isAuthorizedAdmin && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                      <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse' : 'Register Warehouse'}</h2>
-                      <button onClick={() => { setActiveWarehouseModal(null); setEditingWarehouseId(null); }} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                    <form onSubmit={handleWarehouseSubmit} className="p-8 flex flex-col gap-5">
-                      <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="e.g. Main Depot" /></div>
-                      <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label><input required type="text" value={warehouseForm.address} onChange={e=>setWarehouseForm({...warehouseForm, address: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="Complete address..." /></div>
-                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update' : 'Save'}</button>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* 2. ADJUST HUB STOCK MODAL */}
-              {activeWarehouseModal === 'ADJUST' && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-500 text-white">
-                      <h2 className="text-xl font-black uppercase tracking-tight">Adjust Hub Stock</h2>
-                      <button onClick={() => setActiveWarehouseModal(null)} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                    <form onSubmit={handleDirectStockSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
-                        <select required value={directStockForm.warehouseId} onChange={e=>setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-indigo-500 cursor-pointer">
-                          <option value="">Select Warehouse...</option>
-                          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col gap-1.5 relative">
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
-                        <input 
-                          type="text" 
-                          placeholder="Type name or SKU..." 
-                          value={productSearchTerm} 
-                          onChange={e => { setProductSearchTerm(e.target.value); setIsProductDropdownOpen(true); }}
-                          onFocus={() => setIsProductDropdownOpen(true)}
-                          className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-white shadow-sm focus:ring-2 focus:ring-indigo-500" 
-                        />
-                        {isProductDropdownOpen && (
-                          <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
-                            {filteredProductsForDropdown.length === 0 ? (
-                              <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
-                            ) : (
-                              filteredProductsForDropdown.map(p => (
-                                <div 
-                                  key={p.id} 
-                                  onClick={() => { setDirectStockForm({...directStockForm, productId: String(p.id)}); setProductSearchTerm(`${p.name} (${p.sku})`); setIsProductDropdownOpen(false); }}
-                                  className="p-3 hover:bg-slate-50 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors"
-                                >
-                                  <span className="text-slate-700">{p.name}</span>
-                                  <span className="text-slate-400 font-mono bg-slate-100 px-2 py-1 rounded">[{p.sku}]</span>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-1.5 mt-2">
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Adjust Qty (-/+)</label>
-                        <input required type="number" placeholder="e.g. 50 or -10" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-indigo-200 rounded-xl text-sm font-black outline-none bg-indigo-50 focus:ring-2 focus:ring-indigo-500 text-indigo-900 shadow-sm" />
-                      </div>
-
-                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. TRANSFER BETWEEN HUBS MODAL */}
-              {activeWarehouseModal === 'TRANSFER' && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-                    <div className="p-6 border-b border-white/10 flex justify-between items-center bg-amber-500 text-white">
-                      <h2 className="text-xl font-black uppercase tracking-tight">Transfer Between Hubs</h2>
-                      <button onClick={() => setActiveWarehouseModal(null)} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                    <form onSubmit={handleHubTransferSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">From (Source)</label>
-                          <select required value={hubTransferForm.sourceId} onChange={e=>setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500 cursor-pointer">
-                            <option value="">Source...</option>
-                            {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">To (Dest)</label>
-                          <select required value={hubTransferForm.destId} onChange={e=>setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-3 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500 cursor-pointer">
-                            <option value="">Dest...</option>
-                            {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-1.5 relative">
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
-                        <input 
-                          type="text" 
-                          placeholder="Type name or SKU..." 
-                          value={hubTransferSearch} 
-                          onChange={e => { setHubTransferSearch(e.target.value); setIsHubDropdownOpen(true); }}
-                          onFocus={() => setIsHubDropdownOpen(true)}
-                          className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none bg-white shadow-sm focus:ring-2 focus:ring-amber-500" 
-                        />
-                        {isHubDropdownOpen && (
-                          <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
-                            {filteredProductsForHubDropdown.length === 0 ? (
-                              <div className="p-4 text-xs text-slate-400 font-bold uppercase text-center">No matching products found</div>
-                            ) : (
-                              filteredProductsForHubDropdown.map(p => {
-                                 const curStk = hubStock.find(h => String(h.warehouseId) === hubTransferForm.sourceId && (String(h.sku) === String(p.sku) || Number(h.productId) === Number(p.id)))?.quantity || 0;
-                                 return (
-                                  <div 
-                                    key={p.id} 
-                                    onClick={() => { setHubTransferForm({...hubTransferForm, productId: String(p.id)}); setHubTransferSearch(`${p.name} (${p.sku})`); setIsHubDropdownOpen(false); }}
-                                    className={`p-3 cursor-pointer border-b last:border-b-0 border-slate-100 text-xs font-bold uppercase flex justify-between items-center transition-colors ${curStk > 0 ? 'hover:bg-amber-50 text-slate-700' : 'bg-slate-50 text-slate-400 opacity-50'}`}
-                                  >
-                                    <span>{p.name}</span>
-                                    <span className="font-mono bg-slate-100 px-2 py-1 rounded">Stock: {curStk}</span>
-                                  </div>
-                                )
-                              })
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Transfer Qty</label>
-                        <input required type="number" min="1" placeholder="e.g. 50" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-amber-200 rounded-xl text-sm font-black outline-none bg-amber-50 focus:ring-2 focus:ring-amber-500 text-amber-900 shadow-sm" />
-                      </div>
-
-                      <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
-                    </form>
-                  </div>
-                </div>
-              )}
-
             </div>
           )}
 
         </main>
       </div>
+
+      {/* NEW P.O. PLACEMENT MODAL */}
+      {placementPo && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-sky-100 flex justify-between items-center bg-sky-500 text-white shrink-0">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight">Route Delivery: {placementPo.poNumber}</h3>
+                <p className="text-[10px] font-bold text-sky-100 uppercase tracking-widest mt-1">Assign arriving stock to specific facilities</p>
+              </div>
+              <button onClick={() => setPlacementPo(null)} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handlePlacePoItems} className="flex-1 overflow-y-auto bg-slate-50 flex flex-col p-6 gap-4">
+              <div className="bg-sky-50 border border-sky-200 text-sky-800 p-4 rounded-xl text-xs font-bold mb-2">
+                Note: Any items marked as 'Shortage' during receiving have been excluded. Items completely missing from the Master Catalog will be skipped.
+              </div>
+              {placementPo.items.filter((i: any) => i.confirmedQty && i.confirmedQty > 0).map((item: any) => {
+                const prodExists = products.some(p => p.sku === item.sku || String(p.id) === String(item.productId));
+                return (
+                  <div key={item.id} className={`bg-white p-5 rounded-2xl border shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${!prodExists ? 'border-rose-200 bg-rose-50/30 opacity-70' : 'border-slate-200'}`}>
+                    <div>
+                      <div className="text-sm font-black uppercase text-slate-900">{item.productName}</div>
+                      <div className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-widest">{item.sku}</div>
+                      {!prodExists && <div className="text-[10px] font-bold text-rose-500 mt-1 uppercase tracking-widest">NOT IN CATALOG - WILL BE SKIPPED</div>}
+                    </div>
+                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                      <div className="text-center bg-slate-100 px-4 py-2 rounded-xl shrink-0 border border-slate-200">
+                        <span className="block text-[9px] font-black text-slate-500 uppercase tracking-widest">Verified Qty</span>
+                        <span className="text-lg font-black text-slate-900">{item.confirmedQty}</span>
+                      </div>
+                      <div className="flex-1 sm:w-56">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Destination Facility</label>
+                        <select 
+                          disabled={!prodExists}
+                          value={placementDestinations[item.id] || 'MASTER'} 
+                          onChange={(e) => setPlacementDestinations({...placementDestinations, [item.id]: e.target.value})} 
+                          className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-sky-500 cursor-pointer disabled:bg-slate-100"
+                        >
+                          <option value="MASTER">Master Office / Main</option>
+                          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              <button type="submit" disabled={isProcessing} className="mt-4 py-4 bg-sky-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-sky-700 transition-colors shadow-md disabled:opacity-50">
+                {isProcessing ? 'Processing Routing...' : 'Confirm Stock Placement'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: ADD/EDIT PRODUCT */}
       {productModal.isOpen && (
@@ -1223,85 +953,48 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
               
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Product Visual Asset</label>
-                <div className="flex gap-3">
-                  <label className="bg-white text-slate-700 border border-slate-200 rounded-xl px-5 py-3 font-bold cursor-pointer hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-sm shrink-0 flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                    Upload Image
-                    <input type="file" accept="image/*" className="hidden" onChange={handleModalImageUpload} />
-                  </label>
-                  <div className="relative flex-1">
-                    <input 
-                      type="text" 
-                      placeholder={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') ? '' : "Or Paste HTTPS URL..."} 
-                      value={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') ? '' : (productForm.imageUrl || '')} 
-                      onChange={e => setProductForm((prev: any) => ({...prev, imageUrl: e.target.value}))} 
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl font-medium text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-sm disabled:bg-slate-50 disabled:cursor-not-allowed" 
-                      disabled={typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image')}
-                    />
-                    {typeof productForm.imageUrl === 'string' && productForm.imageUrl.startsWith('data:image') && (
-                      <div className="absolute inset-0 flex items-center px-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-                        <span className="text-sm font-bold text-emerald-700 flex items-center gap-2">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> Local Image Attached
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                {/* VAULT & LIVE PREVIEW INSIDE EDIT MODAL */}
-                <div className="flex gap-4 mt-4">
-                  {/* Current Active Image */}
-                  {typeof productForm.imageUrl === 'string' && productForm.imageUrl.length > 0 && (
-                    <div className="relative w-32 h-32 rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 group shrink-0 shadow-sm">
-                      <img src={productForm.imageUrl.startsWith('data:') || productForm.imageUrl.startsWith('http') ? productForm.imageUrl : ''} alt="Current Preview" className="w-full h-full object-cover" />
-                      <button 
-                        type="button" 
-                        onClick={() => {
-                          const toVault = productForm.imageUrl || '';
-                          if (productForm.sku && toVault.length > 5) {
-                             deletedImageVault[productForm.sku] = toVault;
-                          }
-                          setProductForm((prev: any) => ({
-                            ...prev,
-                            previousImageUrl: toVault,
-                            imageUrl: ''
-                          }));
-                        }} 
-                        className="absolute top-2 left-2 bg-rose-500/90 backdrop-blur text-white p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-105" 
-                        title="Remove Image to Vault"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Vault Fallback Memory */}
-                  {typeof productForm.previousImageUrl === 'string' && productForm.previousImageUrl.length > 0 && productForm.previousImageUrl !== productForm.imageUrl && (
-                    <div className="relative w-32 h-32 rounded-2xl border-2 border-dashed border-slate-300 overflow-hidden bg-slate-50 shrink-0 group">
-                      <img src={productForm.previousImageUrl} alt="Vault" className="w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300" />
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:bg-slate-900/20 transition-all">
-                        <button 
-                          type="button" 
-                          onClick={() => setProductForm((prev: any) => ({ ...prev, imageUrl: prev.previousImageUrl || '' }))} 
-                          className="bg-slate-900 text-white px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-md hover:bg-slate-800 transition-transform hover:scale-105"
-                        >
-                          <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> Restore
-                        </button>
-                      </div>
-                      <div className="absolute bottom-0 inset-x-0 bg-slate-800/80 backdrop-blur text-white text-[9px] font-bold text-center py-1 uppercase tracking-widest">Vault Memory</div>
-                    </div>
-                  )}
-                </div>
-              </div>
               <button type="submit" disabled={isProcessing} className="py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-md disabled:opacity-50 mt-4">Save Master Record</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* OMNI MODAL: TRANSACT STOCK (SINGLE & BULK) */}
+      {/* WAREHOUSE DIRECTORY MODALS */}
+      {activeWarehouseModal === 'REGISTER' && isAuthorizedAdmin && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingWarehouseId ? 'Edit Warehouse' : 'Register Warehouse'}</h2>
+              <button onClick={() => { setActiveWarehouseModal(null); setEditingWarehouseId(null); }} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              setIsProcessing(true);
+              try {
+                const url = editingWarehouseId ? `${API_BASE_URL}/warehouses/${editingWarehouseId}` : `${API_BASE_URL}/warehouses`;
+                const method = editingWarehouseId ? 'PATCH' : 'POST';
+                const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...warehouseForm, company: selectedCompany }) });
+                if (response.ok) {
+                  showToast(`Warehouse ${editingWarehouseId ? 'updated' : 'registered'}.`, "success");
+                  setWarehouseForm({ name: '', address: '', status: 'Active' });
+                  setEditingWarehouseId(null);
+                  setActiveWarehouseModal(null);
+                  fetchAllData();
+                }
+              } catch (e) { showToast("Failed to process warehouse.", "error"); }
+              finally { setIsProcessing(false); }
+            }} className="p-8 flex flex-col gap-5">
+              <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Facility Name</label><input required type="text" value={warehouseForm.name} onChange={e=>setWarehouseForm({...warehouseForm, name: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="e.g. Main Depot" /></div>
+              <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label><input required type="text" value={warehouseForm.address} onChange={e=>setWarehouseForm({...warehouseForm, address: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" placeholder="Complete address..." /></div>
+              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50">{editingWarehouseId ? 'Update' : 'Save'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* OMNI MODAL: TRANSACT STOCK */}
       {txModal.isOpen && txModal.products.length > 0 && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden ${txModal.products.length > 1 ? 'max-w-4xl' : 'max-w-lg'}`}>
@@ -1311,13 +1004,95 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={executeTransaction} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto bg-slate-50">
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (txModal.products.length === 0) return;
+              setIsProcessing(true);
+
+              const apiPromises: Promise<any>[] = []; 
+              let nextProducts = [...products];
+              let nextHubStock = [...hubStock];
+
+              try {
+                for (const prod of txModal.products) {
+                  let currentMasterStock = Number(prod.currentStock) || 0;
+                  const pIdx = nextProducts.findIndex(p => p.id === prod.id);
+
+                  if (txModal.type === 'ADJUST') {
+                    const adjQ = Number(movQtys[prod.id]);
+                    if (isNaN(adjQ) || adjQ < 0) continue;
+                    const delta = Math.abs(adjQ - currentMasterStock);
+                    if (delta === 0) continue;
+
+                    currentMasterStock = adjQ;
+                    if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
+
+                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: delta, previousStock: prod.currentStock, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
+                    continue;
+                  }
+
+                  const q = Number(movQtys[prod.id]) || 0;
+                  if (q <= 0) continue;
+
+                  const source = movForm.sourceId;
+                  const dest = movForm.destId;
+
+                  if (!source || !dest) throw new Error("Source and Destination must be fully assigned.");
+                  if (source === dest) throw new Error("Cannot move stock to the exact same location.");
+
+                  const prevMasterForLog = currentMasterStock;
+
+                  // 1. DEDUCT FROM SOURCE
+                  if (source === 'MASTER') {
+                    if (currentMasterStock < q) throw new Error(`Not enough Master Stock for ${prod.sku}.`);
+                    currentMasterStock -= q;
+                  } else if (source !== 'EXTERNAL') {
+                    const sourceStock = hubStock.find(h => String(h.warehouseId) === String(source) && Number(h.productId) === Number(prod.id))?.quantity || 0;
+                    if (sourceStock < q) throw new Error(`Not enough stock of ${prod.sku} in Source Location.`);
+                    const sIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(source) && Number(h.productId) === Number(prod.id));
+                    if(sIdx > -1) nextHubStock[sIdx].quantity -= q;
+                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
+                  }
+
+                  // 2. ADD TO DESTINATION
+                  if (dest === 'MASTER') {
+                    currentMasterStock += q;
+                  } else if (dest !== 'EXTERNAL') {
+                    const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(dest) && Number(h.productId) === Number(prod.id));
+                    if(dIdx > -1) nextHubStock[dIdx].quantity += q;
+                    else nextHubStock.push({ id: 'temp', warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q });
+                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
+                  }
+
+                  // 3. LOG MOVEMENT
+                  const logWarehouseId = (dest !== 'MASTER' && dest !== 'EXTERNAL') ? dest : ((source !== 'MASTER' && source !== 'EXTERNAL') ? source : null);
+                  apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
+
+                  // 4. MASTER STOCK PATCH
+                  if (currentMasterStock !== (Number(prod.currentStock) || 0)) {
+                    if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
+                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+                  }
+                }
+
+                setProducts(nextProducts);
+                setHubStock(nextHubStock);
+                setTxModal({ isOpen: false, products: [], type: 'RECEIVE' });
+                setSelectedProductIds([]);
+                showToast(`Transactions successfully logged.`, "success");
+
+                Promise.all(apiPromises).then(() => fetchAllData()).catch(() => {
+                  showToast("Warning: Background sync delay. Verifying data.", "error");
+                  fetchAllData(); 
+                });
+
+              } catch (e: any) { showToast(e.message || "Validation failed.", "error"); } 
+              finally { setIsProcessing(false); }
+            }} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto bg-slate-50">
               
-              {/* --- UNIFIED MOVEMENT FORM UI (RECV/RET/ISSUE) --- */}
               {txModal.type !== 'ADJUST' && (
                 <div className={`grid grid-cols-2 gap-5 p-5 rounded-2xl border ${txModal.type === 'RECEIVE' ? 'bg-emerald-50 border-emerald-200' : txModal.type === 'RETURN' ? 'bg-sky-50 border-sky-200' : 'bg-rose-50 border-rose-200'}`}>
-                  
-                  {/* SOURCE SELECTION */}
                   <div className="flex flex-col gap-1.5">
                     <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RECEIVE' ? 'text-emerald-700' : txModal.type === 'RETURN' ? 'text-sky-700' : 'text-rose-700'}`}>From (Source Location)</label>
                     {txModal.type === 'RETURN' ? (
@@ -1331,8 +1106,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                        </select>
                     )}
                   </div>
-
-                  {/* DESTINATION SELECTION (UPDATED: RECEIVE CAN NOW SELECT WAREHOUSES) */}
                   <div className="flex flex-col gap-1.5">
                     <label className={`text-[10px] font-bold uppercase tracking-wider ${txModal.type === 'RECEIVE' ? 'text-emerald-700' : txModal.type === 'RETURN' ? 'text-sky-700' : 'text-rose-700'}`}>To (Destination Location)</label>
                     {txModal.type === 'ISSUE' ? (
@@ -1348,38 +1121,23 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
 
-              {/* DEDICATED PRODUCT QUANTITY CARDS */}
               <div className="flex flex-col gap-3">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                   {txModal.type === 'ADJUST' ? 'Specify True Physical Counts' : 'Quantities To Transact'}
                 </div>
                 {txModal.products.map(p => {
-                  const totalHubStock = hubStock.filter(h => 
-                    (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) &&
-                    warehouses.some(w => String(w.id) === String(h.warehouseId))
-                  ).reduce((acc, val) => acc + val.quantity, 0);
-
+                  const totalHubStock = hubStock.filter(h => (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku)) && warehouses.some(w => String(w.id) === String(h.warehouseId))).reduce((acc, val) => acc + val.quantity, 0);
                   return (
                     <div key={p.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                       <div>
                         <div className="text-base font-black uppercase text-slate-900">{p.name}</div>
-                        <div className="text-xs font-semibold text-slate-500 mt-0.5">
-                          {p.sku} | Current Master: <strong className="text-blue-600">{p.currentStock} {p.unit}</strong> | Total Hubs: <strong className="text-slate-700">{totalHubStock} {p.unit}</strong>
-                        </div>
+                        <div className="text-xs font-semibold text-slate-500 mt-0.5">{p.sku} | Current Master: <strong className="text-blue-600">{p.currentStock} {p.unit}</strong> | Total Hubs: <strong className="text-slate-700">{totalHubStock} {p.unit}</strong></div>
                       </div>
                       <div className="w-full sm:w-auto flex flex-col gap-1">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                           {txModal.type === 'ADJUST' ? 'New True Master Stock' : `Quantity to ${txModal.type}`}
                         </label>
-                        <input 
-                          type="number" 
-                          min={txModal.type === 'ADJUST' ? "0" : "1"} 
-                          required
-                          placeholder="Enter quantity..." 
-                          value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} 
-                          onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} 
-                          className={`px-4 py-2.5 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm w-full sm:w-44 text-lg ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500' : 'border-slate-300 focus:ring-blue-500 bg-slate-50 focus:bg-white'}`} 
-                        />
+                        <input type="number" min={txModal.type === 'ADJUST' ? "0" : "1"} required placeholder="Enter quantity..." value={movQtys[p.id] !== undefined ? movQtys[p.id] : ''} onChange={e=>setMovQtys({...movQtys, [p.id]: e.target.value})} className={`px-4 py-2.5 border rounded-xl font-black outline-none focus:ring-2 text-slate-900 shadow-sm w-full sm:w-44 text-lg ${txModal.type === 'ADJUST' ? 'border-indigo-300 bg-indigo-50 focus:ring-indigo-500' : 'border-slate-300 focus:ring-blue-500 bg-slate-50 focus:bg-white'}`} />
                       </div>
                     </div>
                   );
