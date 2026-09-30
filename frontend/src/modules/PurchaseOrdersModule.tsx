@@ -109,12 +109,13 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         osReference: poForm.osReference || null,
         isVatApplied: poForm.isVatApplied,
         vatRate: 0.12,
-        // REMOVED Date.now() fake ID generation. Send strictly mapped data.
-        items: poItems.map(i => ({ 
+        // Using safe 32-bit integers to prevent DB overflow
+        items: poItems.map((i, index) => ({ 
           sku: i.sku || 'N/A', 
           productName: i.productName, 
           requestedQty: Number(i.requestedQty), 
-          unitCost: Number(i.unitCost)
+          unitCost: Number(i.unitCost),
+          productId: 900000 + Math.floor(Math.random() * 90000) + index 
         })) 
       };
 
@@ -297,7 +298,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
           {/* =========================================
               TAB 2: GENERATE P.O.
-          ======================================== */}
+          ========================================= */}
           {activeTab === 'generate' && (
             <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
               
