@@ -12,7 +12,7 @@ import OrderSlipsModule from './modules/OrderSlipsModule';
 import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
-import SupplierModule from './modules/SupplierModule'; // <-- ADDED NEW IMPORT
+import SupplierModule from './modules/SupplierModule';
 
 const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
@@ -21,7 +21,6 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   
-  // Updated to include the new split module route names
   const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -35,6 +34,29 @@ export default function App() {
   });
 
   const isDeveloper = loginUsername === 'system_dev';
+
+  // --- ONLINE STATUS TRACKER (LOGIN & BROWSER CLOSE) ---
+  const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
+
+  useEffect(() => {
+    if (isAuthenticated && currentUser?.id && !isDeveloper) {
+      fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: true })
+      }).catch(() => {});
+    }
+  }, [isAuthenticated, currentUser?.id, isDeveloper]);
+
+  useEffect(() => {
+    const handleUnload = () => {
+      if (currentUser?.id) {
+        fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: false }), keepalive: true
+        }).catch(()=>{});
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [currentUser?.id]);
 
   // ==========================================
   // REAL-TIME 3-SECOND DEVELOPER SYNC
@@ -110,7 +132,14 @@ export default function App() {
     } catch (e) { console.error("Could not fetch companies"); }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (currentUser?.id) {
+      try {
+        await fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: false })
+        });
+      } catch (e) {}
+    }
     setIsAuthenticated(false);
     setLoginUsername('');
     setActiveModule('none');
@@ -147,7 +176,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
   const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
   const hasUsers = isCurrentUserSuperAdmin;
 
@@ -166,7 +194,6 @@ export default function App() {
     }
 
     if (activeModule !== 'none' && activeModule !== 'users') {
-      // Map the active UI view to its underlying database permission key
       const requiredPermission = 
         (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os') ? 'sales' :
         (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
@@ -193,9 +220,8 @@ export default function App() {
       isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} 
       companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
       onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
-      
-      // FIXED: Passed missing props needed for the Online Sessions Widget to function properly
       loginUsername={loginUsername} currentUser={currentUser} API_BASE_URL={API_BASE_URL}
+      adminUsers={adminUsers} // <-- FED DIRECTLY FROM THE LIVE POLLING
     />
   );
 
@@ -215,64 +241,25 @@ export default function App() {
       hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}
       hasSales={userHasSales && globalModules.sales}
       onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} API_BASE_URL={API_BASE_URL}
+      adminUsers={adminUsers} // <-- FED DIRECTLY FROM THE LIVE POLLING
     />
   }
 
   // ALL MODULE ROUTES
-  if (activeModule === 'customers') return (
-    <CustomerModule 
-      selectedCompany={selectedCompany!} 
-      loginUsername={loginUsername}
-      API_BASE_URL={API_BASE_URL} 
-      onBack={() => setActiveModule('none')} 
-      onRouteToOrderSlip={(id: string) => { setTargetCustomerId(id); setActiveModule('create_os'); }}
-    />
-  );
-
-  if (activeModule === 'create_os') return (
-    <CreateOSModule 
-      selectedCompany={selectedCompany!} 
-      loginUsername={loginUsername} 
-      API_BASE_URL={API_BASE_URL} 
-      initialCustomerId={targetCustomerId} 
-      onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }}
-      onViewLedger={() => setActiveModule('sales_orders')}
-    />
-  );
-
-  // UNIFIED MASTER INVENTORY ROUTE
-  if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') {
-    return <MasterInventory selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
-  }
-
+  if (activeModule === 'customers') return <CustomerModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onRouteToOrderSlip={(id: string) => { setTargetCustomerId(id); setActiveModule('create_os'); }} />;
+  if (activeModule === 'create_os') return <CreateOSModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} initialCustomerId={targetCustomerId} onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }} onViewLedger={() => setActiveModule('sales_orders')} />;
+  if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') return <MasterInventory selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
-  
-  if (activeModule === 'sales_orders') return (
-    <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />
-  );
-
-  // NEW PURCHASE ORDERS ROUTE
-  if (activeModule === 'purchase_orders') return (
-    <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />
-  );
-
-  // --- ADDED SUPPLIER DIRECTORY ROUTE ---
-  if (activeModule === 'suppliers') return (
-    <SupplierModule 
-      selectedCompany={selectedCompany!} 
-      loginUsername={loginUsername} 
-      API_BASE_URL={API_BASE_URL} 
-      onBack={() => setActiveModule('none')} 
-    />
-  );
+  if (activeModule === 'sales_orders') return <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />;
+  if (activeModule === 'purchase_orders') return <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
 
   if (activeModule === 'users') return (
     <UserControlModule 
       adminUsers={adminUsers} setAdminUsers={setAdminUsers} fetchAdmins={fetchAdmins} loginUsername={loginUsername} 
       isCurrentUserSuperAdmin={isCurrentUserSuperAdmin} API_BASE_URL={API_BASE_URL} globalModules={globalModules} 
-      companiesList={companiesList} 
-      onBack={() => setActiveModule('none')} onLogout={handleLogout} 
+      companiesList={companiesList} onBack={() => setActiveModule('none')} onLogout={handleLogout} 
     />
   );
 

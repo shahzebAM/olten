@@ -33,7 +33,7 @@ function SortableModuleCard({ id, children, disabled = false }: { id: string; ch
 
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
-  selectedCompany, loginUsername, currentUser, 
+  selectedCompany, loginUsername, currentUser, adminUsers = [],
   hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales,
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL
 }: any) {
@@ -45,8 +45,7 @@ export default function CompanyModule({
   // --- WIDGET & DRAG AND DROP STATES ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
   const [isDraggingGrid, setIsDraggingGrid] = useState(false);
-  const [isOnlineWidgetOpen, setIsOnlineWidgetOpen] = useState(true);
-  const [realActiveUsers, setRealActiveUsers] = useState<any[]>([]);
+  const [isOnlineWidgetOpen, setIsOnlineWidgetOpen] = useState(false); // DEFAULT TO CLOSED
   
   // Check if current user is allowed to rearrange modules and view admin tools
   const isAdmin = currentUser?.role === 'Super Admin' || hasUsers;
@@ -57,47 +56,36 @@ export default function CompanyModule({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
   );
 
-  // --- FETCH ACTUAL SYSTEM USERS FOR WIDGET ---
-  useEffect(() => {
-    if (isAdmin && API_BASE_URL) {
-      fetch(`${API_BASE_URL}/admins`)
-        .then(res => res.json())
-        .then(data => {
-          if (!Array.isArray(data)) return; // Prevents crash if DB returns irregular data
-          
-          // STRICT FILTER: Only keep users who are online
-          const onlineUsersOnly = data.filter((u: any) => 
-            u.isOnline === true || // If your backend tracks session state
-            (loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase()) // Always show myself
-          );
+  // --- REAL-TIME WIDGET ENGINE (Pulls instantly from App.tsx 3-sec polling) ---
+  const realActiveUsers = React.useMemo(() => {
+    if (!isAdmin || !Array.isArray(adminUsers)) return [];
+    
+    // Strict Filter: Only users actually tracked as online in the database
+    const onlineUsersOnly = adminUsers.filter((u: any) => 
+      u.isOnline === true || 
+      (loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase())
+    );
 
-          const colors = ['bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700', 'bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700', 'bg-indigo-100 text-indigo-700'];
-          
-          const formattedUsers = onlineUsersOnly.map((u: any, index: number) => {
-            const isMe = loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase();
-            return {
-              id: u.id || index,
-              name: u.username,
-              company: isMe ? (selectedCompany || 'Gateway Entry') : 'System Connected',
-              initials: u.username.substring(0, 2).toUpperCase(),
-              color: colors[index % colors.length],
-              isMe: isMe
-            };
-          });
-          
-          // Put the currently logged in Super Admin at the top
-          formattedUsers.sort((a: any, b: any) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0));
-          setRealActiveUsers(formattedUsers);
-        })
-        .catch(err => {
-          console.error("Failed to fetch widget users", err);
-          setRealActiveUsers([]);
-        });
-    }
-  }, [isAdmin, API_BASE_URL, loginUsername, selectedCompany]);
+    const colors = ['bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700', 'bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700', 'bg-indigo-100 text-indigo-700'];
+    
+    const formattedUsers = onlineUsersOnly.map((u: any, index: number) => {
+      const isMe = loginUsername && u.username.toLowerCase() === loginUsername.toLowerCase();
+      return {
+        id: u.id || index,
+        name: u.username,
+        company: isMe ? (selectedCompany || 'Gateway Entry') : 'System Connected',
+        initials: u.username.substring(0, 2).toUpperCase(),
+        color: colors[index % colors.length],
+        isMe: isMe
+      };
+    });
+    
+    // Put the currently logged in Super Admin at the top
+    formattedUsers.sort((a: any, b: any) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0));
+    return formattedUsers;
+  }, [adminUsers, isAdmin, loginUsername, selectedCompany]);
 
   useEffect(() => {
-    // Skip sync if not in gateway OR if the user is currently holding a card
     if (!isGateway || isDraggingGrid) return; 
 
     const activeIds: string[] = [];
