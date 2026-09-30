@@ -1,37 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
-interface Supplier {
-  id: string;
-  legalName: string;
-  tradeName: string;
-  tin: string;
-  address: string;
-  contactPerson: string;
-  phone: string;
-  email: string;
-  paymentTerms: string;
-  apBalance: number;
-}
-
-interface Product { id: number; name: string; sku: string; purchasePrice: number; }
 interface AssignedProduct { productId: number; sku: string; name: string; supplierCost: number; }
-
-interface SupplierModuleProps {
-  selectedCompany: string;
-  loginUsername: string;
-  API_BASE_URL: string;
-  onBack: () => void;
+interface Supplier {
+  id: string; legalName: string; tradeName: string; tin: string; address: string; 
+  contactPerson: string; phone: string; email: string; paymentTerms: string; apBalance: number;
+  catalog?: AssignedProduct[];
 }
+interface Product { id: number; name: string; sku: string; purchasePrice: number; }
+
+interface SupplierModuleProps { selectedCompany: string; loginUsername: string; API_BASE_URL: string; onBack: () => void; }
 
 export default function SupplierModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: SupplierModuleProps) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
-  // Use localStorage as a lightweight linking table for supplier products
-  const [supplierProducts, setSupplierProducts] = useState<Record<string, AssignedProduct[]>>(() => {
-    const saved = localStorage.getItem(`supplier_products_${selectedCompany}`);
-    return saved ? JSON.parse(saved) : {};
-  });
-
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -41,7 +22,9 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     legalName: '', tradeName: '', tin: '', address: '', contactPerson: '', phone: '', email: '', paymentTerms: 'Cash on Delivery'
   });
 
+  // DB Synced Catalog States
   const [activeProductsModal, setActiveProductsModal] = useState<string | null>(null);
+  const [activeCatalog, setActiveCatalog] = useState<AssignedProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => {
@@ -67,11 +50,6 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
 
   useEffect(() => { fetchAllData(); }, [fetchAllData]);
 
-  // Persist supplier product linkages
-  useEffect(() => {
-    localStorage.setItem(`supplier_products_${selectedCompany}`, JSON.stringify(supplierProducts));
-  }, [supplierProducts, selectedCompany]);
-
   const openAddSupplier = () => {
     setSupplierForm({ legalName: '', tradeName: '', tin: '', address: '', contactPerson: '', phone: '', email: '', paymentTerms: 'Cash on Delivery' });
     setEditingSupplierId(null);
@@ -88,25 +66,17 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     e.preventDefault();
     setIsLoading(true);
     const method = editingSupplierId ? 'PATCH' : 'POST';
-    const url = editingSupplierId 
-      ? `${API_BASE_URL}/procurement/suppliers/${editingSupplierId}`
-      : `${API_BASE_URL}/procurement/suppliers`;
-
+    const url = editingSupplierId ? `${API_BASE_URL}/procurement/suppliers/${editingSupplierId}` : `${API_BASE_URL}/procurement/suppliers`;
     try {
       const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
+        method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...supplierForm, company: selectedCompany, user: loginUsername })
       });
       if (!res.ok) throw new Error();
       showToast(editingSupplierId ? "Supplier updated." : "Supplier registered.", "success");
       setIsSupplierModalOpen(false);
       fetchAllData();
-    } catch (err) {
-      showToast("Failed to save supplier.", "error");
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (err) { showToast("Failed to save supplier.", "error"); } finally { setIsLoading(false); }
   };
 
   const handleDeleteSupplier = async (id: string) => {
@@ -115,40 +85,46 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
       const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast("Supplier deleted.", "success");
-      
-      setSupplierProducts(prev => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-
       fetchAllData();
-    } catch (err) {
-      showToast("Failed to delete supplier. They may have active POs.", "error");
+    } catch (err) { showToast("Failed to delete supplier.", "error"); }
+  };
+
+  // --- CATALOG SYNC METHODS ---
+  const openCatalogModal = (supplier: Supplier) => {
+    setActiveProductsModal(supplier.id);
+    setActiveCatalog(supplier.catalog || []);
+    setSearchTerm('');
+  };
+
+  const toggleProductAssignment = (product: Product) => {
+    setActiveCatalog(prev => {
+      const exists = prev.find(p => p.productId === product.id);
+      if (exists) return prev.filter(p => p.productId !== product.id);
+      return [...prev, { productId: product.id, sku: product.sku, name: product.name, supplierCost: product.purchasePrice }];
+    });
+  };
+
+  const updateSupplierCost = (productId: number, newCost: string) => {
+    setActiveCatalog(prev => prev.map(p => p.productId === productId ? { ...p, supplierCost: Number(newCost) } : p));
+  };
+
+  const handleSaveCatalogToDatabase = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${activeProductsModal}/catalog`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ catalog: activeCatalog })
+      });
+      if (!res.ok) throw new Error();
+      showToast("Supplier catalog synced to database.", "success");
+      setActiveProductsModal(null);
+      fetchAllData();
+    } catch (e) {
+      showToast("Failed to sync catalog.", "error");
+    } finally {
+      setIsLoading(false);
     }
-  };
-
-  const toggleProductAssignment = (supplierId: string, product: Product) => {
-    setSupplierProducts(prev => {
-      const currentList = prev[supplierId] || [];
-      const exists = currentList.find(p => p.productId === product.id);
-      
-      if (exists) {
-        return { ...prev, [supplierId]: currentList.filter(p => p.productId !== product.id) };
-      } else {
-        return { ...prev, [supplierId]: [...currentList, { productId: product.id, sku: product.sku, name: product.name, supplierCost: product.purchasePrice }] };
-      }
-    });
-  };
-
-  const updateSupplierCost = (supplierId: string, productId: number, newCost: string) => {
-    setSupplierProducts(prev => {
-      const currentList = prev[supplierId] || [];
-      return {
-        ...prev,
-        [supplierId]: currentList.map(p => p.productId === productId ? { ...p, supplierCost: Number(newCost) } : p)
-      };
-    });
   };
 
   return (
@@ -215,8 +191,8 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                           </span>
                         </td>
                         <td className="py-3 px-6 text-center">
-                          <button onClick={() => setActiveProductsModal(sup.id)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm">
-                            {supplierProducts[sup.id]?.length || 0} Products
+                          <button onClick={() => openCatalogModal(sup)} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm">
+                            {sup.catalog?.length || 0} Products
                           </button>
                         </td>
                         <td className="py-3 px-6 text-right font-black text-slate-900 font-mono">
@@ -236,10 +212,11 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
         </div>
       </main>
 
-      {/* ASSIGN PRODUCTS TO SUPPLIER MODAL */}
+      {/* ASSIGN PRODUCTS TO SUPPLIER MODAL (LAYOUT FIXED & CONNECTED TO DB) */}
       {activeProductsModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center items-center p-4 sm:p-8">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-full animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+            
             <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-50 shrink-0">
               <div>
                 <h3 className="text-xl font-black text-indigo-900 tracking-tight">Supplier Catalog Link</h3>
@@ -251,6 +228,7 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
+            
             <div className="p-4 border-b border-slate-200 bg-white shrink-0">
               <input 
                 type="text" 
@@ -260,46 +238,48 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                 className="w-full px-5 py-3 border border-slate-300 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
               />
             </div>
+            
             <div className="flex-1 overflow-y-auto p-0 bg-slate-50 relative">
-              <table className="w-full text-left text-sm whitespace-nowrap border-collapse">
+              {/* TABLE FIXED APPLIED HERE TO PREVENT HORIZONTAL SCROLL OVERFLOW */}
+              <table className="w-full text-left text-sm table-fixed border-collapse">
                 <thead className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-6 w-12 text-center">Status</th>
-                    <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product / SKU</th>
-                    <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Default System Cost</th>
-                    <th className="py-3 px-6 font-black text-indigo-600 uppercase tracking-widest text-[10px] w-48 text-right bg-indigo-50">Custom Supplier Cost</th>
+                    <th className="py-3 px-4 w-14 text-center"></th>
+                    <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] w-auto">Product / SKU</th>
+                    <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right w-24 sm:w-32 hidden sm:table-cell">Sys Cost</th>
+                    <th className="py-3 px-4 font-black text-indigo-600 uppercase tracking-widest text-[10px] text-right bg-indigo-50 w-32 sm:w-40">Custom Cost</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {catalogProducts.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.sku.toLowerCase().includes(searchTerm.toLowerCase())).map(p => {
-                    const isLinked = (supplierProducts[activeProductsModal] || []).some(linked => linked.productId === p.id);
-                    const linkedProduct = (supplierProducts[activeProductsModal] || []).find(linked => linked.productId === p.id);
+                    const isLinked = activeCatalog.some(linked => linked.productId === p.id);
+                    const linkedProduct = activeCatalog.find(linked => linked.productId === p.id);
                     
                     return (
                       <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${isLinked ? 'bg-indigo-50/20' : ''}`}>
-                        <td className="py-3 px-6 text-center">
+                        <td className="py-3 px-4 text-center">
                           <input 
                             type="checkbox" 
                             checked={isLinked} 
-                            onChange={() => toggleProductAssignment(activeProductsModal, p)}
+                            onChange={() => toggleProductAssignment(p)}
                             className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                           />
                         </td>
-                        <td className="py-3 px-6">
-                          <div className={`font-black text-sm uppercase ${isLinked ? 'text-indigo-900' : 'text-slate-900'}`}>{p.name}</div>
-                          <div className="text-[10px] font-mono font-bold text-slate-400 mt-0.5">{p.sku}</div>
+                        <td className="py-3 px-4 overflow-hidden">
+                          <div className={`font-black text-sm uppercase truncate ${isLinked ? 'text-indigo-900' : 'text-slate-900'}`}>{p.name}</div>
+                          <div className="text-[10px] font-mono font-bold text-slate-400 mt-0.5 truncate">{p.sku}</div>
                         </td>
-                        <td className="py-3 px-6 text-right font-mono text-slate-400">
+                        <td className="py-3 px-4 text-right font-mono text-slate-400 hidden sm:table-cell">
                           ₱{Number(p.purchasePrice).toLocaleString('en-PH', {minimumFractionDigits: 2})}
                         </td>
-                        <td className="py-2 px-6 bg-indigo-50/30">
+                        <td className="py-2 px-4 bg-indigo-50/30">
                           <input 
                             type="number" 
                             min="0" step="0.01"
                             disabled={!isLinked}
                             value={linkedProduct ? linkedProduct.supplierCost : ''}
-                            onChange={e => updateSupplierCost(activeProductsModal, p.id, e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-black font-mono text-right text-indigo-700 outline-none focus:border-indigo-500 disabled:opacity-30 disabled:bg-slate-100 shadow-inner"
+                            onChange={e => updateSupplierCost(p.id, e.target.value)}
+                            className="w-full px-2 sm:px-3 py-2 border border-slate-200 rounded-lg text-sm font-black font-mono text-right text-indigo-700 outline-none focus:border-indigo-500 disabled:opacity-30 disabled:bg-slate-100 shadow-inner"
                             placeholder="₱0.00"
                           />
                         </td>
@@ -312,10 +292,19 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
                 </tbody>
               </table>
             </div>
+            
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end shrink-0">
+              <button onClick={handleSaveCatalogToDatabase} disabled={isLoading} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-colors shadow-md">
+                {isLoading ? 'Syncing...' : 'Save & Sync Catalog'}
+              </button>
+            </div>
+
           </div>
         </div>
       )}
-
+      
+      {/* ... [Rest of SupplierModule code remains identical for other modals] ... */}
+      
       {/* ADD/EDIT SUPPLIER MODAL */}
       {isSupplierModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center p-8 overflow-y-auto">

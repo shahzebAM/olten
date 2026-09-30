@@ -74,6 +74,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   }, [activeTab, fetchPurchaseOrders, fetchSuppliers, fetchNextPoNumber]);
 
   // --- AUTO POPULATE ITEMS ON SUPPLIER CHANGE ---
+// --- AUTO POPULATE ITEMS FROM DATABASE ---
   const handleSupplierChange = (supplierId: string) => {
     setPoForm(prev => ({ ...prev, supplierId }));
     
@@ -82,26 +83,21 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       return;
     }
 
-    const savedLinks = localStorage.getItem(`supplier_products_${selectedCompany}`);
-    if (savedLinks) {
-      const parsedLinks: Record<string, AssignedProduct[]> = JSON.parse(savedLinks);
-      const supplierCatalog = parsedLinks[supplierId];
-      
-      if (supplierCatalog && supplierCatalog.length > 0) {
-        // Auto-populate the rows with the supplier's assigned products and pricing
-        const autoItems: POItem[] = supplierCatalog.map(p => ({
-          productId: p.productId,
-          sku: p.sku,
-          productName: p.name,
-          requestedQty: 1, // Default to 1
-          unitCost: Number(p.supplierCost) || 0
-        }));
-        setPoItems(autoItems);
-        showToast("Auto-filled assigned items for this vendor.", "success");
-      } else {
-        // Clear if they have no assigned products
-        setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
-      }
+    // Read the catalog directly from the database response state
+    const supplier = suppliers.find(s => String(s.id) === String(supplierId));
+    
+    if (supplier && supplier.catalog && supplier.catalog.length > 0) {
+      const autoItems: POItem[] = supplier.catalog.map((p: any) => ({
+        productId: p.productId,
+        sku: p.sku,
+        productName: p.name,
+        requestedQty: 1,
+        unitCost: Number(p.supplierCost) || 0
+      }));
+      setPoItems(autoItems);
+      showToast("Auto-filled assigned items for this vendor.", "success");
+    } else {
+      setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
     }
   };
 
