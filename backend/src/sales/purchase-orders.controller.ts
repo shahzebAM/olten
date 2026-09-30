@@ -112,17 +112,25 @@ export class ProcurementController {
 
     return await this.prisma.$transaction(async (tx) => {
       let calculatedSubtotal = 0;
+      
+      // FIXED PARSER: Gracefully handles items without crashing database foreign keys
       const cleanItems = items.map((item: any) => {
         const lineTotal = Math.round((Number(item.requestedQty) * Number(item.unitCost)) * 100) / 100;
         calculatedSubtotal += lineTotal;
-        return {
-          productId: Number(item.productId),
+        
+        const cleanItem: any = {
           sku: item.sku,
           productName: item.productName,
           requestedQty: Number(item.requestedQty),
           unitCost: Number(item.unitCost),
           lineTotal
         };
+
+        if (item.productId) {
+          cleanItem.productId = Number(item.productId);
+        }
+
+        return cleanItem;
       });
 
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
@@ -141,7 +149,7 @@ export class ProcurementController {
           vatAmount: calculatedVat, 
           grandTotal: calculatedGrandTotal,
           createdBy: user,
-          supplierId: supplierId || null, // Only store the ID. Prisma will use relations to fetch the name.
+          supplierId: supplierId || null, 
           items: { create: cleanItems }
         },
         include: { items: true }
@@ -153,12 +161,11 @@ export class ProcurementController {
   async listPurchaseOrders(@Query('company') company: string) {
     if (!company) throw new BadRequestException('Company is required.');
     
-    // Format the response so the frontend receives `supplierName` from the relation
     const pos = await this.prisma.purchaseOrder.findMany({
       where: { company },
       include: { 
         items: true,
-        supplier: true // Fetch relational supplier data
+        supplier: true 
       },
       orderBy: { createdAt: 'desc' },
     });
