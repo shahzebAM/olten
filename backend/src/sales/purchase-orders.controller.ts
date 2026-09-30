@@ -233,6 +233,18 @@ export class ProcurementController {
     });
   }
 
+  // --- ADD THIS AT THE BOTTOM OF THE FILE ---
+  @Patch('purchase-orders/:id/status')
+  async updatePurchaseOrderStatus(@Param('id') id: string, @Body() data: { status: string; user: string }) {
+    const existing = await this.prisma.purchaseOrder.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('P.O. not found.');
+
+    return await this.prisma.purchaseOrder.update({
+      where: { id },
+      data: { status: data.status, updatedBy: data.user }
+    });
+  }
+
   @Delete('purchase-orders/:id/cancel')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
     return this.prisma.$transaction(async tx => {
