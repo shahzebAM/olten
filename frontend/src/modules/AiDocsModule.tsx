@@ -32,6 +32,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   // --- SUBMISSION LOCKS ---
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string } | null>(null);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -187,34 +188,47 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   // --- API: UPLOAD FILE ---
+// --- API: UPLOAD FILE(S) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsUploading(true);
+    const selectedFiles = e.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
     
-    const formData = new FormData();
-    formData.append('file', file);
-    if (activeFolderId && activeFolderId !== rootFolderId) {
-      formData.append('targetFolderId', activeFolderId);
+    setIsUploading(true);
+    let successCount = 0;
+    
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      setUploadProgress({ current: i + 1, total: selectedFiles.length, filename: file.name });
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      if (activeFolderId && activeFolderId !== rootFolderId) {
+        formData.append('targetFolderId', activeFolderId);
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
+          method: 'POST',
+          headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
+          body: formData,
+        });
+        if (res.ok) successCount++;
+      } catch (err: any) {
+        console.error(`Failed to upload ${file.name}`, err);
+      }
     }
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
-        method: 'POST',
-        headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
-        body: formData,
-      });
-      if (!res.ok) throw new Error('Upload failed');
-      showToast('Document uploaded successfully', 'success');
-      
+    if (successCount > 0) {
+      showToast(`Successfully uploaded ${successCount} document(s)`, 'success');
       if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
       fetchDirectory(true);
-    } catch (err: any) {
-      showToast(err.message || 'Upload failed', 'error');
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    } else {
+      showToast('Upload failed for all selected files.', 'error');
     }
+
+    setIsUploading(false);
+    setUploadProgress(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   // --- API: CREATE FOLDER ---
@@ -576,11 +590,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </div>
 
             {/* MINI PROGRESS BAR FOR UPLOADS */}
-            {isUploading && (
+{/* MINI PROGRESS BAR FOR UPLOADS */}
+            {isUploading && uploadProgress && (
               <div className="flex flex-col gap-1.5 mt-1 mb-1">
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest text-center animate-pulse">Uploading file...</span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest text-center truncate">
+                  Uploading ({uploadProgress.current}/{uploadProgress.total}): {uploadProgress.filename}
+                </span>
                 <div className="w-full h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                  <div className="w-full h-full bg-indigo-500 origin-left animate-pulse"></div>
+                  <div 
+                    className="h-full bg-indigo-500 transition-all duration-300" 
+                    style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                  ></div>
                 </div>
               </div>
             )}
@@ -814,7 +834,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         </div>
       )}
 
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+      <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
     </div>
   );
