@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 // --- INTERFACES ---
-interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number; sellingPrice: number; categoryPrices?: Record<string, number>; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
+interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number | string; sellingPrice: number | string; categoryPrices?: Record<string, number | string>; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
 interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; }
 interface Warehouse { id: string; name: string; address: string; status: string; }
 interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
@@ -86,6 +86,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     });
   };
 
+  // --- FIXED FETCH ALGORITHM ---
   const fetchAllData = useCallback(async () => {
     try {
       const [prodRes, movRes, whRes, stkRes, poRes, catRes] = await Promise.all([
@@ -112,20 +113,28 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setCustomerCategories(categories);
         
         try {
-            const pricesRes = await fetch(`${API_BASE_URL}/sales/category-prices/all?company=${selectedCompany}`);
-            if (pricesRes.ok) {
-                const pricesData = await pricesRes.json();
-                const priceMap: Record<number, Record<string, number>> = {};
-                pricesData.forEach((p: any) => {
+            // Specifically loop over the categories to hit the correct individual API endpoints
+            const pricePromises = categories.map(async (cat: any) => {
+                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(cat.name)}`);
+                if(res.ok) return { catName: cat.name, data: await res.json() };
+                return { catName: cat.name, data: [] };
+            });
+
+            const categoryPriceResults = await Promise.all(pricePromises);
+            const priceMap: Record<number, Record<string, number>> = {};
+            
+            categoryPriceResults.forEach(result => {
+                result.data.forEach((p: any) => {
                     if (!priceMap[p.productId]) priceMap[p.productId] = {};
-                    priceMap[p.productId][p.categoryName] = p.price;
+                    priceMap[p.productId][result.catName] = p.price;
                 });
-                
-                productsList = productsList.map(prod => ({
-                    ...prod,
-                    categoryPrices: priceMap[prod.id] || {}
-                }));
-            }
+            });
+            
+            // Merge prices securely into the local table array
+            productsList = productsList.map(prod => ({
+                ...prod,
+                categoryPrices: priceMap[prod.id] || {}
+            }));
         } catch(e) {}
       }
       setProducts(productsList);
@@ -223,13 +232,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
+  // --- FIXED SUBMISSION ALGORITHM ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     
     const cleanPayload: any = {
       name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
-      purchasePrice: parseFloat(productForm.purchasePrice) || 0, sellingPrice: parseFloat(productForm.sellingPrice) || 0,
+      purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0, sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
       minQuantity: parseInt(productForm.minQuantity) || 10, reorderLevel: parseInt(productForm.reorderLevel) || 20,
       unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
       barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
@@ -247,10 +257,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     const rawPricesToSave = productForm.categoryPrices || {};
     const sanitizedPricesToSave: Record<string, number> = {};
     
-    // Cleanly parse all prices to strict numbers before saving to local or backend
     Object.keys(rawPricesToSave).forEach(cat => {
-        const val = parseFloat(String(rawPricesToSave[cat]));
-        if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
+        if (rawPricesToSave[cat] !== '' && rawPricesToSave[cat] !== null && rawPricesToSave[cat] !== undefined) {
+           const val = parseFloat(String(rawPricesToSave[cat]));
+           if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
+        }
     });
 
     const tempId = productModal.editingId || Date.now();
@@ -271,13 +282,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const finalProductId = productModal.editingId || resData.id;
         
         if (Object.keys(sanitizedPricesToSave).length > 0) {
+            // Uses the proper bulk route to correctly map properties inside the NestJS Database
             const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
-                 return fetch(`${API_BASE_URL}/sales/category-prices`, {
+                 return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
                      method: 'POST', 
                      headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
-                 }).then(r => {
-                     if(!r.ok) console.warn(`Failed to save price for ${catName}`, r.status);
+                     body: JSON.stringify({ 
+                         company: selectedCompany, 
+                         categoryName: catName, 
+                         prices: [ { productId: finalProductId, price: Number(price) } ] 
+                     })
                  }).catch(console.error);
             });
             await Promise.allSettled(catPricePromises);
@@ -747,7 +761,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         filteredProducts.map(p => {
                           const displayPrice = selectedPricingTierFilter === 'ALL' 
                             ? Number(p.sellingPrice) 
-                            : Number(p.categoryPrices?.[selectedPricingTierFilter] || p.sellingPrice);
+                            : Number(p.categoryPrices?.[selectedPricingTierFilter] ?? p.sellingPrice);
                             
                           return (
                             <tr key={p.id} className={`hover:bg-slate-50 transition-colors group ${selectedProductIds.includes(p.id) ? 'bg-blue-50/20' : ''}`}>
