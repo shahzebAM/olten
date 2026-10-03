@@ -300,7 +300,7 @@ useEffect(() => {
       )}
 
       {/* SIDEBAR */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 hidden md:flex z-20">
+      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 hidden md:flex z-20"> 
         <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-slate-950">
           <h1 className="text-lg font-black text-white uppercase tracking-wider leading-tight">Client Directory</h1>
         </div>
@@ -316,31 +316,36 @@ useEffect(() => {
                 Categories & Pricing
               </button>
           )}
+
+          
         </div>
+        
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50">
-        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{selectedCompany} <span className="text-slate-400 font-medium">| Customer Details</span></h2></div>
-          <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Exit Gateway</button>
-        </header>
 
           <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
           <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">{selectedCompany} <span className="text-slate-400 font-medium hidden sm:inline">| Customer Details</span></h2></div>
           <button type="button" onClick={onBack} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shrink-0">Exit</button>
         </header>
 
-        {/* NEW MOBILE & TABLET MENU TABS (Hidden on Desktop) */}
-        <div className="flex md:hidden bg-white border-b border-slate-200 shrink-0 w-full shadow-sm z-10">
-          <button className="flex-1 py-3.5 text-[10px] font-black text-indigo-600 border-b-[3px] border-indigo-600 uppercase tracking-widest bg-indigo-50/30">
+   {/* NEW MOBILE & TABLET MENU TABS (Hidden on Desktop) */}
+        <div className="flex md:hidden bg-white border-b border-slate-200 shrink-0 w-full shadow-sm z-10 overflow-x-auto whitespace-nowrap">
+          <button className="px-6 py-3.5 text-[10px] font-black text-indigo-600 border-b-[3px] border-indigo-600 uppercase tracking-widest bg-indigo-50/30">
             Customers
+          </button>
+          <button 
+            onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
+            className="px-6 py-3.5 text-[10px] font-bold text-slate-500 border-b-[3px] border-transparent hover:text-slate-800 uppercase tracking-widest transition-colors"
+          >
+            + Register
           </button>
           {isAuthorizedAdmin && (
             <button 
               onClick={() => setIsCategoryModalOpen(true)} 
-              className="flex-1 py-3.5 text-[10px] font-bold text-slate-500 border-b-[3px] border-transparent hover:text-slate-800 uppercase tracking-widest transition-colors"
+              className="px-6 py-3.5 text-[10px] font-bold text-slate-500 border-b-[3px] border-transparent hover:text-slate-800 uppercase tracking-widest transition-colors"
             >
-              Categories & Pricing
+              Pricing
             </button>
           )}
         </div>
@@ -349,14 +354,30 @@ useEffect(() => {
           <div className="max-w-[1400px] mx-auto space-y-6">
             
           {/* ACTION BAR */}
+           {/* ACTION BAR */}
             <div className="flex flex-col sm:flex-row justify-between gap-4">
-              <div className="flex w-full sm:w-auto">
-                <button 
-                    onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
-                    className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors whitespace-nowrap"
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                <div className="relative w-full sm:w-80">
+                  <svg className="w-5 h-5 absolute left-4 top-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <input 
+                    type="text" 
+                    placeholder="Search Name, Code, Phone..." 
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-shadow"
+                  />
+                </div>
+                
+                {/* CATEGORY FILTER DROPDOWN */}
+                <select
+                  value={selectedCategoryFilter}
+                  onChange={e => { setSelectedCategoryFilter(e.target.value); setCurrentPage(1); }}
+                  className="w-full sm:w-48 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-shadow appearance-none"
                 >
-                    + Register Customer
-                </button>
+                  <option value="">All Categories</option>
+                  <option value="General">General</option>
+                  {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
               </div>
             </div>
 
