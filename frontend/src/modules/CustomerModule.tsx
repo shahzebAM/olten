@@ -53,6 +53,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   const [categoryPrices, setCategoryPrices] = useState<Record<number, string>>({});
   const [bulkPercentage, setBulkPercentage] = useState('');
   const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [pricingSearch, setPricingSearch] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
@@ -264,6 +265,15 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // --- PRICING SEARCH FILTER ---
+  const filteredProducts = React.useMemo(() => {
+    if (!pricingSearch.trim()) return allProducts;
+    const q = pricingSearch.toLowerCase();
+    return allProducts.filter(p => 
+      p.name?.toLowerCase().includes(q) || 
+      p.sku?.toLowerCase().includes(q)
+    );
+  }, [allProducts, pricingSearch]);
 
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
@@ -473,6 +483,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
       )}
 
       {/* PRICING EDITOR MODAL */}
+  {/* PRICING EDITOR MODAL */}
       {isPricingModalOpen && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center sm:p-4">
               <div className="bg-white sm:rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[95vh] animate-in zoom-in-95 duration-200">
@@ -496,7 +507,18 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                           />
                           <button onClick={applyBulkPercentage} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 transition-colors shrink-0">Apply</button>
                       </div>
-                      <p className="text-[10px] font-bold text-slate-400 max-w-xs text-right hidden sm:block">Positive numbers increase price, negative numbers grant a discount.</p>
+                      
+                      {/* NEW SEARCH BAR UI */}
+                      <div className="relative w-full sm:w-80 shrink-0">
+                        <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                        <input 
+                          type="text" 
+                          placeholder="Search SKU or Name..." 
+                          value={pricingSearch}
+                          onChange={e => setPricingSearch(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 transition-shadow"
+                        />
+                      </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-0 bg-slate-50">
@@ -510,31 +532,38 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                              {allProducts.map(p => (
-                                  <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
-                                      <td className="py-1.5 px-3 sm:px-6 font-mono text-[10px] sm:text-xs text-slate-500 hidden sm:table-cell">{p.sku}</td>
-                                      <td className="py-1.5 px-3 sm:px-6">
-                                        <div className="font-bold text-[11px] sm:text-xs text-slate-800 uppercase leading-tight">{p.name}</div>
-                                        <div className="sm:hidden font-mono text-[9px] text-slate-400 uppercase mt-0.5">{p.sku}</div>
-                                      </td>
-                                      <td className="py-1.5 px-3 sm:px-6 text-right font-mono text-[11px] sm:text-xs text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
-                                      <td className="py-1.5 px-3 sm:px-6 text-right">
-                                          <input 
-                                              type="number" 
-                                              step="0.01"
-                                              value={categoryPrices[p.id] !== undefined ? categoryPrices[p.id] : ''} 
-                                              onChange={e => setCategoryPrices({...categoryPrices, [p.id]: e.target.value})} 
-                                              className="w-full min-w-[70px] max-w-[120px] px-2 sm:px-3 py-1 sm:py-1.5 border border-slate-200 rounded-md text-[11px] sm:text-sm font-black text-amber-900 outline-none focus:ring-2 focus:ring-amber-500 text-right bg-white shadow-sm"
-                                          />
-                                      </td>
-                                  </tr>
-                              ))}
+                              {/* CHANGED FROM allProducts.map TO filteredProducts.map */}
+                              {filteredProducts.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="py-8 text-center text-slate-400 font-medium">No matching products found.</td>
+                                </tr>
+                              ) : (
+                                filteredProducts.map(p => (
+                                    <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
+                                        <td className="py-1.5 px-3 sm:px-6 font-mono text-[10px] sm:text-xs text-slate-500 hidden sm:table-cell">{p.sku}</td>
+                                        <td className="py-1.5 px-3 sm:px-6">
+                                          <div className="font-bold text-[11px] sm:text-xs text-slate-800 uppercase leading-tight">{p.name}</div>
+                                          <div className="sm:hidden font-mono text-[9px] text-slate-400 uppercase mt-0.5">{p.sku}</div>
+                                        </td>
+                                        <td className="py-1.5 px-3 sm:px-6 text-right font-mono text-[11px] sm:text-xs text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
+                                        <td className="py-1.5 px-3 sm:px-6 text-right">
+                                            <input 
+                                                type="number" 
+                                                step="0.01"
+                                                value={categoryPrices[p.id] !== undefined ? categoryPrices[p.id] : ''} 
+                                                onChange={e => setCategoryPrices({...categoryPrices, [p.id]: e.target.value})} 
+                                                className="w-full min-w-[70px] max-w-[120px] px-2 sm:px-3 py-1 sm:py-1.5 border border-slate-200 rounded-md text-[11px] sm:text-sm font-black text-amber-900 outline-none focus:ring-2 focus:ring-amber-500 text-right bg-white shadow-sm"
+                                            />
+                                        </td>
+                                    </tr>
+                                ))
+                              )}
                           </tbody>
                       </table>
                   </div>
 
                   <div className="p-4 sm:p-6 border-t border-slate-100 bg-white shrink-0 flex justify-end gap-3">
-                      <button type="button" onClick={() => setIsPricingModalOpen(false)} className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-200 transition-colors">Cancel</button>
+                      <button type="button" onClick={() => { setIsPricingModalOpen(false); setPricingSearch(''); }} className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-200 transition-colors">Cancel</button>
                       <button onClick={saveCategoryPrices} disabled={isLoading} className="px-8 py-2.5 bg-amber-500 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-amber-600 transition-colors disabled:opacity-50">
                           {isLoading ? 'Saving...' : 'Save Rules'}
                       </button>
