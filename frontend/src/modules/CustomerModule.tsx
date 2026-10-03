@@ -508,7 +508,7 @@ useEffect(() => {
                           />
                           <button type="submit" className="px-5 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors">Add</button>
                       </form>
-
+ 
                       <div className="space-y-3">
                           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Existing Categories</h4>
                           {categories.length === 0 ? (
