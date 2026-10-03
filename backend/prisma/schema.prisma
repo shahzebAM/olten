@@ -38,14 +38,14 @@ model Employee {
 }
 
 model Admin {
-  id       Int     @id @default(autoincrement())
-  username String  @unique
+  id       Int      @id @default(autoincrement())
+  username String   @unique
   password String
-  role     String  @default("Admin")
+  role     String   @default("Admin")
   modules  Json?
-  status   String  @default("Active")
-  moduleOrder   String[] @default([])
-  isOnline Boolean @default(false)
+  status   String   @default("Active")
+  moduleOrder String[] @default([])
+  isOnline Boolean  @default(false)
 }
 
 model Settings {
@@ -106,6 +106,9 @@ model Document {
   uploadedBy      String
   createdAt       DateTime @default(now())
   googleDriveLink String?
+
+  // NEW RELATION FOR EXPIRY REMINDERS
+  reminders       DocumentReminder[]
 
   @@index([company])
 }
@@ -392,4 +395,18 @@ model PurchaseOrderItem {
   po PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
 }
 
-// NOTE: Add these 3 lines inside your EXISTING Shortage model:
+// --- NEW DOCUMENT REMINDERS MODEL ---
+model DocumentReminder {
+  id           Int      @id @default(autoincrement())
+  company      String
+  documentId   Int
+  fileName     String
+  expiryDate   String   
+  reminderDays Int      @default(30)
+  isResolved   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  @@index([company])
+}

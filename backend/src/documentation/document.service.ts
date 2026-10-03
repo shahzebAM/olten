@@ -49,8 +49,7 @@ export class DocumentService {
       if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); 
     }
 
-    // @ts-ignore
-    const doc = await prisma.document.create({
+    const doc = await (prisma as any).document.create({
       data: {
         filename: file.originalname,
         originalName: file.originalname,
@@ -69,10 +68,58 @@ export class DocumentService {
     return doc;
   }
 
+  // --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
+  async analyzeExpiryDates(fileIds: number[], company: string) {
+    const results: Record<string, string | null> = {};
+    
+    // Fetch docs from DB to get their pre-existing Gemini URI
+    const docs = await (prisma as any).document.findMany({
+      where: { 
+        id: { in: fileIds },
+        company: company
+      }
+    });
+
+    // Ask Gemini for the expiry dates using the already uploaded URI
+    for (const doc of docs) {
+      if (doc.geminiFileUri) {
+        const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
+        results[doc.id.toString()] = expiry;
+      } else {
+        results[doc.id.toString()] = null;
+      }
+    }
+    
+    return results;
+  }
+
+  // --- SAVE REMINDERS TO DATABASE ---
+  async saveReminders(reminders: any[], company: string) {
+    const savedReminders = [];
+    
+    for (const rem of reminders) {
+      const docId = Number(rem.id);
+      // Skip if the user cleared the date or if the ID is invalid
+      if (isNaN(docId) || !rem.expiryDate) continue;
+
+      const saved = await (prisma as any).documentReminder.create({
+        data: {
+          company: company,
+          documentId: docId,
+          fileName: rem.name,
+          expiryDate: rem.expiryDate,
+          reminderDays: Number(rem.reminderDays) || 30
+        }
+      });
+      savedReminders.push(saved);
+    }
+    
+    return { success: true, count: savedReminders.length };
+  }
+
   async searchDocuments(query: string, company: string, username: string, requestedModel?: string) {
     try {
-      // @ts-ignore
-      const docs = await prisma.document.findMany({
+      const docs = await (prisma as any).document.findMany({
         where: { company, status: 'ACTIVE' },
       });
 
@@ -115,8 +162,7 @@ export class DocumentService {
       const responseText = answer.text || 'No response generated.';
 
       try {
-        // @ts-ignore
-        await prisma.searchHistory.create({
+        await (prisma as any).searchHistory.create({
           data: {
             username: username || 'Anonymous',
             company: company,
@@ -139,23 +185,17 @@ export class DocumentService {
     }
   }
 
-async deleteDocument(driveId: string) {
-    // 1. Delete from Google Drive FIRST (Handles both folders and files)
+  async deleteDocument(driveId: string) {
     try {
       await this.driveService.deleteFile(driveId);
     } catch (e) { 
       this.logger.warn(`Drive file inaccessible or already deleted.`); 
     }
 
-    // 2. Look up the document in the Prisma DB using the Drive ID
-    // @ts-ignore
-    const docs = await prisma.document.findMany({
-      where: { 
-        googleDriveLink: { contains: driveId } 
-      }
+    const docs = await (prisma as any).document.findMany({
+      where: { googleDriveLink: { contains: driveId } }
     });
 
-    // 3. If it's a file that exists in the database, wipe it from Gemini and Prisma
     if (docs && docs.length > 0) {
       const doc = docs[0];
 
@@ -167,8 +207,7 @@ async deleteDocument(driveId: string) {
         }
       }
 
-      // @ts-ignore
-      await prisma.document.delete({ where: { id: doc.id } });
+      await (prisma as any).document.delete({ where: { id: doc.id } });
     }
     
     return { success: true, message: 'Item permanently deleted from Drive, Gemini, and Database' };

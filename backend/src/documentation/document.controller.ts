@@ -15,20 +15,15 @@ export class DocumentController {
   async getDirectory(@Headers('x-company') company: string) {
     if (!company) throw new BadRequestException('Company header missing');
     
-    // 1. Fetch your existing directory logic
     const directoryData = await this.documentService.getCompanyDirectory(company);
-    
-    // 2. Fetch the new storage quota
     const storageQuota = await this.driveService.getStorageQuota();
 
-    // 3. Merge them so the frontend gets exactly what it expects
     return {
       ...directoryData,
       storageQuota
     };
   }
 
-  // --- THE NESTING FIX IS HERE ---
   @Post('folder')
   async createFolder(
     @Headers('x-company') company: string,
@@ -38,20 +33,15 @@ export class DocumentController {
       throw new BadRequestException('Company and Folder Name are required');
     }
 
-    // Extract the parent ID sent from the frontend payload
     const targetId = body.targetFolderId || body.parentFolderId;
-
-    // Call DriveService directly to properly nest the folder
     return this.driveService.createSubFolder(company, body.folderName, targetId);
   }
 
-  // --- FOLDER RENAME ENDPOINT ---
   @Patch('folder/:id/rename')
   async renameFolder(@Param('id') id: string, @Body() body: { newName: string }) {
     if (!body.newName || body.newName.trim() === '') {
       throw new BadRequestException('New folder name is required.');
     }
-    // We call DriveService directly here since it already handles the rename logic perfectly
     return this.driveService.renameFolder(id, body.newName);
   }
 
@@ -69,6 +59,22 @@ export class DocumentController {
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
     return this.documentService.processNewDocument(file, company, username, targetFolderId);
+  }
+
+  // --- NEW: ANALYZE EXPIRY DATES ---
+  @Post('analyze-expiry')
+  async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
+    if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
+    // Convert IDs to numbers since Prisma Document ID is an Int
+    const numericIds = body.fileIds.map(id => Number(id)).filter(id => !isNaN(id));
+    return this.documentService.analyzeExpiryDates(numericIds, company);
+  }
+
+  // --- NEW: SAVE REMINDERS ---
+  @Post('save-reminders')
+  async saveReminders(@Body() body: { reminders: any[] }, @Headers('x-company') company: string) {
+    if (!body.reminders || !Array.isArray(body.reminders)) throw new BadRequestException('Invalid reminders payload');
+    return this.documentService.saveReminders(body.reminders, company);
   }
 
   @Post('search')
