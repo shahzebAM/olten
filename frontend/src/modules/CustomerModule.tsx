@@ -451,15 +451,16 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
       )}
 
       {/* PRICING EDITOR MODAL */}
+   {/* PRICING EDITOR MODAL */}
       {isPricingModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
-                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50 shrink-0">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center sm:p-4">
+              <div className="bg-white sm:rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[95vh] animate-in zoom-in-95 duration-200">
+                  <div className="p-4 sm:p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50 shrink-0">
                       <div>
-                          <h3 className="text-xl font-black text-amber-900 tracking-tight uppercase">Category Pricing</h3>
-                          <p className="text-xs font-bold text-amber-700 tracking-widest uppercase mt-1">Editing Tier: {pricingCategory}</p>
+                          <h3 className="text-lg sm:text-xl font-black text-amber-900 tracking-tight uppercase">Category Pricing</h3>
+                          <p className="text-[10px] sm:text-xs font-bold text-amber-700 tracking-widest uppercase mt-1">Editing Tier: {pricingCategory}</p>
                       </div>
-                      <button type="button" onClick={() => setIsPricingModalOpen(false)} className="text-amber-400 hover:text-amber-700 font-black text-xl">✕</button>
+                      <button type="button" onClick={() => setIsPricingModalOpen(false)} className="text-amber-400 hover:text-amber-700 font-black text-xl px-2">✕</button>
                   </div>
 
                   <div className="p-4 bg-white border-b border-slate-200 flex flex-col sm:flex-row gap-4 items-center justify-between shrink-0">
@@ -470,36 +471,45 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                               placeholder="e.g. 10 or -5" 
                               value={bulkPercentage} 
                               onChange={e => setBulkPercentage(e.target.value)} 
-                              className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
+                              className="w-full sm:w-32 px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
                           />
-                          <button onClick={applyBulkPercentage} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 transition-colors">Apply</button>
+                          <button onClick={applyBulkPercentage} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 transition-colors shrink-0">Apply</button>
                       </div>
                       <p className="text-[10px] font-bold text-slate-400 max-w-xs text-right hidden sm:block">Positive numbers increase price, negative numbers grant a discount.</p>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-0 bg-slate-50">
-                      <table className="w-full text-left text-sm whitespace-nowrap">
+                      {/* Removed whitespace-nowrap to stop horizontal scrolling */}
+                      <table className="w-full text-left text-sm">
                           <thead className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
                               <tr>
-                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">SKU</th>
-                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Name</th>
-                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Standard Price</th>
-                                  <th className="py-3 px-6 font-black text-amber-600 uppercase tracking-widest text-[10px] text-right">Category Price</th>
+                                  <th className="py-2 px-3 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden sm:table-cell w-32">SKU</th>
+                                  <th className="py-2 px-3 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px]">Product Name</th>
+                                  <th className="py-2 px-3 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-24 sm:w-32">Std Price</th>
+                                  <th className="py-2 px-3 sm:px-6 font-black text-amber-600 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-28 sm:w-36">Category Price</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                               {allProducts.map(p => (
                                   <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
-                                      <td className="py-2 px-6 font-mono text-xs text-slate-500">{p.sku}</td>
-                                      <td className="py-2 px-6 font-bold text-slate-800 uppercase">{p.name}</td>
-                                      <td className="py-2 px-6 text-right font-mono text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
-                                      <td className="py-2 px-6 text-right">
+                                      {/* Hidden on mobile, shown on desktop */}
+                                      <td className="py-1.5 px-3 sm:px-6 font-mono text-[10px] sm:text-xs text-slate-500 hidden sm:table-cell">{p.sku}</td>
+                                      
+                                      <td className="py-1.5 px-3 sm:px-6">
+                                        <div className="font-bold text-[11px] sm:text-xs text-slate-800 uppercase leading-tight">{p.name}</div>
+                                        {/* SKU falls back here under the name only on mobile */}
+                                        <div className="sm:hidden font-mono text-[9px] text-slate-400 uppercase mt-0.5">{p.sku}</div>
+                                      </td>
+                                      
+                                      <td className="py-1.5 px-3 sm:px-6 text-right font-mono text-[11px] sm:text-xs text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
+                                      
+                                      <td className="py-1.5 px-3 sm:px-6 text-right">
                                           <input 
                                               type="number" 
                                               step="0.01"
                                               value={categoryPrices[p.id] !== undefined ? categoryPrices[p.id] : ''} 
                                               onChange={e => setCategoryPrices({...categoryPrices, [p.id]: e.target.value})} 
-                                              className="w-32 px-3 py-1.5 border border-slate-200 rounded-md text-sm font-black text-amber-900 outline-none focus:ring-2 focus:ring-amber-500 text-right bg-white shadow-sm"
+                                              className="w-full min-w-[70px] max-w-[120px] px-2 sm:px-3 py-1 sm:py-1.5 border border-slate-200 rounded-md text-[11px] sm:text-sm font-black text-amber-900 outline-none focus:ring-2 focus:ring-amber-500 text-right bg-white shadow-sm"
                                           />
                                       </td>
                                   </tr>
@@ -508,10 +518,10 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                       </table>
                   </div>
 
-                  <div className="p-6 border-t border-slate-100 bg-white shrink-0 flex justify-end gap-3">
+                  <div className="p-4 sm:p-6 border-t border-slate-100 bg-white shrink-0 flex justify-end gap-3">
                       <button type="button" onClick={() => setIsPricingModalOpen(false)} className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-200 transition-colors">Cancel</button>
                       <button onClick={saveCategoryPrices} disabled={isLoading} className="px-8 py-2.5 bg-amber-500 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-amber-600 transition-colors disabled:opacity-50">
-                          {isLoading ? 'Saving...' : 'Save Pricing Rules'}
+                          {isLoading ? 'Saving...' : 'Save Rules'}
                       </button>
                   </div>
               </div>
