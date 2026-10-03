@@ -379,8 +379,6 @@ useEffect(() => {
                   {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
-            </div>
-
             <div className="flex shrink-0">
                 <button 
                   onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })}
@@ -389,6 +387,8 @@ useEffect(() => {
                   + Register Customer
                 </button>
               </div>
+            </div>
+
 
             {/* DATA TABLE - EXCEL STYLE COMPACT WITH TEXT WRAP */}
             <div className="bg-white border border-slate-300 shadow-sm flex flex-col overflow-hidden">
