@@ -75,18 +75,41 @@ export class DocumentService {
     // Fetch docs from DB to get their pre-existing Gemini URI
     const docs = await (prisma as any).document.findMany({
       where: { 
-        id: { in: fileIds }, // <--- Now uses the raw IDs perfectly
+        id: { in: fileIds },
         company: company
       }
     });
 
     // Ask Gemini for the expiry dates using the already uploaded URI
     for (const doc of docs) {
-      if (doc.geminiFileUri) {
-        const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
-        results[doc.id.toString()] = expiry;
+      if (doc.geminiFileUri && doc.geminiFileId) {
+        
+        try {
+          let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
+          let retries = 0;
+          
+          // Images finish instantly. PDFs take a few seconds. Wait until 'ACTIVE'.
+          while (status === 'PROCESSING' && retries < 15) {
+             await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+             status = await this.geminiService.checkFileStatus(doc.geminiFileId);
+             retries++;
+          }
+          
+          // Once Active, safely ask for the expiry date
+          if (status === 'ACTIVE') {
+            const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
+            results[doc.id.toString()] = expiry;
+          } else {
+            this.logger.warn(`File ${doc.geminiFileId} failed to process. Status: ${status}`);
+            results[doc.id.toString()] = '';
+          }
+        } catch (e) {
+          this.logger.warn(`Status check failed for ${doc.geminiFileId}`);
+          results[doc.id.toString()] = '';
+        }
+        
       } else {
-        results[doc.id.toString()] = null;
+        results[doc.id.toString()] = '';
       }
     }
     

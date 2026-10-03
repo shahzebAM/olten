@@ -105,8 +105,8 @@ CRITICAL RULES:
 // --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
-      const prompt = `Find the final expiration date, validity end date, or renewal deadline in this document. 
-      Look for phrases like "Validity of License" or "Valid Until".
+      const prompt = `Analyze this image or document and find the final expiration date, validity end date, or renewal deadline. 
+      Look for phrases like "Validity of License", "Valid Until", or "Expiry".
       
       You MUST return the date written out in natural text format exactly like this: Month DD, YYYY (e.g., January 28, 2028).
       
