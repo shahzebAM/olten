@@ -167,7 +167,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const categories = await catRes.json();
         setCustomerCategories(categories);
 
-        // Auto-select the first pricing tier filter if none is set
         if (categories.length > 0 && !selectedPricingTierFilter) {
             setSelectedPricingTierFilter(categories[0].name);
         }
@@ -309,7 +308,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       sku: productForm.sku,
       category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0,
-      sellingPrice: 0, // Hardcoded to 0 since removed from UI
+      sellingPrice: 0,
       minQuantity: parseInt(String(productForm.minQuantity)) || 10,
       reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
       unit: productForm.unit || 'pcs',
@@ -340,7 +339,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     
-    // Optimistic UI state update locks in the input immediately
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -360,7 +358,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = Number(productModal.editingId || resData.id || tempId);
         
-        // Push all category prices securely using the strict bulk route
         if (Object.keys(sanitizedPricesToSave).length > 0) {
             const pricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
                 return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
@@ -409,7 +406,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               basePrice = Number(p.purchasePrice) || 0;
           }
           
-          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
+          const newPrice = basePrice > 0 ? basePrice * (1 + (pct / 100)) : 0;
           return { productId: Number(p.id), price: Number(newPrice.toFixed(2)) };
       }).filter(item => item.price > 0);
 
@@ -418,13 +415,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           return showToast("No items with a non-zero base price were found to adjust.", "error");
       }
 
-      // Optimistic Bulk UI Update
       setProducts((prev: Product[]) => prev.map(p => {
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
               basePrice = Number(p.purchasePrice) || 0;
           }
-          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
+          const newPrice = basePrice > 0 ? basePrice * (1 + (pct / 100)) : 0;
           if (newPrice > 0) {
               return { ...p, categoryPrices: { ...(p.categoryPrices || {}), [bulkPricingModal.tier]: Number(newPrice.toFixed(2)) } };
           }
@@ -805,11 +801,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6 bg-[#F8FAFC]">
+        {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
+        <main className="flex-1 flex flex-col p-6 bg-[#F8FAFC] overflow-hidden min-h-0">
           
           {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-300 flex flex-col h-[calc(100vh-8rem)]">
+            <div className="flex flex-col h-full w-full max-w-[1600px] mx-auto animate-in fade-in duration-300 space-y-4">
               
               <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                 <div className="flex flex-1 flex-col xl:flex-row gap-3">
@@ -873,23 +870,26 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
 
-              {/* EXCEL-STYLE TABLE (Now strictly scrollable independent of the page) */}
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden min-h-0">
-                <div className="overflow-auto w-full relative flex-1">
+              {/* STICKY SCROLLING TABLE CONTAINER */}
+              <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm relative min-h-0 overflow-hidden flex flex-col">
+                <div className="absolute inset-0 overflow-auto">
                   <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1200px]">
-                    <thead className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+                    <thead className="bg-slate-50 sticky top-0 z-20 shadow-sm border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4 w-12 text-center border-b border-slate-200 align-middle">
                           <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
                         </th>
                         <th className="py-2 px-4 w-[30%] border-b border-slate-200 align-middle">
-                          <input 
-                            type="text" 
-                            placeholder="SEARCH SKU OR NAME..." 
-                            value={searchQuery} 
-                            onChange={(e) => setSearchQuery(e.target.value)} 
-                            className="w-full pl-3 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" 
-                          />
+                          <div className="relative">
+                            <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                            <input 
+                              type="text" 
+                              placeholder="SEARCH SKU OR NAME..." 
+                              value={searchQuery} 
+                              onChange={(e) => setSearchQuery(e.target.value)} 
+                              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 transition-shadow shadow-sm" 
+                            />
+                          </div>
                         </th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[12%] border-b border-slate-200 align-middle">Category</th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200 align-middle">
@@ -983,11 +983,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     </tbody>
                   </table>
                 </div>
-                
-                {/* COMPACT FOOTER */}
-                <div className="p-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0">
-                  <div className="px-2">Showing {filteredProducts.length} Items</div>
-                </div>
+              </div>
+              
+              {/* COMPACT FOOTER */}
+              <div className="p-2 bg-slate-50 flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0 rounded-b-2xl -mt-4 border-t border-slate-200">
+                <div className="px-2">Showing {filteredProducts.length} Items</div>
               </div>
             </div>
           )}
@@ -1315,6 +1315,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <button 
                             type="button" 
                             onClick={() => {
+                              // Restore image from deleted vault back to form and global vault
                               setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
                               globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
                               delete deletedImageVault[productForm.sku];
