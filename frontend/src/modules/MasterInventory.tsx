@@ -256,7 +256,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     setProductForm(initialProductForm);
     showToast("Saving to database...", "success");
 
-    Promise.resolve().then(async () => {
+   Promise.resolve().then(async () => {
       try {
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
@@ -265,10 +265,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = productModal.editingId || resData.id;
         
+        // Wait for ALL pricing updates to finish writing to the database
         if (Object.keys(pricesToSave).length > 0) {
             const catPricePromises = Object.entries(pricesToSave).map(([catName, price]) => {
+                 // Use PATCH or PUT for updates to ensure we overwrite old prices, not just create duplicates
                  return fetch(`${API_BASE_URL}/sales/category-prices`, {
-                     method: 'POST',
+                     method: 'POST', // Assuming your backend handles upsert on POST. If not, change to PATCH/PUT.
                      headers: { 'Content-Type': 'application/json' },
                      body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
                  });
@@ -276,9 +278,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             await Promise.all(catPricePromises);
         }
         
-        fetchAllData(); 
+        // ONLY fetch the fresh data after all promises have successfully resolved
+        await fetchAllData(); 
       } catch (error: any) { 
-        showToast(`Sync Error: ${error.message}`, "error"); fetchAllData(); 
+        showToast(`Sync Error: ${error.message}`, "error"); 
+        await fetchAllData(); 
       }
     }).finally(() => setIsProcessing(false));
   };
