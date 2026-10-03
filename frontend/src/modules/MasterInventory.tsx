@@ -89,7 +89,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
   const [warehouseSearchQuery, setWarehouseSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
-  const [selectedPricingTierFilter, setSelectedPricingTierFilter] = useState<string>('ALL');
+  const [selectedPricingTierFilter, setSelectedPricingTierFilter] = useState<string>('');
+
   const uniqueCategories = Array.from(new Set(products.map(p => p.category))).sort();
 
   // --- MODAL CONTROLLERS ---
@@ -106,7 +107,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [placementPo, setPlacementPo] = useState<any>(null);
   const [placementDestinations, setPlacementDestinations] = useState<Record<string, string>>({});
 
-  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: '', sellingPrice: '', categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
+  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: '', sellingPrice: 0, categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
@@ -165,26 +166,39 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       if (catRes.ok) {
         const categories = await catRes.json();
         setCustomerCategories(categories);
+
+        // Auto-select the first pricing tier filter if none is set
+        if (categories.length > 0 && !selectedPricingTierFilter) {
+            setSelectedPricingTierFilter(categories[0].name);
+        }
         
         try {
-            // Uses the efficient `/all` route to grab DB prices instantly
-            const pricesRes = await fetch(`${API_BASE_URL}/sales/category-prices/all?company=${encodeURIComponent(selectedCompany)}`);
-            if (pricesRes.ok) {
-                const pricesData = await pricesRes.json();
-                const priceMap: Record<number, Record<string, number>> = {};
-                pricesData.forEach((p: any) => {
-                    const pid = Number(p.productId);
-                    if (!isNaN(pid)) {
+            const pricePromises = categories.map(async (cat: any) => {
+                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${encodeURIComponent(selectedCompany)}&categoryName=${encodeURIComponent(cat.name)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    return { catName: cat.name, data: Array.isArray(data) ? data : (data.data || []) };
+                }
+                return { catName: cat.name, data: [] };
+            });
+
+            const categoryPriceResults = await Promise.all(pricePromises);
+            const priceMap: Record<number, Record<string, number>> = {};
+            
+            categoryPriceResults.forEach(result => {
+                result.data.forEach((p: any) => {
+                    const pid = Number(p.productId || p.product?.id);
+                    if (!isNaN(pid) && pid > 0) {
                         if (!priceMap[pid]) priceMap[pid] = {};
-                        priceMap[pid][p.categoryName] = Number(p.price);
+                        priceMap[pid][result.catName] = Number(p.price);
                     }
                 });
-                
-                productsList = productsList.map(prod => ({
-                    ...prod,
-                    categoryPrices: priceMap[Number(prod.id)] || {}
-                }));
-            }
+            });
+            
+            productsList = productsList.map(prod => ({
+                ...prod,
+                categoryPrices: priceMap[Number(prod.id)] || {}
+            }));
         } catch(e) {
             console.error("Error fetching category prices", e);
         }
@@ -193,7 +207,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } catch (e) { 
       console.error("API Error", e); 
     }
-  }, [API_BASE_URL, selectedCompany]);
+  }, [API_BASE_URL, selectedCompany, selectedPricingTierFilter]);
 
   useEffect(() => { fetchAllData(); }, [fetchAllData]);
 
@@ -286,7 +300,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- FIXED: SYNCHRONOUS PRODUCT & PRICING SAVE ---
+  // --- FIXED SAVE ALGORITHM: STRICT ENDPOINTS & BULK SCHEMAS ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -296,7 +310,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       sku: productForm.sku,
       category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0,
-      sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
+      sellingPrice: 0, // Hardcoded to 0 since removed from UI
       minQuantity: parseInt(String(productForm.minQuantity)) || 10,
       reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
       unit: productForm.unit || 'pcs',
@@ -347,7 +361,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = Number(productModal.editingId || resData.id || tempId);
         
-        // Uses the bulk route for single saves to bypass 500 errors from backend validator rules
+        // Push all category prices securely using the strict bulk route
         if (Object.keys(sanitizedPricesToSave).length > 0) {
             const pricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
                 return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
@@ -367,11 +381,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // Wait exactly 600ms to fetch so the NestJS DB completes all commits
+        // Wait exactly 1000ms to fetch so the NestJS DB completes all commits
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
-        }, 600);
+        }, 1000);
         
     } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
@@ -380,7 +394,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }
   };
 
-  // --- FIXED: BULK PRICING CALCULATOR & API DISPATCHER ---
+  // --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all required fields.", "error");
@@ -388,15 +402,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       const pct = parseFloat(bulkPricingModal.percentage);
       if (isNaN(pct)) return showToast("Please enter a valid percentage number.", "error");
 
-      if (!window.confirm(`Adjust all product prices for the "${bulkPricingModal.tier}" tier by ${pct}% based on their current tier prices?`)) return;
+      if (!window.confirm(`Adjust all product prices for the "${bulkPricingModal.tier}" tier by ${pct}%?`)) return;
 
       setIsProcessing(true);
 
       const payload = products.map(p => {
-          // Strictly base calculation on current tier price. If 0 or missing, fallback to selling price to avoid multiplying by zero.
+          // Strictly base calculation on current tier price. If 0 or missing, fallback to cost price so it doesn't calculate 0.
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.sellingPrice) || 0;
+              basePrice = Number(p.purchasePrice) || 0;
           }
           
           const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
@@ -412,7 +426,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       setProducts((prev: Product[]) => prev.map(p => {
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.sellingPrice) || 0;
+              basePrice = Number(p.purchasePrice) || 0;
           }
           const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           if (newPrice > 0) {
@@ -440,7 +454,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           setTimeout(async () => {
             await fetchAllData();
             setIsProcessing(false);
-          }, 600);
+          }, 1000);
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
           setIsProcessing(false);
@@ -698,7 +712,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     try {
       const exportData = products.map(p => ({
         "SKU": p.sku, "Product Name": p.name, "Category": p.category,
-        "Cost Price (₱)": p.purchasePrice, "Selling Price (₱)": p.sellingPrice,
+        "Cost Price (₱)": p.purchasePrice, "Tier Price (₱)": p.categoryPrices?.[selectedPricingTierFilter] || 0,
         "Master Stock": p.currentStock, "Unit": p.unit, "Reorder Level": p.reorderLevel,
         "Barcode": p.barcode || 'N/A', "Status": p.isActive ? "Active" : "Inactive"
       }));
@@ -713,8 +727,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
-    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; 
-    return matchesSearch && matchesCategory && matchesPricingTier;
+    return matchesSearch && matchesCategory;
   });
 
   const filteredProductsForDropdown = products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()));
@@ -826,13 +839,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     ))}
                   </select>
 
-                  {/* CUSTOMER PRICING TIER FILTER DROPDOWN */}
+                  {/* CUSTOMER PRICING TIER FILTER DROPDOWN (Now Mandatory Selection) */}
                   <select 
                     value={selectedPricingTierFilter} 
                     onChange={(e) => setSelectedPricingTierFilter(e.target.value)} 
                     className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer text-slate-700 w-full xl:w-48 appearance-none"
                   >
-                    <option value="ALL">General Pricing Tier</option>
+                    {customerCategories.length === 0 && <option value="">No Tiers Available</option>}
                     {customerCategories.map(cat => (
                       <option key={cat.id} value={cat.name}>Tier: {cat.name}</option>
                     ))}
@@ -886,7 +899,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[30%] border-b border-slate-200">SKU / Item</th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[12%] border-b border-slate-200">Category</th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">
-                          {selectedPricingTierFilter === 'ALL' ? 'General Pricing' : `Tier: ${selectedPricingTierFilter}`}
+                          {selectedPricingTierFilter ? `Tier: ${selectedPricingTierFilter}` : 'Tier Price'}
                         </th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">Master Stock</th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">
@@ -900,9 +913,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                         <tr><td colSpan={7} className="py-12 text-center text-slate-400 font-medium">No items found matching your filters.</td></tr>
                       ) : (
                         filteredProducts.map(p => {
-                          const displayPrice = selectedPricingTierFilter === 'ALL' 
-                            ? Number(p.sellingPrice) 
-                            : Number(p.categoryPrices?.[selectedPricingTierFilter] ?? p.sellingPrice);
+                          const displayPrice = Number(p.categoryPrices?.[selectedPricingTierFilter] || 0);
                             
                           return (
                             <tr key={p.id} className={`hover:bg-slate-50 transition-colors group ${selectedProductIds.includes(p.id) ? 'bg-blue-50/20' : ''}`}>
@@ -926,7 +937,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                 <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
                               </td>
                               <td className="py-2.5 px-4 align-middle">
-                                <div className={`font-mono text-[11px] font-black ${selectedPricingTierFilter !== 'ALL' && p.categoryPrices?.[selectedPricingTierFilter] ? 'text-amber-600' : 'text-slate-900'}`}>
+                                <div className="font-mono text-[11px] font-black text-amber-600">
                                   ₱{displayPrice.toFixed(2)}
                                 </div>
                                 <div className="font-mono text-[9px] text-slate-400">Cost: ₱{Number(p.purchasePrice).toFixed(2)}</div>
@@ -1260,7 +1271,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%)</label>
                 <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 or -5" />
-                <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from the current Tier Price (or General Selling Price if unset).</span>
+                <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from the current Tier Price (or Cost Price if unset).</span>
               </div>
 
               <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
@@ -1335,8 +1346,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price (General Tier)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+                <div className="flex flex-col gap-1.5 md:col-span-2"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price (₱)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
                 
                 {/* DYNAMIC CATEGORY PRICING UI */}
                 {customerCategories.length > 0 && (
@@ -1351,7 +1361,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                               <input 
                                 type="number" 
                                 step="0.01" 
-                                placeholder="Uses General Price..."
+                                placeholder="Enter Price..."
                                 value={productForm.categoryPrices?.[cat.name] ?? ''} 
                                 onChange={e => {
                                   setProductForm((prev: any) => ({
