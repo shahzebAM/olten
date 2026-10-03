@@ -32,6 +32,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   // --- SUBMISSION LOCKS ---
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string } | null>(null);
 
   // --- RESPONSIVE STATES ---
@@ -42,7 +43,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [folders, setFolders] = useState<DriveFolder[]>([]);
   const [files, setFiles] = useState<DriveFile[]>([]);
   
-  // --- NEW: STORAGE STATE ---
+  // --- STORAGE STATE ---
   const [storageData, setStorageData] = useState<{ usage: string, limit: string } | null>(null);
   
   // --- WORKSPACE & TREE STATES ---
@@ -51,10 +52,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   
   // --- EXPIRY REMINDER STATES ---
-  const [reminderModalOpen, setReminderModalOpen] = useState(false);
-  const [uploadedRecentFiles, setUploadedRecentFiles] = useState<{id: string, name: string, expiryDate?: string, reminderDays: string}[]>([]);
-  const [isAnalyzingExpiry, setIsAnalyzingExpiry] = useState(false);
-  const [isSavingReminders, setIsSavingReminders] = useState(false);
+  const [expiryReviewModal, setExpiryReviewModal] = useState({
+    isOpen: false,
+    isAnalyzing: false,
+    files: [] as { id: number; name: string; expiryDate: string; reminderDays: number }[]
+  });
 
   // --- MULTI-SELECT STATE ---
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -127,7 +129,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [isDraggingResizer, resize, stopResizing]);
 
   // --- API: FETCH DIRECTORY ---
-  // --- API: FETCH DIRECTORY ---
   const fetchDirectory = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
     try {
@@ -171,7 +172,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   }, [API_BASE_URL, selectedCompany, loginUsername]);
 
-useEffect(() => {
+  useEffect(() => {
     fetchDirectory(); // Initial fetch (shows loader)
 
     // Silent cross-device background sync every 3 seconds
@@ -215,119 +216,95 @@ useEffect(() => {
     }
   };
 
-  // --- API: UPLOAD FILE ---
-// --- API: UPLOAD FILE(S) ---
-// --- API: UPLOAD FILE(S) ---
-// --- API: UPLOAD FILE(S) ---
-// --- API: UPLOAD FILE(S) ---
+  // --- API: UPLOAD FILE(S) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files;
-    if (!selectedFiles || selectedFiles.length === 0) return;
+    const filesArray = Array.from(e.target.files || []);
+    if (filesArray.length === 0) return;
     
     setIsUploading(true);
-    let successCount = 0;
-    
-    const newlyUploaded: {id: string, name: string, expiryDate?: string, reminderDays: string}[] = [];
-    
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      setUploadProgress({ current: i + 1, total: selectedFiles.length, filename: file.name });
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      if (activeFolderId && activeFolderId !== rootFolderId) {
-        formData.append('targetFolderId', activeFolderId);
-      }
+    setIsProcessing(true);
+    const uploadedDocs = [];
 
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
-          method: 'POST',
-          headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
-          body: formData,
-        });
-        
-        if (res.ok) {
-          // 1. GET THE REAL DATABASE OBJECT RETURNED BY YOUR BACKEND
-          const uploadedDoc = await res.json();
-          successCount++;
-          
-          // 2. USE THE REAL ID INSTEAD OF A TEMP STRING
-          newlyUploaded.push({ 
-            id: String(uploadedDoc.id), 
-            name: file.name, 
-            reminderDays: '30' 
-          });
-        }
-      } catch (err: any) {
-        console.error(`Failed to upload ${file.name}`, err);
-      }
+    // 1. Upload files to Drive & Gemini
+    for (let i = 0; i < filesArray.length; i++) {
+       const file = filesArray[i];
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name });
+       
+       const formData = new FormData();
+       formData.append('file', file);
+       
+       if (activeFolderId && activeFolderId !== rootFolderId) {
+         formData.append('targetFolderId', activeFolderId); 
+       }
+
+       try {
+         const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
+             method: 'POST',
+             headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
+             body: formData
+         });
+         if (res.ok) uploadedDocs.push(await res.json());
+       } catch (err) {
+         console.error(`Failed to upload ${file.name}`);
+       }
     }
 
-    if (successCount > 0) {
-      showToast(`Successfully uploaded ${successCount} document(s)`, 'success');
-      if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
-      fetchDirectory(true);
-      
-      setUploadedRecentFiles(newlyUploaded);
-      setReminderModalOpen(true);
-      
-      // 3. NOW GEMINI GETS THE REAL ID AND CAN ACTUALLY READ THE FILE!
-      analyzeExpiryDatesWithGemini(newlyUploaded);
-
-    } else {
-      showToast('Upload failed for all selected files.', 'error');
-    }
-
-    setIsUploading(false);
     setUploadProgress(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+    setIsUploading(false);
 
-  // --- API: GEMINI EXPIRY ANALYSIS ---
-  const analyzeExpiryDatesWithGemini = async (filesToAnalyze: {id: string, name: string}[]) => {
-    setIsAnalyzingExpiry(true);
+    if (uploadedDocs.length === 0) {
+       setIsProcessing(false);
+       return showToast("Failed to upload files.", "error");
+    }
+
+    // 2. Open Modal & Trigger Gemini AI Expiry Analysis
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: [] });
+    setIsProcessing(false);
+    fetchDirectory(true); // Fast refresh background tree
+
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-        body: JSON.stringify({ fileIds: filesToAnalyze.map(f => f.id) })
-      });
-      
-      if (res.ok) {
-        const aiResults = await res.json(); 
-        
-        setUploadedRecentFiles(prev => prev.map(file => ({
-          ...file,
-          expiryDate: aiResults[file.id] || ''
-        })));
-      }
+       const fileIds = uploadedDocs.map((d: any) => d.id);
+       const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+          body: JSON.stringify({ fileIds })
+       });
+       const expiryData = await analysisRes.json();
+
+       // 3. Populate Modal with AI Results (Defaulting reminder to 30 days)
+       const reviewFiles = uploadedDocs.map((doc: any) => ({
+          id: doc.id,
+          name: doc.originalName || doc.filename || 'Document',
+          expiryDate: expiryData[doc.id] || '',
+          reminderDays: 30 
+       }));
+
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
     } catch (err) {
-      console.error("Failed to analyze expiry dates", err);
-    } finally {
-      setIsAnalyzingExpiry(false);
+       showToast("Failed to auto-analyze dates.", "error");
+       setExpiryReviewModal({ isOpen: false, isAnalyzing: false, files: [] });
     }
   };
 
   // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
-    setIsSavingReminders(true);
-    try {
-      const validReminders = uploadedRecentFiles.filter(f => f.expiryDate);
-      
-      if (validReminders.length > 0) {
-        await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-          body: JSON.stringify({ reminders: validReminders })
-        });
-        showToast('Reminders scheduled successfully', 'success');
-      }
-      setReminderModalOpen(false);
-    } catch (err) {
-      showToast('Failed to save reminders', 'error');
-    } finally {
-      setIsSavingReminders(false);
-    }
+     setIsProcessing(true);
+     try {
+         const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+             body: JSON.stringify({ reminders: expiryReviewModal.files })
+         });
+         
+         if (!res.ok) throw new Error("Failed to save");
+         
+         showToast("Reminders saved successfully!", "success");
+         setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false });
+     } catch (err) {
+         showToast("Failed to save reminders.", "error");
+     } finally {
+         setIsProcessing(false);
+     }
   };
 
   // --- API: CREATE FOLDER ---
@@ -421,7 +398,6 @@ useEffect(() => {
     const q = localQuery.toLowerCase();
     return files.filter(f => f.name.toLowerCase().includes(q));
   }, [files, localQuery]);
-
 
   // --- RECURSIVE SELECTION LOGIC ---
   const getAllDescendants = useCallback((parentId: string, currentDescendants = new Set<string>()) => {
@@ -669,7 +645,7 @@ useEffect(() => {
       <main className="flex flex-1 overflow-hidden relative">
         
         {/* PANE 1: UNIFIED LEFT SIDEBAR */}
-      {/* Dark overlay backdrop for mobile */}
+        {/* Dark overlay backdrop for mobile */}
         {isMobileNavOpen && (
           <div className="absolute inset-0 bg-slate-900/20 z-30 lg:hidden" onClick={() => setIsMobileNavOpen(false)} />
         )}
@@ -689,7 +665,6 @@ useEffect(() => {
             </div>
 
             {/* MINI PROGRESS BAR FOR UPLOADS */}
-{/* MINI PROGRESS BAR FOR UPLOADS */}
             {isUploading && uploadProgress && (
               <div className="flex flex-col gap-1.5 mt-1 mb-1">
                 <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest text-center truncate">
@@ -799,20 +774,21 @@ useEffect(() => {
           ref={rightPaneRef} 
           className="w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex flex-col z-20 lg:z-auto"
         >
- {/* MOBILE BACK BUTTON */}
-  <div className="lg:hidden p-4 bg-white border-b border-slate-200 flex items-center shrink-0">
-    <button onClick={() => setIsMobileNavOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-indigo-600">
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-      Back to Directory
-    </button>
-  </div>         
+          {/* MOBILE BACK BUTTON */}
+          <div className="lg:hidden p-4 bg-white border-b border-slate-200 flex items-center shrink-0">
+            <button onClick={() => setIsMobileNavOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-indigo-600">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              Back to Directory
+            </button>
+          </div>         
+          
           {/* AI ANSWER PANEL (Top Section) */}
           {aiAnswer && (
            <div 
-                      style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
-                      className={`flex flex-col ${selectedFile ? 'shrink-0 bg-slate-50/40' : 'flex-1 min-h-0'}`}
-                    >
-                      <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'p-4 lg:p-8'}`}>
+              style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
+              className={`flex flex-col ${selectedFile ? 'shrink-0 bg-slate-50/40' : 'flex-1 min-h-0'}`}
+            >
+              <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'p-4 lg:p-8'}`}>
                 <div className={`bg-white border border-indigo-100 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-top-4 ${selectedFile ? 'p-5 min-h-full' : 'p-6'}`}>
                   <button onClick={() => setAiAnswer(null)} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-white border border-slate-200 rounded-md shadow-sm transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
                   
@@ -845,22 +821,7 @@ useEffect(() => {
           {/* DOCUMENT PREVIEW PANEL (Bottom Section) */}
           {selectedFile ? (
             <div className="flex-1 flex flex-col min-h-0 relative bg-white">
-              {/* <div className="h-20 lg:h-24 border-b border-slate-100 flex flex-wrap justify-between items-center px-6 lg:px-12 shrink-0 bg-white"> */}
-                {/* <div className="flex items-center gap-4 truncate max-w-[80%]"> */}
-                  {/* <button onClick={() => setSelectedFile(null)} className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-slate-800 rounded-lg bg-slate-50">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
-                  </button> */}
-                  {/* <div className="w-10 h-10 rounded-lg bg-blue-50 hidden lg:flex items-center justify-center shrink-0">
-                    {getFileIcon(selectedFile.mimeType)}
-                  </div> */}
-                  {/* <div className="truncate">
-                    <h3 className="text-base lg:text-lg font-black text-slate-900 truncate tracking-tight">{selectedFile.name.replace(/\.[^/.]+$/, "")}</h3>
-                    <p className="text-[11px] font-medium text-slate-400 mt-0.5">{formatDate(selectedFile.createdTime)} • {(parseInt(selectedFile.size || '0') / 1024).toFixed(0)} KB • Edited via Drive</p>
-                  </div> */}
-                {/* </div> */}
-              {/* </div> */}
-
-                    {/* Direct Download Header */}
+              {/* Direct Download Header */}
               <div className="px-6 py-3 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
                 <span className="text-sm font-bold text-slate-800 truncate pr-4">{selectedFile.name}</span>
                 <a 
@@ -882,11 +843,11 @@ useEffect(() => {
                   <div className="flex-1 bg-white rounded-lg overflow-hidden flex flex-col shadow-sm border border-slate-200/60 min-h-[400px]">
                     {selectedFile.webViewLink ? (
                      <iframe 
-    src={selectedFile.webViewLink.replace('/view', '/preview')} 
-    className="w-full h-full border-0"
-    title={selectedFile.name}
-    sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
-  />
+                        src={selectedFile.webViewLink.replace('/view', '/preview')} 
+                        className="w-full h-full border-0"
+                        title={selectedFile.name}
+                        sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
+                      />
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50">
                         <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mb-4">{getFileIcon(selectedFile.mimeType)}</div>
@@ -933,85 +894,83 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Expiry Reminder Modal */}
-      {reminderModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl flex flex-col max-h-[80vh]">
-            
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
-                {isAnalyzingExpiry ? (
-                  <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                ) : (
-                  <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                )}
+      {/* AI EXPIRY & REMINDER REVIEW MODAL */}
+      {expiryReviewModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
+           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
+                 <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight">Document Validity Review</h3>
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Set Reminders for Uploaded Files</p>
+                 </div>
+                 {!expiryReviewModal.isAnalyzing && (
+                   <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                   </button>
+                 )}
               </div>
-              <div>
-                <h3 className="text-base font-black text-slate-800 tracking-tight leading-tight">Document Expiry Reminders</h3>
-                <p className="text-[11px] font-bold text-slate-400 mt-0.5">
-                  {isAnalyzingExpiry ? 'Gemini is scanning your documents for expiry dates...' : 'Review Gemini\'s findings and set your reminders.'}
-                </p>
-              </div>
-            </div>
 
-            <div className="overflow-y-auto pr-2 space-y-3 mb-4 flex-1 min-h-0">
-              {uploadedRecentFiles.map((file, idx) => (
-                <div key={file.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <p className="text-xs font-bold text-slate-700 truncate mb-3">{file.name}</p>
-                  
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Expiry Date</label>
-                      <input 
-                        type="date" 
-                        value={file.expiryDate || ''}
-                        onChange={(e) => {
-                          const newFiles = [...uploadedRecentFiles];
-                          newFiles[idx].expiryDate = e.target.value;
-                          setUploadedRecentFiles(newFiles);
-                        }}
-                        disabled={isAnalyzingExpiry}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-500 disabled:opacity-50"
-                      />
+              {expiryReviewModal.isAnalyzing ? (
+                 <div className="p-16 flex flex-col items-center justify-center space-y-6 bg-slate-50">
+                    <div className="animate-spin rounded-full h-14 w-14 border-4 border-indigo-200 border-t-indigo-600"></div>
+                    <div>
+                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">Gemini AI is analyzing your documents...</div>
+                      <div className="text-[10px] font-bold text-slate-400 text-center uppercase tracking-widest mt-2">Extracting expiry and validity dates. Please wait.</div>
                     </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Remind me (Days Before)</label>
-                      <input 
-                        type="number" 
-                        min="1"
-                        value={file.reminderDays}
-                        onChange={(e) => {
-                          const newFiles = [...uploadedRecentFiles];
-                          newFiles[idx].reminderDays = e.target.value;
-                          setUploadedRecentFiles(newFiles);
-                        }}
-                        disabled={isAnalyzingExpiry}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-500 disabled:opacity-50"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 shrink-0">
-              <button 
-                type="button" 
-                onClick={() => setReminderModalOpen(false)} 
-                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50"
-              >
-                Skip Reminders
-              </button>
-              <button 
-                onClick={handleSaveReminders}
-                disabled={isAnalyzingExpiry || isSavingReminders} 
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white text-xs font-bold shadow-sm flex items-center gap-2"
-              >
-                {isSavingReminders ? 'Saving...' : 'Save Reminders'}
-              </button>
-            </div>
-            
-          </div>
+                 </div>
+              ) : (
+                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
+                   <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
+                      Review the auto-detected dates below. If a document does not expire, simply leave the date blank.
+                   </div>
+                   
+                   {expiryReviewModal.files.map((file, index) => (
+                      <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                         <div className="flex-1 min-w-0 pr-4">
+                            <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                         </div>
+                         <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+                            <div className="flex flex-col gap-1.5">
+                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry Date</label>
+                               <input 
+                                 type="date" 
+                                 value={file.expiryDate} 
+                                 onChange={(e) => {
+                                    const newFiles = [...expiryReviewModal.files];
+                                    newFiles[index].expiryDate = e.target.value;
+                                    setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                 }} 
+                                 className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                               />
+                            </div>
+                            <div className="flex flex-col gap-1.5 w-32">
+                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Notify Days Before</label>
+                               <div className="relative">
+                                 <input 
+                                   type="number" 
+                                   min="1"
+                                   value={file.reminderDays} 
+                                   onChange={(e) => {
+                                      const newFiles = [...expiryReviewModal.files];
+                                      newFiles[index].reminderDays = Number(e.target.value);
+                                      setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                   }} 
+                                   className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                                 />
+                                 <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+                   ))}
+                   
+                   <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
+                      <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Reminders</button>
+                      <button onClick={handleSaveReminders} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
+                   </div>
+                 </div>
+              )}
+           </div>
         </div>
       )}
 
