@@ -510,7 +510,7 @@ useEffect(() => {
                       </form>
 
                       <div className="space-y-3">
-                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Categories</h4>
+                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Existing Categories</h4>
                           {categories.length === 0 ? (
                               <p className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-300 rounded-xl">No custom categories yet. "General" is used by default.</p>
                           ) : (
