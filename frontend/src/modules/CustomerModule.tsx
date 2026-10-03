@@ -345,7 +345,7 @@ useEffect(() => {
               onClick={() => setIsCategoryModalOpen(true)} 
               className="px-6 py-3.5 text-[10px] font-bold text-slate-500 border-b-[3px] border-transparent hover:text-slate-800 uppercase tracking-widest transition-colors"
             >
-              Pricing
+              Category & Pricing
             </button>
           )}
         </div>
@@ -491,7 +491,7 @@ useEffect(() => {
       {isCategoryModalOpen && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+                 <div className="p-4 sm:p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
                       <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Customer Categories</h3>
                       <button type="button" onClick={() => setIsCategoryModalOpen(false)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
                   </div>
@@ -683,13 +683,13 @@ useEffect(() => {
       {/* EDIT / CREATE MODAL */}
       {editModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+         <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
               <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">{editModal.data.id ? 'Edit Customer Record' : 'Register New Customer'}</h3>
               <button type="button" onClick={() => setEditModal({ isOpen: false, data: {} })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
             </div>
             
-            <form onSubmit={handleSaveCustomer} className="p-8 flex flex-col gap-6 flex-1 overflow-y-auto">
+           <form onSubmit={handleSaveCustomer} className="p-4 sm:p-8 flex flex-col gap-4 sm:gap-6 flex-1 overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Business / Entity Name *</label>
