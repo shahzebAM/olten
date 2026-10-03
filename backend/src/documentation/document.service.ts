@@ -69,47 +69,51 @@ export class DocumentService {
   }
 
 // --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
-  async analyzeExpiryDates(fileIds: any[], company: string) {
-    const results: Record<string, string | null> = {};
+// --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
+  async analyzeExpiryDates(fileIds: number[], company: string) {
+    const results: Record<string, string> = {};
     
     // Fetch docs from DB to get their pre-existing Gemini URI
     const docs = await (prisma as any).document.findMany({
       where: { 
-        id: { in: fileIds },
+        id: { in: fileIds }, // Now correctly matches Int IDs
         company: company
       }
     });
 
     // Ask Gemini for the expiry dates using the already uploaded URI
     for (const doc of docs) {
+      results[doc.id.toString()] = ''; // Set default blank string
+
       if (doc.geminiFileUri && doc.geminiFileId) {
-        
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
           
-          // Images finish instantly. PDFs take a few seconds. Wait until 'ACTIVE'.
+          // Wait for Google to finish reading PDFs
           while (status === 'PROCESSING' && retries < 15) {
-             await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+             await new Promise(resolve => setTimeout(resolve, 2000));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
           
-          // Once Active, safely ask for the expiry date
           if (status === 'ACTIVE') {
             const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
-            results[doc.id.toString()] = expiry;
-          } else {
-            this.logger.warn(`File ${doc.geminiFileId} failed to process. Status: ${status}`);
-            results[doc.id.toString()] = '';
+            if (expiry) {
+              results[doc.id.toString()] = expiry;
+            }
           }
         } catch (e) {
-          this.logger.warn(`Status check failed for ${doc.geminiFileId}`);
-          results[doc.id.toString()] = '';
+          this.logger.warn(`Gemini status check failed for ${doc.geminiFileId}`);
         }
-        
-      } else {
-        results[doc.id.toString()] = '';
+      }
+
+      // SMART FALLBACK: If Gemini missed the date inside the PDF, extract it directly from your filename!
+      if (!results[doc.id.toString()] && doc.filename) {
+         const match = doc.filename.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}/i);
+         if (match) {
+           results[doc.id.toString()] = match[0];
+         }
       }
     }
     
@@ -121,18 +125,18 @@ export class DocumentService {
     const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
-      // FIX: Removed Number() cast so String UUIDs survive
-      const docId = rem.id; 
+      // CRITICAL FIX: Convert back to Number before saving to DB
+      const docId = Number(rem.id); 
       
-      // Skip if the user cleared the date or if the ID is missing
-      if (!docId || !rem.expiryDate) continue;
+      // Skip if the user cleared the date or if the ID is invalid
+      if (isNaN(docId) || !rem.expiryDate) continue;
 
       const saved = await (prisma as any).documentReminder.create({
         data: {
           company: company,
           documentId: docId,
           fileName: rem.name,
-          expiryDate: new Date(rem.expiryDate),
+          expiryDate: new Date(rem.expiryDate), // Ensures JS Date format for Prisma
           reminderDays: Number(rem.reminderDays) || 30
         }
       });

@@ -64,11 +64,14 @@ export class DocumentController {
   // --- NEW: ANALYZE EXPIRY DATES ---
 // --- NEW: ANALYZE EXPIRY DATES ---
   @Post('analyze-expiry')
+// --- NEW: ANALYZE EXPIRY DATES ---
+  @Post('analyze-expiry')
   async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
     if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
     
-    // FIX: Removed the Number() cast so String UUIDs don't get destroyed
-    return this.documentService.analyzeExpiryDates(body.fileIds, company);
+    // CRITICAL FIX: Convert IDs to Numbers so Prisma can find them!
+    const numericIds = body.fileIds.map(id => Number(id)).filter(id => !isNaN(id));
+    return this.documentService.analyzeExpiryDates(numericIds, company);
   }
 
   // --- NEW: SAVE REMINDERS ---
