@@ -731,11 +731,11 @@ useEffect(() => {
   </div>         
           {/* AI ANSWER PANEL (Top Section) */}
           {aiAnswer && (
-            <div 
-              style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
-              className={`shrink-0 flex flex-col ${selectedFile ? 'bg-slate-50/40' : ''}`}
-            >
-              <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'm-4 lg:m-8'}`}>
+           <div 
+                      style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
+                      className={`flex flex-col ${selectedFile ? 'shrink-0 bg-slate-50/40' : 'flex-1 min-h-0'}`}
+                    >
+                      <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'p-4 lg:p-8'}`}>
                 <div className={`bg-white border border-indigo-100 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-top-4 ${selectedFile ? 'p-5 min-h-full' : 'p-6'}`}>
                   <button onClick={() => setAiAnswer(null)} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-white border border-slate-200 rounded-md shadow-sm transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
                   
