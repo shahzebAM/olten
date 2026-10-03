@@ -1072,13 +1072,15 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
           )}
 
-          {/* VIEW: MOVEMENTS (LEDGER) */}
+         {/* VIEW: MOVEMENTS (LEDGER) */}
           {activeView === 'movements' && (
-            <div className="max-w-7xl mx-auto space-y-4 animate-in fade-in duration-300 p-4 sm:p-6">
-              <div className="flex flex-wrap gap-4 items-center bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
-                <div className="flex flex-col gap-1 w-full sm:w-auto">
+            <div className="flex flex-col flex-1 h-full w-full max-w-[1600px] mx-auto animate-in fade-in duration-300 p-4 sm:p-6 gap-4 min-h-0">
+              
+              {/* FILTERS CONTAINER */}
+              <div className="flex flex-col sm:flex-row flex-wrap gap-4 items-end bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+                <div className="flex flex-col gap-1 w-full sm:w-auto sm:flex-1">
                   <label className="text-[10px] font-bold uppercase text-slate-500">Transaction Type</label>
-                  <select value={ledgerFilterType} onChange={e => setLedgerFilterType(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500">
+                  <select value={ledgerFilterType} onChange={e => setLedgerFilterType(e.target.value)} className="w-full px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer">
                     <option value="ALL">All Transactions</option>
                     <option value="RECEIVE">Receives</option>
                     <option value="ISSUE">Issues</option>
@@ -1087,22 +1089,24 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     <option value="ADJUST">Adjustments</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                <div className="flex flex-col gap-1 w-full sm:w-auto sm:flex-1">
                   <label className="text-[10px] font-bold uppercase text-slate-500">Start Date</label>
-                  <input type="date" value={ledgerStartDate} onChange={e => setLedgerStartDate(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
+                  <input type="date" value={ledgerStartDate} onChange={e => setLedgerStartDate(e.target.value)} className="w-full px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                <div className="flex flex-col gap-1 w-full sm:w-auto sm:flex-1">
                   <label className="text-[10px] font-bold uppercase text-slate-500">End Date</label>
-                  <input type="date" value={ledgerEndDate} onChange={e => setLedgerEndDate(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
+                  <input type="date" value={ledgerEndDate} onChange={e => setLedgerEndDate(e.target.value)} className="w-full px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div className="flex gap-2 w-full sm:w-auto sm:ml-auto mt-4 sm:mt-0 items-end">
-                  <button onClick={() => { setLedgerFilterType('ALL'); setLedgerStartDate(''); setLedgerEndDate(''); }} className="px-5 py-2.5 border border-slate-200 rounded-xl font-bold uppercase text-xs hover:bg-slate-50 transition-colors h-[42px]">Clear Filters</button>
+                <div className="flex w-full sm:w-auto sm:ml-auto">
+                  <button onClick={() => { setLedgerFilterType('ALL'); setLedgerStartDate(''); setLedgerEndDate(''); }} className="w-full sm:w-auto px-5 py-2.5 border border-slate-200 rounded-xl font-bold uppercase text-xs hover:bg-slate-50 transition-colors h-[42px]">Clear Filters</button>
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
-                  <thead className="bg-slate-50 border-b border-slate-200">
+              {/* STICKY SCROLLING TABLE CONTAINER */}
+              <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-0">
+                <div className="flex-1 overflow-auto w-full relative">
+                  <table className="w-full text-left border-collapse min-w-[1000px]">
+                    <thead className="bg-slate-50 sticky top-0 z-20 shadow-sm border-b border-slate-200">
                     <tr>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Timestamp</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Item</th>
