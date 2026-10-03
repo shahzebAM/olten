@@ -125,6 +125,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [hubTransferSearch, setHubTransferSearch] = useState('');
   const [isHubDropdownOpen, setIsHubDropdownOpen] = useState(false);
   const [expandedWarehouseId, setExpandedWarehouseId] = useState<string | null>(null);
+  const [localAccordionSearch, setLocalAccordionSearch] = useState<Record<string, string>>({});
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -1151,13 +1152,21 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
                       {displayedWarehouses.map(w => {
                         const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
-                        const filteredWhStocks = whStocks.filter(stk => {
-                          if (!warehouseSearchQuery) return true;
-                          const q = warehouseSearchQuery.toLowerCase();
-                          if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
-                          const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
-                          return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
-                        });
+                     const filteredWhStocks = whStocks.filter(stk => {
+  const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
+  
+  // 1. Filter by the local accordion search box
+  const localQ = (localAccordionSearch[w.id] || '').toLowerCase();
+  if (localQ && !(p?.name.toLowerCase().includes(localQ) || stk.sku.toLowerCase().includes(localQ))) {
+     return false;
+  }
+
+  // 2. Existing global warehouse search logic
+  if (!warehouseSearchQuery) return true;
+  const q = warehouseSearchQuery.toLowerCase();
+  if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
+  return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
+});
 
                         const isExpanded = expandedWarehouseId === w.id;
 
@@ -1182,7 +1191,18 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                              {/* ACCORDION BODY (STOCKS) */}
                              {isExpanded && (
                                <div className="px-5 pb-5 pt-2 border-t border-slate-100 bg-slate-50 animate-in slide-in-from-top-2">
-                                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Stored Assets ({filteredWhStocks.length})</div>
+                                 <div className="flex justify-between items-center mb-3 gap-3">
+  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">
+    Stored Assets ({filteredWhStocks.length})
+  </div>
+  <input 
+    type="text" 
+    placeholder="Filter this hub..." 
+    value={localAccordionSearch[w.id] || ''} 
+    onChange={(e) => setLocalAccordionSearch(prev => ({ ...prev, [w.id]: e.target.value }))} 
+    className="w-full max-w-[160px] px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-[10px] font-bold uppercase outline-none focus:border-slate-400 shadow-sm"
+  />
+</div>
                                   <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
                                     {whStocks.length === 0 ? ( 
                                       <span className="text-xs text-slate-400 font-medium italic">Facility is currently empty.</span> 
