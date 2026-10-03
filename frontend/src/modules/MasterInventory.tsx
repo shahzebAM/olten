@@ -914,27 +914,30 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                               <td className="py-2.5 px-4 text-center align-middle">
                                 <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
                               </td>
-                              <td className="py-2.5 px-4 align-middle">
+                           <td className="py-2.5 px-4 align-middle">
                                 <div className="flex items-center gap-3">
                                   {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
                                     <img src={p.imageUrl} alt={p.name} className="w-9 h-9 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
                                   ) : (
                                     <div className="w-9 h-9 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[7px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
                                   )}
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 flex flex-col items-start">
                                     <div className="font-bold text-[11px] text-slate-900 uppercase leading-tight truncate">{p.name}</div>
-                                    <div className="font-mono text-[9px] text-slate-400 uppercase mt-0.5 truncate">{p.sku}</div>
+                                    <div className="mt-1 font-mono text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 truncate shadow-sm">{p.sku}</div>
                                   </div>
                                 </div>
                               </td>
                               <td className="py-2.5 px-4 align-middle text-[10px] font-bold text-slate-600 uppercase truncate">
                                 <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
                               </td>
-                              <td className="py-2.5 px-4 align-middle">
-                                <div className="font-mono text-[11px] font-black text-amber-600">
+                           <td className="py-2.5 px-4 align-middle">
+                                <div className="font-mono text-xs font-black text-amber-600 mb-1">
                                   ₱{displayPrice.toFixed(2)}
                                 </div>
-                                <div className="font-mono text-[9px] text-slate-400">Cost: ₱{Number(p.purchasePrice).toFixed(2)}</div>
+                                <div className="inline-flex items-center gap-1 font-mono text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shadow-sm">
+                                  <span className="text-[8px] uppercase tracking-widest text-emerald-600/70">COST</span>
+                                  ₱{Number(p.purchasePrice).toFixed(2)}
+                                </div>
                               </td>
                               <td className="py-2.5 px-4 align-middle text-center">
                                 <div className={`font-mono text-sm font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-slate-700'}`}>{p.currentStock} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>
