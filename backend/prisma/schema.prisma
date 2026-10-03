@@ -229,6 +229,7 @@ model Customer {
   orderSlips  OrderSlip[]
   shortages   Shortage[]
   category String @default("General")
+  website String?
 }
 
 model Supplier {

@@ -103,8 +103,29 @@ export class SalesController {
     return { message: "Prices updated successfully" };
   }
 
-  @Post('customers')
+@Post('customers')
   async createCustomer(@Body() data: any) {
+    const companyPrefix = data.company.substring(0, 2).toUpperCase();
+    
+    // Find the most recently created customer for this company that has the correct prefix
+    const lastCustomer = await prisma.customer.findFirst({
+      where: { 
+        company: data.company,
+        id: { startsWith: `${companyPrefix}-` }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    let nextNum = 1;
+    if (lastCustomer) {
+      const parts = lastCustomer.id.split('-');
+      if (parts.length === 2) {
+        const num = parseInt(parts[1], 10);
+        if (!isNaN(num)) nextNum = num + 1;
+      }
+    }
+    
+    data.id = `${companyPrefix}-${String(nextNum).padStart(2, '0')}`;
     return prisma.customer.create({ data });
   }
 
