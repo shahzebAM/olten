@@ -134,6 +134,11 @@ export class SalesController {
     return prisma.customer.update({ where: { id }, data });
   }
 
+  @Delete('customers/:id')
+  async deleteCustomer(@Param('id') id: string) {
+    return prisma.customer.delete({ where: { id } });
+  }
+
   @Patch('customers/:id/balance')
   async updateCustomerBalance(@Param('id') id: string, @Body('amount') amount: number) {
     return prisma.customer.update({
