@@ -556,7 +556,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       <main className="flex flex-1 overflow-hidden relative">
         
         {/* PANE 1: UNIFIED LEFT SIDEBAR */}
-        <aside className={`h-full w-full lg:w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex-col shrink-0 z-40 ${selectedFile || aiAnswer ? 'hidden lg:flex' : 'flex'}`}>  
+       <aside className={`h-full w-full lg:w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex-col shrink-0 z-40 ${selectedFile || aiAnswer ? (isMobileNavOpen ? 'absolute inset-0 flex z-50' : 'hidden lg:flex') : 'flex'}`}>
           {/* Action Tools */}
           <div className="px-4 py-4 border-b border-slate-100 flex flex-col gap-3 shrink-0 bg-white">
             <div className="flex items-center justify-between flex-wrap gap-2">
