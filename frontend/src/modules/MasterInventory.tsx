@@ -1155,6 +1155,83 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
+      {activeWarehouseModal === 'ADJUST' && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-500 text-white">
+              <h2 className="text-xl font-black uppercase tracking-tight">Adjust Hub Stock</h2>
+              <button onClick={() => { setActiveWarehouseModal(null); setDirectStockForm({ warehouseId: '', productId: '', quantity: '' }); }} className="p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleDirectStockSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
+                <select required value={directStockForm.warehouseId} onChange={e => setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white cursor-pointer">
+                  <option value="">Select Warehouse...</option>
+                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Product</label>
+                <select required value={directStockForm.productId} onChange={e => setDirectStockForm({...directStockForm, productId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white cursor-pointer">
+                   <option value="">Select Product...</option>
+                   {products.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment Quantity (+/-)</label>
+                <input required type="number" placeholder="e.g. 5 (add) or -2 (deduct)" value={directStockForm.quantity} onChange={e => setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+              </div>
+              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeWarehouseModal === 'TRANSFER' && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-500 text-white">
+              <h2 className="text-xl font-black uppercase tracking-tight">Hub-to-Hub Transfer</h2>
+              <button onClick={() => { setActiveWarehouseModal(null); setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' }); }} className="p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleHubTransferSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Source Hub</label>
+                  <select required value={hubTransferForm.sourceId} onChange={e => setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
+                    <option value="">Select...</option>
+                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Destination Hub</label>
+                  <select required value={hubTransferForm.destId} onChange={e => setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
+                    <option value="">Select...</option>
+                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Product</label>
+                <select required value={hubTransferForm.productId} onChange={e => setHubTransferForm({...hubTransferForm, productId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
+                   <option value="">Select Product...</option>
+                   {products.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Transfer Quantity</label>
+                <input required type="number" min="1" placeholder="e.g. 10" value={hubTransferForm.quantity} onChange={e => setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" />
+              </div>
+              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* OMNI MODAL: TRANSACT STOCK */}
       {txModal.isOpen && txModal.products.length > 0 && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
