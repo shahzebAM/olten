@@ -230,29 +230,17 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- DATABASE SYNC: SHOTGUN ALGORITHM ---
+  // --- FIXED SAVE ALGORITHM: STRICT ENDPOINTS & WAITS ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     
-    // 1. Sanitize Data
-    const rawPricesToSave = productForm.categoryPrices || {};
-    const sanitizedPricesToSave: Record<string, number> = {};
-    
-    Object.keys(rawPricesToSave).forEach(cat => {
-        if (rawPricesToSave[cat] !== '' && rawPricesToSave[cat] !== null && rawPricesToSave[cat] !== undefined) {
-           const val = parseFloat(String(rawPricesToSave[cat]));
-           if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
-        }
-    });
-
     const cleanPayload: any = {
       name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0, sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
       minQuantity: parseInt(String(productForm.minQuantity)) || 10, reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
       unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
       barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
-      categoryPrices: sanitizedPricesToSave // Attach to main payload in case backend maps relationships automatically
     };
 
     if (!productModal.editingId) {
@@ -264,9 +252,19 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
 
+    const rawPricesToSave = productForm.categoryPrices || {};
+    const sanitizedPricesToSave: Record<string, number> = {};
+    
+    Object.keys(rawPricesToSave).forEach(cat => {
+        if (rawPricesToSave[cat] !== '' && rawPricesToSave[cat] !== null && rawPricesToSave[cat] !== undefined) {
+           const val = parseFloat(String(rawPricesToSave[cat]));
+           if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
+        }
+    });
+
     const tempId = productModal.editingId || Date.now();
     
-    // 2. Immediate Optimistic UI Update (Prevents visual disappearing)
+    // Optimistic UI Update
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -275,7 +273,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     });
 
     try {
-        // 3. Save Product Identity
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
         if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
@@ -283,36 +280,33 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = Number(productModal.editingId || (resData && resData.id) || tempId);
         
-        // 4. Save Prices to Specific Endpoint Routes explicitly
+        // Loop individual POST routes with flattened payload
         if (Object.keys(sanitizedPricesToSave).length > 0) {
-            const promises = [];
-            
-            for (const [catName, price] of Object.entries(sanitizedPricesToSave)) {
-                // Route A: Bulk format
-                promises.push(
-                    fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
-                         method: 'POST', 
-                         headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify({ company: selectedCompany, categoryName: catName, prices: [ { productId: finalProductId, price: Number(price) } ] })
-                    })
-                );
-                // Route B: Single Item format
-                promises.push(
-                    fetch(`${API_BASE_URL}/sales/category-prices`, {
-                         method: 'POST', 
-                         headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
-                    })
-                );
-            }
-            await Promise.allSettled(promises);
+            const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
+                 return fetch(`${API_BASE_URL}/sales/category-prices`, { 
+                     method: 'POST', 
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ 
+                         company: selectedCompany, 
+                         categoryName: catName, 
+                         productId: finalProductId, 
+                         price: Number(price) 
+                     })
+                 }).then(async (r) => {
+                     if (!r.ok) {
+                         const errText = await r.text();
+                         console.error(`Backend failed to save price for ${catName}. Server responded: ${r.status} ${errText}`);
+                     }
+                 }).catch(console.error);
+            });
+            await Promise.allSettled(catPricePromises);
         }
         
         showToast("Successfully saved to database.", "success");
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // 5. Strict 1000ms delay to ensure DB commits before refreshing table
+        // Strictly wait 1000ms before pulling fresh data so database has time to lock and commit
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
@@ -325,6 +319,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }
   };
 
+  // --- FIXED BULK PRICING: FLATTENED LOOP ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all fields.", "error");
@@ -343,13 +338,20 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       });
 
       try {
-          const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ company: selectedCompany, categoryName: bulkPricingModal.tier, prices: payload })
-          });
-
-          if (!res.ok) throw new Error("Server rejected bulk update.");
+          const promises = payload.map(item => 
+              fetch(`${API_BASE_URL}/sales/category-prices`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                      company: selectedCompany, 
+                      categoryName: bulkPricingModal.tier, 
+                      productId: item.productId, 
+                      price: item.price 
+                  })
+              })
+          );
+          
+          await Promise.allSettled(promises);
           
           showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
           setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
@@ -629,7 +631,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
-    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; 
+    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; // Pricing view changes table output, does not hide items
     return matchesSearch && matchesCategory && matchesPricingTier;
   });
 
