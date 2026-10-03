@@ -8,11 +8,12 @@ interface Customer {
   contact: string | null;
   phone: string | null;
   email: string | null;
+  website: string | null;
   address: string | null;
   creditLimit: number;
   balance: number;
   createdAt: string;
-  category: string; // Added category field
+  category: string;
 }
 
 interface CustomerModuleProps {
@@ -144,10 +145,9 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-const handleDeleteCustomer = async (id: string) => {
+  const handleDeleteCustomer = async (id: string) => {
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
     
-    // Deletes instantly without confirmation popup
     setIsLoading(true);
     try {
       await fetch(`${API_BASE_URL}/sales/customers/${id}`, { method: 'DELETE' });
@@ -166,7 +166,7 @@ const handleDeleteCustomer = async (id: string) => {
       e.preventDefault();
       if (!newCategoryName.trim()) return;
       try {
-         const res = await fetch(`${API_BASE_URL}/sales/customer-categories`, {
+          const res = await fetch(`${API_BASE_URL}/sales/customer-categories`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: newCategoryName.trim(), company: selectedCompany })
@@ -183,7 +183,7 @@ const handleDeleteCustomer = async (id: string) => {
   const handleDeleteCategory = async (id: string) => {
       if (!window.confirm("Delete this category? Customers assigned to it will still retain the name but it won't be selectable.")) return;
       try {
-         await fetch(`${API_BASE_URL}/sales/customer-categories/${id}`, { method: 'DELETE' });
+          await fetch(`${API_BASE_URL}/sales/customer-categories/${id}`, { method: 'DELETE' });
           fetchCategories();
           showToast("Category deleted.", "success");
       } catch (e) {
@@ -198,7 +198,7 @@ const handleDeleteCustomer = async (id: string) => {
     try {
       const [prodRes, priceRes] = await Promise.all([
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-       fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
+        fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
       ]);
       
       const prods = await prodRes.json();
@@ -209,7 +209,6 @@ const handleDeleteCustomer = async (id: string) => {
       const priceMap: Record<number, string> = {};
       prices.forEach((p: any) => { priceMap[p.productId] = String(p.price) });
       
-      // Pre-fill with default selling price if no specific category price exists
       prods.forEach((p: any) => {
           if (!priceMap[p.id]) {
               priceMap[p.id] = String(p.sellingPrice || 0);
@@ -218,7 +217,7 @@ const handleDeleteCustomer = async (id: string) => {
 
       setCategoryPrices(priceMap);
       setIsPricingModalOpen(true);
-      setIsCategoryModalOpen(false); // Close category manager if open
+      setIsCategoryModalOpen(false); 
     } catch (e) {
         showToast("Failed to load pricing data.", "error");
     } finally {
@@ -248,7 +247,7 @@ const handleDeleteCustomer = async (id: string) => {
         .map(([productId, price]) => ({ productId: Number(productId), price: Number(price) }))
         .filter(p => !isNaN(p.price));
 
-       const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+        const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company: selectedCompany, categoryName: pricingCategory, prices: payload })
@@ -325,7 +324,7 @@ const handleDeleteCustomer = async (id: string) => {
                     </button>
                  )}
                 <button 
-                    onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
+                    onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
                     className="px-6 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors whitespace-nowrap"
                 >
                     + Register Customer
@@ -333,8 +332,7 @@ const handleDeleteCustomer = async (id: string) => {
               </div>
             </div>
 
-            {/* DATA TABLE */}
-         {/* DATA TABLE - EXCEL STYLE COMPACT */}
+            {/* DATA TABLE - EXCEL STYLE COMPACT WITH TEXT WRAP */}
             <div className="bg-white border border-slate-300 shadow-sm flex flex-col overflow-hidden">
               <div className="w-full relative">
                 {isLoading && (
@@ -346,13 +344,13 @@ const handleDeleteCustomer = async (id: string) => {
                 <table className="w-full text-left text-xs border-collapse table-fixed">
                   <thead className="bg-slate-100 border-b border-slate-300">
                     <tr>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-16 sm:w-20 hidden sm:table-cell">Code</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider">Entity / Name</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-20 sm:w-24 hidden md:table-cell">Category</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-32 hidden lg:table-cell">Contact</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-36 hidden xl:table-cell">Address</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-right w-24 sm:w-28">Balance</th>
-                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-center w-16">Edit</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-20 sm:w-24 hidden sm:table-cell">Code</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider">Entity / Name</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-24 sm:w-28 hidden md:table-cell">Category</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-40 hidden lg:table-cell">Contact</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-48 hidden xl:table-cell">Address</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-right w-24 sm:w-28">Balance</th>
+                      <th className="border border-slate-300 py-2.5 px-3 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-center w-20">Edit</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white">
@@ -362,43 +360,49 @@ const handleDeleteCustomer = async (id: string) => {
                       customers.map(c => (
                         <tr key={c.id || Math.random()} className="hover:bg-indigo-50/30 transition-colors">
                           
-                          <td className="border border-slate-300 py-1 px-2 font-mono text-[10px] text-slate-500 uppercase hidden sm:table-cell truncate" title={c.id}>
-                            {c.id ? c.id.slice(0, 8) : 'N/A'}
+                          <td className="border border-slate-300 py-1.5 px-3 font-mono text-[10px] text-slate-500 uppercase hidden sm:table-cell break-words whitespace-normal align-top">
+                            {c.id ? c.id : 'N/A'}
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 overflow-hidden">
-                            <div className="font-bold text-slate-900 text-[11px] sm:text-xs truncate" title={c.name}>{c.name || 'Unknown'}</div>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                               <span className="md:hidden px-1 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[8px] font-bold uppercase rounded leading-none">{c.category || 'General'}</span>
-                               <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600 truncate" title={c.company}>{c.company || 'Unknown'}</span>
+                          <td className="border border-slate-300 py-1.5 px-3 break-words whitespace-normal align-top">
+                            <div className="font-bold text-slate-900 text-[11px] sm:text-xs leading-tight">{c.name || 'Unknown'}</div>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                               <span className="md:hidden px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[8px] font-bold uppercase rounded leading-none">{c.category || 'General'}</span>
+                               <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600 break-words">{c.company || 'Unknown'}</span>
                             </div>
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 hidden md:table-cell text-[10px] truncate uppercase font-medium text-slate-700" title={c.category || 'General'}>
+                          <td className="border border-slate-300 py-1.5 px-3 hidden md:table-cell text-[10px] uppercase font-medium text-slate-700 break-words whitespace-normal align-top">
                               {c.category || 'General'}
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 hidden lg:table-cell text-[10px] text-slate-600 truncate" title={`${c.contact || ''} ${c.phone || ''} ${c.email || ''}`}>
-                            {c.contact || c.phone || c.email || '-'}
+                          <td className="border border-slate-300 py-1.5 px-3 hidden lg:table-cell text-[10px] text-slate-600 break-words whitespace-normal align-top leading-relaxed">
+                            {c.contact && <div>{c.contact}</div>}
+                            {c.phone && <div>{c.phone}</div>}
+                            {c.email && <div>{c.email}</div>}
+                            {c.website && <div className="text-indigo-500 underline break-words"><a href={c.website.startsWith('http') ? c.website : `https://${c.website}`} target="_blank" rel="noopener noreferrer">{c.website}</a></div>}
+                            {!c.contact && !c.phone && !c.email && !c.website && '-'}
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 hidden xl:table-cell text-[10px] text-slate-500 truncate" title={c.address || ''}>
+                          <td className="border border-slate-300 py-1.5 px-3 hidden xl:table-cell text-[10px] text-slate-500 break-words whitespace-normal align-top leading-relaxed">
                             {c.address || 'N/A'}
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 text-right font-mono font-bold text-slate-900 text-[11px] sm:text-xs truncate">
+                          <td className="border border-slate-300 py-1.5 px-3 text-right font-mono font-bold text-slate-900 text-[11px] sm:text-xs break-words whitespace-normal align-top">
                             ₱{(c.balance || 0).toLocaleString()}
                           </td>
                           
-                          <td className="border border-slate-300 py-1 px-2 text-center whitespace-nowrap">
-                            <button onClick={() => setEditModal({ isOpen: true, data: c })} className="p-1 text-slate-400 hover:text-indigo-600 transition-colors" title="Edit Profile">
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                            </button>
-                            {isAuthorizedAdmin && (
-                              <button onClick={() => handleDeleteCustomer(c.id)} className="p-1 text-slate-400 hover:text-rose-600 transition-colors ml-1" title="Delete Instantly">
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          <td className="border border-slate-300 py-1.5 px-3 text-center whitespace-nowrap align-top">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => setEditModal({ isOpen: true, data: c })} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit Profile">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                               </button>
-                            )}
+                              {isAuthorizedAdmin && (
+                                <button onClick={() => handleDeleteCustomer(c.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Delete Instantly">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                </button>
+                              )}
+                            </div>
                           </td>
                           
                         </tr>
@@ -409,12 +413,12 @@ const handleDeleteCustomer = async (id: string) => {
               </div>
               
               {/* PAGINATION CONTROLS */}
-              <div className="p-2 border-t border-slate-300 bg-slate-100 flex items-center justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <div className="p-3 border-t border-slate-300 bg-slate-100 flex items-center justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 <div>Showing {customers.length} of {totalRecords}</div>
                 <div className="flex gap-1.5 sm:gap-2">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || isLoading} className="px-2 py-1 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Prev</button>
-                  <span className="px-3 py-1 bg-white border border-slate-300 rounded shadow-sm">{currentPage} / {totalPages}</span>
-                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages || isLoading} className="px-2 py-1 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Next</button>
+                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || isLoading} className="px-3 py-1.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Prev</button>
+                  <span className="px-4 py-1.5 bg-white border border-slate-300 rounded shadow-sm">{currentPage} / {totalPages}</span>
+                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages || isLoading} className="px-3 py-1.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Next</button>
                 </div>
               </div>
             </div>
@@ -469,7 +473,6 @@ const handleDeleteCustomer = async (id: string) => {
       )}
 
       {/* PRICING EDITOR MODAL */}
-   {/* PRICING EDITOR MODAL */}
       {isPricingModalOpen && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center sm:p-4">
               <div className="bg-white sm:rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[95vh] animate-in zoom-in-95 duration-200">
@@ -497,7 +500,6 @@ const handleDeleteCustomer = async (id: string) => {
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-0 bg-slate-50">
-                      {/* Removed whitespace-nowrap to stop horizontal scrolling */}
                       <table className="w-full text-left text-sm">
                           <thead className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
                               <tr>
@@ -510,17 +512,12 @@ const handleDeleteCustomer = async (id: string) => {
                           <tbody className="divide-y divide-slate-100">
                               {allProducts.map(p => (
                                   <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
-                                      {/* Hidden on mobile, shown on desktop */}
                                       <td className="py-1.5 px-3 sm:px-6 font-mono text-[10px] sm:text-xs text-slate-500 hidden sm:table-cell">{p.sku}</td>
-                                      
                                       <td className="py-1.5 px-3 sm:px-6">
                                         <div className="font-bold text-[11px] sm:text-xs text-slate-800 uppercase leading-tight">{p.name}</div>
-                                        {/* SKU falls back here under the name only on mobile */}
                                         <div className="sm:hidden font-mono text-[9px] text-slate-400 uppercase mt-0.5">{p.sku}</div>
                                       </td>
-                                      
                                       <td className="py-1.5 px-3 sm:px-6 text-right font-mono text-[11px] sm:text-xs text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
-                                      
                                       <td className="py-1.5 px-3 sm:px-6 text-right">
                                           <input 
                                               type="number" 
@@ -564,7 +561,6 @@ const handleDeleteCustomer = async (id: string) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 bg-white space-y-8">
-              {/* Profile Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Company / Entity</p>
@@ -584,6 +580,16 @@ const handleDeleteCustomer = async (id: string) => {
                   <p className="text-sm font-bold text-slate-900 break-words">{viewCustomer.email || 'N/A'}</p>
                 </div>
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 lg:col-span-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Website</p>
+                  {viewCustomer.website ? (
+                    <a href={viewCustomer.website.startsWith('http') ? viewCustomer.website : `https://${viewCustomer.website}`} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-indigo-600 break-words underline">
+                        {viewCustomer.website}
+                    </a>
+                  ) : (
+                    <p className="text-sm font-bold text-slate-900 break-words">N/A</p>
+                  )}
+                </div>
+                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 lg:col-span-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Physical Address</p>
                   <p className="text-sm font-medium text-slate-900 leading-relaxed">{viewCustomer.address || 'N/A'}</p>
                 </div>
@@ -591,31 +597,6 @@ const handleDeleteCustomer = async (id: string) => {
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Outstanding Balance</p>
                   <p className="text-2xl font-black">₱{(viewCustomer.balance || 0).toLocaleString()}</p>
                 </div>
-              </div>
-
-              {/* Order History Placeholder Structure */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                <div className="bg-slate-50 p-4 border-b border-slate-200">
-                  <h4 className="font-black text-sm uppercase tracking-widest text-slate-700">Order Slip History</h4>
-                </div>
-                <div className="p-8 text-center bg-white">
-                  <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 mb-4">
-                    <svg className="w-8 h-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                  </div>
-                  <h5 className="font-bold text-slate-900">No Orders Found</h5>
-                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">This customer does not have any Order Slips registered in the system yet. Click "Create O.S." to begin an order.</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Admin Controls */}
-            <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0 flex justify-between items-center">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Added: {viewCustomer.createdAt ? new Date(viewCustomer.createdAt).toLocaleDateString() : 'N/A'}</div>
-              <div className="flex gap-3">
-                <button onClick={() => { setEditModal({ isOpen: true, data: viewCustomer }); setViewCustomer(null); }} className="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl hover:bg-slate-100 transition-colors">Edit Profile</button>
-                {isAuthorizedAdmin && (
-                  <button onClick={() => handleDeleteCustomer(viewCustomer.id)} className="px-5 py-2.5 bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs uppercase tracking-wider rounded-xl hover:bg-rose-100 transition-colors">Delete</button>
-                )}
               </div>
             </div>
           </div>
@@ -626,12 +607,12 @@ const handleDeleteCustomer = async (id: string) => {
       {editModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
               <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">{editModal.data.id ? 'Edit Customer Record' : 'Register New Customer'}</h3>
               <button type="button" onClick={() => setEditModal({ isOpen: false, data: {} })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
             </div>
             
-            <form onSubmit={handleSaveCustomer} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto">
+            <form onSubmit={handleSaveCustomer} className="p-8 flex flex-col gap-6 flex-1 overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Business / Entity Name *</label>
@@ -658,16 +639,20 @@ const handleDeleteCustomer = async (id: string) => {
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Number</label>
                   <input type="text" value={editModal.data.phone || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, phone: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Email Address</label>
                   <input type="email" value={editModal.data.email || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, email: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Website URL</label>
+                  <input type="url" placeholder="https://..." value={editModal.data.website || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, website: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>
                 <div className="flex flex-col gap-1.5 sm:col-span-2">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Physical Address</label>
                   <input type="text" value={editModal.data.address || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, address: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>
               </div>
-              <button type="submit" disabled={isLoading} className="mt-4 w-full py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-md disabled:opacity-50">
+              <button type="submit" disabled={isLoading} className="mt-4 w-full py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-md disabled:opacity-50 shrink-0">
                 {isLoading ? 'Saving...' : 'Save Customer Record'}
               </button>
             </form>
