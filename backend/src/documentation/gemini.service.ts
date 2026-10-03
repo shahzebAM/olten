@@ -106,13 +106,19 @@ CRITICAL RULES:
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
+// --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
-      // Instruct Gemini to aggressively find any date format and translate it into strictly MM,DD,YYYY
-      const prompt = `Analyze this document and find the most relevant expiration date, validity end date, or renewal deadline. 
-      Regardless of how the date is written in the document, you MUST translate and return it EXACTLY in the format: MM,DD,YYYY (e.g., 01,28,2026 or 11,05,2025). 
-      Do NOT include any other text, spaces, words, or punctuation. 
-      If you absolutely cannot find any date, return the exact word: null`;
+      // Ultimate foolproof prompt. Tells it exactly what to look for and forces a clean MM,DD,YYYY output.
+      const prompt = `Analyze this document and find the final expiration date, validity end date, or renewal deadline. 
+      Look for phrases like "Validity of License", "Valid Until", "Expiry Date", or similar.
+      
+      No matter how the date is written (e.g., "28 January 2028", "05/16/2028", "January 28, 2028"), you MUST translate it into EXACTLY this format: MM,DD,YYYY (for example, 01,28,2028).
+      
+      CRITICAL RULES:
+      1. Return ONLY the formatted date string (MM,DD,YYYY).
+      2. Do NOT include any other text, spaces, or words.
+      3. If no date is found, return exactly the word: null`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
@@ -123,18 +129,20 @@ CRITICAL RULES:
             { text: prompt }
           ]
         }],
-        config: { temperature: 0.0 } // Keep temperature at 0.0 for strict factual extraction
+        config: { temperature: 0.0 } 
       });
       
       const text = response.text?.trim() || 'null';
       
-      // If the AI says null, return an empty string so the frontend placeholder shows
+      // Safety catch: If AI returns null or blank, return empty string for frontend
       if (text.toLowerCase().includes('null') || text === '') {
           return ''; 
       }
       
-      // Return the newly formatted MM,DD,YYYY string
-      return text; 
+      // Clean the string just in case the AI added a period or space at the end
+      const cleanDate = text.replace(/[^0-9,]/g, '');
+      
+      return cleanDate; 
     } catch (error: any) {
       this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
       return ''; 
