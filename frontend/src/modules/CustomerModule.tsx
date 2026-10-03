@@ -102,7 +102,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCompany, currentPage, limit, debouncedSearch, API_BASE_URL]);
+  }, [selectedCompany, currentPage, limit, debouncedSearch, selectedCategoryFilter, API_BASE_URL]);
 
   const fetchCategories = useCallback(async () => {
     try {
