@@ -1138,8 +1138,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price (General Tier)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+               <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price (General Tier)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
                 
                 {/* DYNAMIC CATEGORY PRICING UI */}
                 {customerCategories.length > 0 && (
@@ -1151,18 +1151,17 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <label className="text-[10px] font-bold uppercase text-amber-600 tracking-wider">{cat.name} Tier Price</label>
                             <div className="relative">
                               <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">₱</span>
-                              <input 
+                            <input 
                                 type="number" 
                                 step="0.01" 
                                 placeholder="Uses General Price..."
-                                value={productForm.categoryPrices?.[cat.name] || ''} 
+                                value={productForm.categoryPrices?.[cat.name] ?? ''} 
                                 onChange={e => {
-                                  const val = e.target.value ? parseFloat(e.target.value) : undefined;
                                   setProductForm((prev: any) => ({
                                     ...prev,
                                     categoryPrices: {
-                                      ...prev.categoryPrices,
-                                      [cat.name]: val
+                                      ...(prev.categoryPrices || {}),
+                                      [cat.name]: e.target.value
                                     }
                                   }));
                                 }} 
