@@ -334,6 +334,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
             </div>
 
             {/* DATA TABLE */}
+           {/* DATA TABLE */}
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
               <div className="overflow-x-auto w-full relative">
                 {isLoading && (
@@ -341,46 +342,71 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                     <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm">Syncing Records...</div>
                   </div>
                 )}
-                <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px]">
+                {/* Removed whitespace-nowrap and min-w to prevent horizontal scrolling */}
+                <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Client Code</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Entity / Name</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Category</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Contact Info</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Address</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Balance</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center">Status</th>
-                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Actions</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden sm:table-cell w-20 sm:w-24">Client Code</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px]">Entity / Name</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden md:table-cell w-24">Category</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px]">Contact Info</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden lg:table-cell w-48">Address</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-24 sm:w-28">Balance</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-center hidden xl:table-cell w-20">Status</th>
+                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-32 sm:w-40">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {customers.length === 0 && !isLoading ? (
-                      <tr><td colSpan={8} className="py-16 text-center text-slate-400 font-medium">No customer records found.</td></tr>
+                      <tr><td colSpan={8} className="py-12 text-center text-slate-400 font-medium">No customer records found.</td></tr>
                     ) : (
                       customers.map(c => (
                         <tr key={c.id || Math.random()} className="hover:bg-slate-50 transition-colors group">
-                          <td className="py-4 px-6 font-mono text-xs text-slate-500 uppercase">{c.id ? c.id.slice(0, 8) : 'N/A'}</td>
-                          <td className="py-4 px-6">
-                            <div className="font-bold text-slate-900 text-base">{c.name || 'Unknown'}</div>
-                            <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mt-0.5">{c.company || 'Unknown'}</div>
+                          
+                          {/* Client Code - Hidden on Mobile */}
+                          <td className="py-2 px-3 sm:px-4 font-mono text-[10px] sm:text-xs text-slate-500 uppercase hidden sm:table-cell align-top mt-0.5">{c.id ? c.id.slice(0, 8) : 'N/A'}</td>
+                          
+                          {/* Entity Name - Always Visible & Wraps naturally */}
+                          <td className="py-2 px-3 sm:px-4 align-top">
+                            <div className="font-bold text-slate-900 text-xs sm:text-sm leading-tight">{c.name || 'Unknown'}</div>
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                               {/* Mobile Category Fallback */}
+                               <span className="md:hidden px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[8px] font-bold uppercase rounded">{c.category || 'General'}</span>
+                               <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600">{c.company || 'Unknown'}</span>
+                            </div>
                           </td>
-                          <td className="py-4 px-6">
-                              <span className="px-2 py-1 bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-bold uppercase rounded-md">{c.category || 'General'}</span>
+                          
+                          {/* Category - Hidden on Mobile */}
+                          <td className="py-2 px-3 sm:px-4 hidden md:table-cell align-top mt-0.5">
+                              <span className="px-2 py-1 bg-slate-100 border border-slate-200 text-slate-700 text-[9px] font-bold uppercase rounded-md">{c.category || 'General'}</span>
                           </td>
-                          <td className="py-4 px-6 text-xs text-slate-600">
-                            <div className="font-semibold text-slate-800">{c.contact || 'No Contact'}</div>
-                            <div className="text-slate-500">{c.phone || '-'} | {c.email || '-'}</div>
+                          
+                          {/* Contact Info - Compacted */}
+                          <td className="py-2 px-3 sm:px-4 text-[10px] sm:text-xs text-slate-600 align-top mt-0.5">
+                            <div className="font-semibold text-slate-800 leading-tight">{c.contact || 'No Contact'}</div>
+                            <div className="text-slate-500 mt-0.5">{c.phone || '-'} | {c.email || '-'}</div>
                           </td>
-                          <td className="py-4 px-6 text-xs text-slate-500 truncate max-w-[200px]">{c.address || 'N/A'}</td>
-                          <td className="py-4 px-6 text-right font-black text-slate-900">₱{(c.balance || 0).toLocaleString()}</td>
-                          <td className="py-4 px-6 text-center">
-                            <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black uppercase rounded-md">Active</span>
+                          
+                          {/* Address - Hidden on small screens, truncated heavily */}
+                          <td className="py-2 px-3 sm:px-4 text-[10px] sm:text-xs text-slate-500 hidden lg:table-cell align-top mt-0.5">
+                            <div className="truncate max-w-[150px] xl:max-w-[200px]" title={c.address || ''}>{c.address || 'N/A'}</div>
                           </td>
-                          <td className="py-4 px-6 text-right space-x-3">
-                            <button onClick={() => setViewCustomer(c)} className="text-indigo-600 hover:text-indigo-900 font-bold text-[11px] uppercase tracking-wider underline">View</button>
+                          
+                          {/* Balance - Always visible, restricted wrapping */}
+                          <td className="py-2 px-3 sm:px-4 text-right font-black text-slate-900 text-[11px] sm:text-sm align-top mt-0.5 whitespace-nowrap">
+                            ₱{(c.balance || 0).toLocaleString()}
+                          </td>
+                          
+                          {/* Status - Hidden on most screens to save space */}
+                          <td className="py-2 px-3 sm:px-4 text-center hidden xl:table-cell align-top mt-0.5">
+                            <span className="px-2 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase rounded-md">Active</span>
+                          </td>
+                          
+                          {/* Actions - Always visible, never wraps */}
+                          <td className="py-2 px-3 sm:px-4 text-right space-x-2 sm:space-x-3 whitespace-nowrap align-top mt-0.5">
+                            <button onClick={() => setViewCustomer(c)} className="text-indigo-600 hover:text-indigo-900 font-bold text-[10px] sm:text-[11px] uppercase tracking-wider underline">View</button>
                             {onRouteToOrderSlip && c.id && (
-                              <button onClick={() => onRouteToOrderSlip(c.id)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[10px] font-bold uppercase hover:bg-slate-800 transition-colors shadow-sm inline-block">Create O.S.</button>
+                              <button onClick={() => onRouteToOrderSlip(c.id)} className="px-2 sm:px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[9px] sm:text-[10px] font-bold uppercase hover:bg-slate-800 transition-colors shadow-sm inline-block">Create O.S.</button>
                             )}
                           </td>
                         </tr>
