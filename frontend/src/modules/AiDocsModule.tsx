@@ -121,6 +121,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [isDraggingResizer, resize, stopResizing]);
 
   // --- API: FETCH DIRECTORY ---
+  // --- API: FETCH DIRECTORY ---
   const fetchDirectory = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
     try {
@@ -130,28 +131,49 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       if (!res.ok) throw new Error('Failed to load directory');
       const data = await res.json();
       
+      const nextFolders: DriveFolder[] = data.folders || [];
+      const nextFiles: DriveFile[] = data.files || [];
+
       setRootFolderId(data.companyFolderId);
-      setFolders(data.folders || []);
-      setFiles(data.files || []);
+      setFolders(nextFolders);
+      setFiles(nextFiles);
       
-      // Save the exact storage quota from backend
+      // Auto-close preview if the file was deleted from another device
+      setSelectedFile(prev => {
+        if (!prev) return null;
+        const stillExists = nextFiles.some(f => f.id === prev.id);
+        return stillExists ? prev : null;
+      });
+
       if (data.storageQuota) {
         setStorageData(data.storageQuota);
       }
       
-      if (!activeFolderId) {
-        setActiveFolderId(data.companyFolderId);
-        setExpandedFolders(prev => new Set(prev).add(data.companyFolderId));
-      }
+      setActiveFolderId(prev => {
+        if (!prev) {
+          setExpandedFolders(exp => new Set(exp).add(data.companyFolderId));
+          return data.companyFolderId;
+        }
+        // If active folder was deleted on another device, fall back to root
+        const exists = prev === data.companyFolderId || nextFolders.some(f => f.id === prev);
+        return exists ? prev : data.companyFolderId;
+      });
     } catch (err: any) {
       if (!isSilent) showToast(err.message || 'Error loading workspace', 'error');
     } finally {
       if (!isSilent) setIsLoading(false);
     }
-  }, [API_BASE_URL, selectedCompany, loginUsername, activeFolderId]);
+  }, [API_BASE_URL, selectedCompany, loginUsername]);
 
-  useEffect(() => {
-    fetchDirectory();
+useEffect(() => {
+    fetchDirectory(); // Initial fetch (shows loader)
+
+    // Silent cross-device background sync every 3 seconds
+    const syncInterval = setInterval(() => {
+      fetchDirectory(true);
+    }, 3000);
+
+    return () => clearInterval(syncInterval);
   }, [fetchDirectory]);
 
   // --- HELPER: FORMAT BYTES ---
