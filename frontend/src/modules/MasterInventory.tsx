@@ -156,10 +156,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         }
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
-        if (ctx) {
+      if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-          setProductForm((prev: any) => ({ ...prev, previousImageUrl: prev.imageUrl || prev.previousImageUrl || '', imageUrl: compressedBase64 }));
+          // Only update imageUrl, do not touch previousImageUrl here
+          setProductForm((prev: any) => ({ ...prev, imageUrl: compressedBase64 }));
         }
       };
       img.src = event.target?.result as string;
@@ -1052,13 +1053,33 @@ const filteredProducts = products.filter(p => {
             </div>
             <form onSubmit={handleProductSubmit} className="p-8 flex flex-col gap-8 bg-slate-50">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* NEW IMAGE UPLOAD UI */}
+               {/* NEW IMAGE UPLOAD UI */}
                 <div className="md:col-span-2 flex items-center gap-6 bg-white p-4 border border-slate-200 rounded-2xl shadow-sm">
-                  {productForm.imageUrl || productForm.previousImageUrl ? (
-                    <img src={productForm.imageUrl || productForm.previousImageUrl} alt="Preview" className="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm" />
-                  ) : (
-                    <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
-                  )}
+                  <div className="relative group">
+                    {productForm.imageUrl || productForm.previousImageUrl ? (
+                      <>
+                        <img src={productForm.imageUrl || productForm.previousImageUrl} alt="Preview" className="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm" />
+                        {/* Remove Image Button */}
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            // If they are clearing an existing image, log it to the deleted vault
+                            if (productForm.previousImageUrl) {
+                              deletedImageVault[productForm.sku] = productForm.previousImageUrl;
+                              delete globalImageVault[productForm.sku];
+                            }
+                            setProductForm((prev: any) => ({ ...prev, imageUrl: null, previousImageUrl: '' }));
+                          }} 
+                          className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-rose-600"
+                          title="Remove Image"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </>
+                    ) : (
+                      <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
+                    )}
+                  </div>
                   <div className="flex-1 flex flex-col gap-2">
                     <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Product Image</label>
                     <input 
