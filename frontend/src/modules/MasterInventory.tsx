@@ -2,11 +2,65 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 // --- INTERFACES ---
-interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number | string; sellingPrice: number | string; categoryPrices?: Record<string, number | string>; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
-interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; }
-interface Warehouse { id: string; name: string; address: string; status: string; }
-interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
-interface CustomerCategory { id: string; name: string; }
+interface Product { 
+  id: number; 
+  company: string; 
+  name: string; 
+  sku: string; 
+  category: string; 
+  purchasePrice: number | string; 
+  sellingPrice: number | string; 
+  categoryPrices?: Record<string, number | string>; 
+  minQuantity: number; 
+  reorderLevel: number; 
+  unit: string; 
+  isActive: boolean; 
+  vatSetting: string; 
+  imageUrl: string; 
+  barcode: string; 
+  currentStock: number; 
+  createdAt: string; 
+  deletedAt: string | null; 
+}
+
+interface Movement { 
+  id: string; 
+  productId: number; 
+  productName: string; 
+  sku: string; 
+  type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; 
+  quantity: number; 
+  previousStock: number; 
+  newStock: number; 
+  reference: string; 
+  remarks: string; 
+  date: string; 
+  user: string; 
+  warehouseId?: string; 
+  batchNumber?: string | null; 
+  expirationDate?: string | null; 
+  warehouse?: { id: number; name: string; }; 
+}
+
+interface Warehouse { 
+  id: string; 
+  name: string; 
+  address: string; 
+  status: string; 
+}
+
+interface WarehouseStock { 
+  id: string; 
+  warehouseId: string; 
+  productId: number; 
+  sku: string; 
+  quantity: number; 
+}
+
+interface CustomerCategory { 
+  id: string; 
+  name: string; 
+}
 
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
@@ -46,7 +100,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
   const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
-  const [bulkPricingModal, setBulkPricingModal] = useState({ isOpen: false, tier: '', percentage: '' });
+  const [bulkPricingModal, setBulkPricingModal] = useState({ isOpen: false, tier: '', percentage: '', baseOn: 'general' });
 
   // --- RECEIVING MODAL STATES ---
   const [placementPo, setPlacementPo] = useState<any>(null);
@@ -90,12 +144,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const fetchAllData = useCallback(async () => {
     try {
       const [prodRes, movRes, whRes, stkRes, poRes, catRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/inventory-movements?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouse-stock?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/sales/customer-categories?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/inventory-movements?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/warehouses?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/warehouse-stock?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/sales/customer-categories?company=${encodeURIComponent(selectedCompany)}`)
       ]);
       
       let productsList: Product[] = [];
@@ -114,8 +168,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         
         try {
             const pricePromises = categories.map(async (cat: any) => {
-                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(cat.name)}`);
-                if(res.ok) return { catName: cat.name, data: await res.json() };
+                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${encodeURIComponent(selectedCompany)}&categoryName=${encodeURIComponent(cat.name)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    return { catName: cat.name, data: Array.isArray(data) ? data : [] };
+                }
                 return { catName: cat.name, data: [] };
             });
 
@@ -124,19 +181,26 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             
             categoryPriceResults.forEach(result => {
                 result.data.forEach((p: any) => {
-                    if (!priceMap[p.productId]) priceMap[p.productId] = {};
-                    priceMap[p.productId][result.catName] = p.price;
+                    const pid = Number(p.productId);
+                    if (!isNaN(pid)) {
+                        if (!priceMap[pid]) priceMap[pid] = {};
+                        priceMap[pid][result.catName] = Number(p.price);
+                    }
                 });
             });
             
             productsList = productsList.map(prod => ({
                 ...prod,
-                categoryPrices: priceMap[prod.id] || {}
+                categoryPrices: priceMap[Number(prod.id)] || {}
             }));
-        } catch(e) {}
+        } catch(e) {
+            console.error("Error fetching category prices", e);
+        }
       }
       setProducts(productsList);
-    } catch (e) { console.error("API Error", e); }
+    } catch (e) { 
+      console.error("API Error", e); 
+    }
   }, [API_BASE_URL, selectedCompany]);
 
   useEffect(() => { fetchAllData(); }, [fetchAllData]);
@@ -230,17 +294,24 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- FIXED SAVE ALGORITHM: STRICT ENDPOINTS & WAITS ---
+  // --- SYNCHRONOUS PRODUCT & PRICING SAVE ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     
     const cleanPayload: any = {
-      name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
-      purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0, sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
-      minQuantity: parseInt(String(productForm.minQuantity)) || 10, reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
-      unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
-      barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
+      name: productForm.name,
+      sku: productForm.sku,
+      category: productForm.category || 'General',
+      purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0,
+      sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
+      minQuantity: parseInt(String(productForm.minQuantity)) || 10,
+      reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
+      unit: productForm.unit || 'pcs',
+      vatSetting: productForm.vatSetting || 'NONE',
+      imageUrl: productForm.imageUrl || null,
+      barcode: productForm.barcode || productForm.sku.toUpperCase(),
+      company: selectedCompany,
     };
 
     if (!productModal.editingId) {
@@ -264,7 +335,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     
-    // Optimistic UI Update
+    // Optimistic UI state update
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -274,43 +345,41 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     try {
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
-        const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
-        if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
+        const res = await fetch(url, { 
+          method: productModal.editingId ? 'PATCH' : 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(cleanPayload) 
+        });
+        if (!res.ok) throw new Error(`Product sync failed (${res.status})`);
         
         const resData = await res.json();
-        const finalProductId = Number(productModal.editingId || (resData && resData.id) || tempId);
+        const finalProductId = Number(productModal.editingId || resData.id || tempId);
         
-        // Loop individual POST routes with flattened payload
+        // Save category prices to the backend endpoint using the bulk route schema
         if (Object.keys(sanitizedPricesToSave).length > 0) {
-            const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
-                 return fetch(`${API_BASE_URL}/sales/category-prices`, { 
-                     method: 'POST', 
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ 
-                         company: selectedCompany, 
-                         categoryName: catName, 
-                         productId: finalProductId, 
-                         price: Number(price) 
-                     })
-                 }).then(async (r) => {
-                     if (!r.ok) {
-                         const errText = await r.text();
-                         console.error(`Backend failed to save price for ${catName}. Server responded: ${r.status} ${errText}`);
-                     }
-                 }).catch(console.error);
+            const pricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
+                return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        company: selectedCompany, 
+                        categoryName: catName, 
+                        prices: [{ productId: finalProductId, price: Number(price) }] 
+                    })
+                });
             });
-            await Promise.allSettled(catPricePromises);
+            await Promise.all(pricePromises);
         }
         
-        showToast("Successfully saved to database.", "success");
+        showToast("Product and pricing successfully saved.", "success");
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // Strictly wait 1000ms before pulling fresh data so database has time to lock and commit
+        // Wait 500ms before refreshing to ensure database commits complete
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
-        }, 1000);
+        }, 500);
         
     } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
@@ -319,47 +388,61 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }
   };
 
-  // --- FIXED BULK PRICING: FLATTENED LOOP ---
+  // --- BULK PRICING CALCULATOR & DISPATCHER ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all fields.", "error");
+      if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all required fields.", "error");
 
       const pct = parseFloat(bulkPricingModal.percentage);
-      if (isNaN(pct)) return showToast("Invalid percentage.", "error");
+      if (isNaN(pct)) return showToast("Please enter a valid percentage number.", "error");
 
-      if (!window.confirm(`Are you sure you want to adjust ALL product prices for the ${bulkPricingModal.tier} tier by ${pct}% based on their General Selling Price?`)) return;
+      if (!window.confirm(`Adjust all product prices for the "${bulkPricingModal.tier}" tier by ${pct}%?`)) return;
 
       setIsProcessing(true);
 
       const payload = products.map(p => {
-          const basePrice = Number(p.sellingPrice) || 0;
-          const newPrice = basePrice + (basePrice * (pct / 100));
+          let basePrice = 0;
+          const existingTierPrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
+          const generalPrice = Number(p.sellingPrice);
+          const costPrice = Number(p.purchasePrice);
+
+          if (bulkPricingModal.baseOn === 'tier' && existingTierPrice > 0) {
+              basePrice = existingTierPrice;
+          } else if (bulkPricingModal.baseOn === 'cost' && costPrice > 0) {
+              basePrice = costPrice;
+          } else {
+              basePrice = generalPrice > 0 ? generalPrice : (existingTierPrice > 0 ? existingTierPrice : costPrice);
+          }
+
+          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           return { productId: Number(p.id), price: Number(newPrice.toFixed(2)) };
-      });
+      }).filter(item => item.price > 0);
+
+      if (payload.length === 0) {
+          setIsProcessing(false);
+          return showToast("No items with a non-zero base price were found to adjust.", "error");
+      }
 
       try {
-          const promises = payload.map(item => 
-              fetch(`${API_BASE_URL}/sales/category-prices`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                      company: selectedCompany, 
-                      categoryName: bulkPricingModal.tier, 
-                      productId: item.productId, 
-                      price: item.price 
-                  })
+          const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                company: selectedCompany, 
+                categoryName: bulkPricingModal.tier, 
+                prices: payload 
               })
-          );
+          });
+
+          if (!res.ok) throw new Error(`Server returned error ${res.status}`);
           
-          await Promise.allSettled(promises);
-          
-          showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
-          setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
+          showToast(`Applied ${pct}% adjustment to ${payload.length} products in ${bulkPricingModal.tier}.`, "success");
+          setBulkPricingModal({ isOpen: false, tier: '', percentage: '', baseOn: 'general' });
           
           setTimeout(async () => {
             await fetchAllData();
             setIsProcessing(false);
-          }, 1000);
+          }, 600);
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
           setIsProcessing(false);
@@ -372,7 +455,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     const absQty = Math.abs(deltaQty);
 
     const currentHubStock = hubStock.find(h => String(h.warehouseId) === String(warehouseId) && Number(h.productId) === Number(prod.id))?.quantity || 0;
-    if (!isAdd && currentHubStock < absQty) { setIsProcessing(false); return showToast("Insufficient stock in this specific warehouse.", "error"); }
+    if (!isAdd && currentHubStock < absQty) { setIsProcessing(false); return showToast("Insufficient stock in this warehouse.", "error"); }
 
     setHubStock((prev: WarehouseStock[]) => {
       const next = [...prev];
@@ -631,8 +714,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
-    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; // Pricing view changes table output, does not hide items
-    return matchesSearch && matchesCategory && matchesPricingTier;
+    return matchesSearch && matchesCategory;
   });
 
   const filteredProductsForDropdown = products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()));
@@ -698,7 +780,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex flex-col min-w-0">
         
-        {/* RESPONSIVE HEADER - FIXED HIDDEN BUTTONS */}
+        {/* RESPONSIVE HEADER */}
         <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-6 shrink-0 shadow-sm z-10 gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden font-black text-slate-900 px-3 py-2 bg-slate-100 rounded-lg text-xs shrink-0">MENU</button>
@@ -768,7 +850,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 
                 <div className="flex flex-wrap gap-2 shrink-0">
                   {isAuthorizedAdmin && customerCategories.length > 0 && (
-                    <button onClick={() => setBulkPricingModal({ isOpen: true, tier: '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
+                    <button onClick={() => setBulkPricingModal({ isOpen: true, tier: customerCategories[0]?.name || '', percentage: '', baseOn: 'general' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
                   )}
                   {isAuthorizedAdmin && (
                     <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
@@ -879,7 +961,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                                   </button>
                                   <div className="w-px h-4 bg-slate-200 mx-1"></div>
-                                  <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '', categoryPrices: p.categoryPrices || {} }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
+                                  <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '', categoryPrices: { ...(p.categoryPrices || {}) } }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
                                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                   </button>
                                   {isAuthorizedAdmin && (
@@ -905,7 +987,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
           )}
 
-          {/* VIEW: RECEIVING (NEW P.O. PLACEMENT QUEUE) */}
+          {/* VIEW: RECEIVING (DELIVERY PLACEMENT QUEUE) */}
           {activeView === 'receiving' && (
             <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300">
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
@@ -1162,24 +1244,34 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50">
               <h2 className="text-xl font-black text-amber-900 uppercase tracking-tight">Bulk Pricing</h2>
-              <button onClick={() => setBulkPricingModal({ isOpen: false, tier: '', percentage: '' })} className="p-2 text-amber-400 hover:text-amber-600 hover:bg-amber-100 rounded-full transition-colors">
+              <button onClick={() => setBulkPricingModal({ isOpen: false, tier: '', percentage: '', baseOn: 'general' })} className="p-2 text-amber-400 hover:text-amber-600 hover:bg-amber-100 rounded-full transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={handleBulkPricingSubmit} className="p-8 flex flex-col gap-5">
+            <form onSubmit={handleBulkPricingSubmit} className="p-8 flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier *</label>
                 <select required value={bulkPricingModal.tier} onChange={e=>setBulkPricingModal({...bulkPricingModal, tier: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
                   <option value="">Select Tier...</option>
                   {customerCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
+
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%)</label>
-                <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 (add) or -5 (deduct)" />
-                <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from General Selling Price</span>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Calculate Percentage Based On *</label>
+                <select value={bulkPricingModal.baseOn} onChange={e=>setBulkPricingModal({...bulkPricingModal, baseOn: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
+                  <option value="general">General Selling Price</option>
+                  <option value="tier">Current Tier Price (Adjust Existing)</option>
+                  <option value="cost">Cost Price (Purchase Price)</option>
+                </select>
               </div>
-              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%) *</label>
+                <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 or -5" />
+              </div>
+
+              <button type="submit" disabled={isProcessing} className="mt-2 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
             </form>
           </div>
         </div>
@@ -1198,13 +1290,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             <form onSubmit={handleProductSubmit} className="p-8 flex flex-col gap-8 bg-slate-50">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {/* NEW IMAGE UPLOAD UI */}
+                {/* IMAGE UPLOAD UI */}
                 <div className="md:col-span-2 flex items-center gap-6 bg-white p-4 border border-slate-200 rounded-2xl shadow-sm">
                   <div className="relative group">
                     {productForm.imageUrl || productForm.previousImageUrl ? (
                       <>
                         <img src={productForm.imageUrl || productForm.previousImageUrl} alt="Preview" className="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm" />
-                        {/* Remove Image Button */}
                         <button 
                           type="button" 
                           onClick={() => {
@@ -1227,7 +1318,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <button 
                             type="button" 
                             onClick={() => {
-                              // Restore image from deleted vault back to form and global vault
                               setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
                               globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
                               delete deletedImageVault[productForm.sku];
@@ -1599,7 +1689,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 {txModal.type !== 'ADJUST' && (
                   <>
                     <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Batch</label><input type="text" value={txForm.batchNumber} onChange={e=>setTxForm({...txForm, batchNumber: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-blue-500 uppercase" /></div>
-                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Exp Date</label><input type="date" value={txForm.expirationDate} onChange={e=>setTxForm({...txForm, expirationDate: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none bg-white shadow-sm focus:ring-2 focus:ring-blue-500 text-slate-700" /></div>
+                    <div className="flex flex-col gap-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Exp Date</label><input type="date" value={txForm.expirationDate} onChange={e=>setTxForm({...txForm, expirationDate: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 text-slate-700" /></div>
                   </>
                 )}
               </div>
