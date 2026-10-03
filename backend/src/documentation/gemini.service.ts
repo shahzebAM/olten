@@ -103,9 +103,10 @@ CRITICAL RULES:
   }
 
   // --- NEW EXPIRY DATE EXTRACTION ---
+// --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
-      const prompt = "Extract the expiration date, validity date, or renewal date from this document. Return ONLY the exact date formatted as YYYY-MM-DD. If there is absolutely no expiration or validity date, return exactly the word 'null'. Do not add any other words.";
+      const prompt = "Find the most important expiration date, validity end date, or renewal deadline in this document. You MUST return ONLY the date formatted exactly as 'Month DD, YYYY' (e.g., January 28, 2026). Do not write any other words or explanations. If no such date exists, return the exact word: null";
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
@@ -122,12 +123,10 @@ CRITICAL RULES:
       const text = response.text?.trim() || 'null';
       if (text.toLowerCase().includes('null')) return null;
       
-      // Extract just the date string to be safe
-      const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
-      return dateMatch ? dateMatch[0] : text;
+      return text; // Returns the exact text: "January 28, 2026"
     } catch (error: any) {
       this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
-      return null; // Return null gracefully on failure so it doesn't break the app
+      return null; 
     }
   }
 }

@@ -104,12 +104,12 @@ export class DocumentService {
       // Skip if the user cleared the date or if the ID is invalid
       if (isNaN(docId) || !rem.expiryDate) continue;
 
-      const saved = await (prisma as any).documentReminder.create({
+const saved = await (prisma as any).documentReminder.create({
         data: {
           company: company,
           documentId: docId,
           fileName: rem.name,
-          expiryDate: rem.expiryDate,
+          expiryDate: new Date(rem.expiryDate), // <--- Add new Date() right here
           reminderDays: Number(rem.reminderDays) || 30
         }
       });
