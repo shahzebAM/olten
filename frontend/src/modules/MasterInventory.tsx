@@ -124,6 +124,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [hubTransferForm, setHubTransferForm] = useState({ sourceId: '', destId: '', productId: '', quantity: '' });
   const [hubTransferSearch, setHubTransferSearch] = useState('');
   const [isHubDropdownOpen, setIsHubDropdownOpen] = useState(false);
+  const [expandedWarehouseId, setExpandedWarehouseId] = useState<string | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -1126,64 +1127,93 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
        {/* VIEW: WAREHOUSES */}
           {activeView === 'warehouses' && (
-            <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300 p-4 sm:p-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-4">
-                 <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouse Control Center</h2>
-                 <div className="flex items-center gap-3 w-full sm:w-auto">
-                   <div className="relative w-full sm:w-80">
-                     <svg className="w-5 h-5 absolute left-3 top-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                     <input type="text" placeholder="SEARCH HUBS OR ITEMS..." value={warehouseSearchQuery} onChange={(e) => setWarehouseSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
-                   </div>
+            <div className="flex flex-col h-full w-full max-w-[1600px] mx-auto animate-in fade-in duration-300 space-y-4 p-4 sm:p-6 min-h-0">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+                 <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouses</h2>
+                 
+                 {/* Compact Action Buttons */}
+                 <div className="flex flex-wrap gap-2">
+                   {isAuthorizedAdmin && ( <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold uppercase text-[10px] shadow-sm hover:bg-blue-700 transition-colors">+ Register</button> )}
+                   <button onClick={() => setActiveWarehouseModal('ADJUST')} className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold uppercase text-[10px] shadow-sm hover:bg-indigo-700 transition-colors">Adjust Stock</button>
+                   <button onClick={() => setActiveWarehouseModal('TRANSFER')} className="px-4 py-2 bg-amber-500 text-white rounded-lg font-bold uppercase text-[10px] shadow-sm hover:bg-amber-600 transition-colors">Transfer</button>
                  </div>
               </div>
-              <div className="flex flex-wrap gap-3">
-                {isAuthorizedAdmin && ( <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-slate-800 transition-colors">+ Register Warehouse</button> )}
-                <button onClick={() => setActiveWarehouseModal('ADJUST')} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-indigo-700 transition-colors">Adjust Hub Stock</button>
-                <button onClick={() => setActiveWarehouseModal('TRANSFER')} className="px-5 py-2.5 bg-amber-500 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-amber-600 transition-colors">Transfer Between Hubs</button>
+
+              {/* SEARCH BAR FOR ACCORDION */}
+              <div className="relative w-full sm:w-96 mx-auto shrink-0 mt-4">
+                 <svg className="w-5 h-5 absolute left-4 top-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                 <input type="text" placeholder="SEARCH HUBS OR ITEMS..." value={warehouseSearchQuery} onChange={(e) => setWarehouseSearchQuery(e.target.value)} className="w-full pl-12 pr-4 py-3 border border-slate-200 rounded-full text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
               </div>
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Warehouse / Code</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Location</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Stored Assets</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {displayedWarehouses.map(w => {
-                      const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
-                      const filteredWhStocks = whStocks.filter(stk => {
-                        if (!warehouseSearchQuery) return true;
-                        const q = warehouseSearchQuery.toLowerCase();
-                        if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
-                        const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
-                        return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
-                      });
-                      return (
-                        <tr key={w.id} className="hover:bg-slate-50 transition-colors items-start">
-                          <td className="py-5 px-5 align-top"><div className="font-black text-slate-900 uppercase text-sm">{w.name}</div><div className="text-[10px] font-bold text-slate-400 mt-1">WH-{w.id.toString().padStart(3, '0')}</div></td>
-                          <td className="py-5 px-5 text-xs font-medium text-slate-500 align-top max-w-[250px] leading-relaxed">{w.address}</td>
-                          <td className="py-5 px-5 align-top">
-                            <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-2">
-                              {whStocks.length === 0 ? ( <span className="text-xs text-slate-400 font-medium italic">Facility is empty</span> ) : filteredWhStocks.length === 0 && warehouseSearchQuery ? ( <span className="text-xs text-slate-400 font-medium italic">No matching items</span> ) : (
-                                filteredWhStocks.map(stk => {
-                                  const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
-                                  return (
-                                    <div key={stk.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:border-blue-300 transition-colors">
-                                      <div className="text-[10px] font-bold uppercase text-slate-700 truncate mr-3">{p?.name || stk.sku}</div>
-                                      <div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{stk.quantity} {p?.unit}</div>
-                                    </div>
-                                  )
-                                })
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+
+              {/* GRID ACCORDION LAYOUT */}
+              <div className="flex-1 overflow-y-auto min-h-0 pt-4 pb-12">
+                 {displayedWarehouses.length === 0 ? (
+                    <div className="text-center text-slate-400 font-bold py-12">No facilities found.</div>
+                 ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+                      {displayedWarehouses.map(w => {
+                        const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
+                        const filteredWhStocks = whStocks.filter(stk => {
+                          if (!warehouseSearchQuery) return true;
+                          const q = warehouseSearchQuery.toLowerCase();
+                          if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
+                          const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
+                          return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
+                        });
+
+                        const isExpanded = expandedWarehouseId === w.id;
+
+                        return (
+                          <div key={w.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col transition-all duration-300">
+                             {/* ACCORDION HEADER */}
+                             <button 
+                               onClick={() => setExpandedWarehouseId(isExpanded ? null : w.id)}
+                               className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+                             >
+                                <div className="flex-1 min-w-0 pr-4">
+                                   <div className="font-black text-slate-900 uppercase text-sm truncate">{w.name}</div>
+                                   <div className="text-[10px] font-bold text-slate-500 mt-1 truncate">{w.address || `WH-${w.id.toString().padStart(3, '0')}`}</div>
+                                </div>
+                                <div className="shrink-0 text-slate-400 bg-slate-100 p-2 rounded-full">
+                                  <svg className={`w-4 h-4 transform transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </div>
+                             </button>
+
+                             {/* ACCORDION BODY (STOCKS) */}
+                             {isExpanded && (
+                               <div className="px-5 pb-5 pt-2 border-t border-slate-100 bg-slate-50 animate-in slide-in-from-top-2">
+                                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Stored Assets ({filteredWhStocks.length})</div>
+                                  <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
+                                    {whStocks.length === 0 ? ( 
+                                      <span className="text-xs text-slate-400 font-medium italic">Facility is currently empty.</span> 
+                                    ) : filteredWhStocks.length === 0 && warehouseSearchQuery ? ( 
+                                      <span className="text-xs text-slate-400 font-medium italic">No matching items inside.</span> 
+                                    ) : (
+                                      filteredWhStocks.map(stk => {
+                                        const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
+                                        return (
+                                          <div key={stk.id} className="flex justify-between items-center bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm">
+                                            <div className="flex flex-col min-w-0 flex-1 mr-3">
+                                              <div className="text-[10px] font-bold uppercase text-slate-800 truncate">{p?.name || stk.sku}</div>
+                                              <div className="text-[8px] font-mono text-slate-400 mt-0.5">{p?.sku}</div>
+                                            </div>
+                                            <div className="text-xs font-black text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 shrink-0 shadow-sm">
+                                              {stk.quantity} <span className="text-[8px] text-blue-400">{p?.unit}</span>
+                                            </div>
+                                          </div>
+                                        )
+                                      })
+                                    )}
+                                  </div>
+                               </div>
+                             )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                 )}
               </div>
             </div>
           )}
