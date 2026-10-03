@@ -313,7 +313,7 @@ useEffect(() => {
                 onClick={() => setIsCategoryModalOpen(true)}
                 className="w-full text-left px-4 py-3 rounded-lg font-bold text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors mt-2"
               >
-                Categories & Pricing
+                Categories
               </button>
           )}
 
@@ -510,7 +510,7 @@ useEffect(() => {
                       </form>
 
                       <div className="space-y-3">
-                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Existing Categories & Pricing</h4>
+                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Existing Categories</h4>
                           {categories.length === 0 ? (
                               <p className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-300 rounded-xl">No custom categories yet. "General" is used by default.</p>
                           ) : (
