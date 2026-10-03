@@ -230,17 +230,29 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- STRICT SYNCHRONOUS PRODUCT SAVE ---
+  // --- DATABASE SYNC: SHOTGUN ALGORITHM ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     
+    // 1. Sanitize Data
+    const rawPricesToSave = productForm.categoryPrices || {};
+    const sanitizedPricesToSave: Record<string, number> = {};
+    
+    Object.keys(rawPricesToSave).forEach(cat => {
+        if (rawPricesToSave[cat] !== '' && rawPricesToSave[cat] !== null && rawPricesToSave[cat] !== undefined) {
+           const val = parseFloat(String(rawPricesToSave[cat]));
+           if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
+        }
+    });
+
     const cleanPayload: any = {
       name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0, sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
       minQuantity: parseInt(String(productForm.minQuantity)) || 10, reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
       unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
       barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
+      categoryPrices: sanitizedPricesToSave // Attach to main payload in case backend maps relationships automatically
     };
 
     if (!productModal.editingId) {
@@ -252,19 +264,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
 
-    const rawPricesToSave = productForm.categoryPrices || {};
-    const sanitizedPricesToSave: Record<string, number> = {};
-    
-    Object.keys(rawPricesToSave).forEach(cat => {
-        if (rawPricesToSave[cat] !== '' && rawPricesToSave[cat] !== null && rawPricesToSave[cat] !== undefined) {
-           const val = parseFloat(String(rawPricesToSave[cat]));
-           if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
-        }
-    });
-
     const tempId = productModal.editingId || Date.now();
     
-    // Optimistic UI Update
+    // 2. Immediate Optimistic UI Update (Prevents visual disappearing)
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -273,41 +275,48 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     });
 
     try {
+        // 3. Save Product Identity
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
         if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
         
         const resData = await res.json();
-        // Force strict Number typing for the backend
-        const finalProductId = Number(productModal.editingId || resData.id);
+        const finalProductId = Number(productModal.editingId || (resData && resData.id) || tempId);
         
+        // 4. Save Prices to Specific Endpoint Routes explicitly
         if (Object.keys(sanitizedPricesToSave).length > 0) {
-            // Strictly wait for each backend request to finish sequentially to prevent database locking errors
+            const promises = [];
+            
             for (const [catName, price] of Object.entries(sanitizedPricesToSave)) {
-                 const priceRes = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
-                     method: 'POST', 
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ 
-                         company: selectedCompany, 
-                         categoryName: catName, 
-                         prices: [ { productId: finalProductId, price: Number(price) } ] 
-                     })
-                 });
-                 if (!priceRes.ok) {
-                     console.error(`Backend failed to save price for ${catName}`, priceRes.status);
-                 }
+                // Route A: Bulk format
+                promises.push(
+                    fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+                         method: 'POST', 
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ company: selectedCompany, categoryName: catName, prices: [ { productId: finalProductId, price: Number(price) } ] })
+                    })
+                );
+                // Route B: Single Item format
+                promises.push(
+                    fetch(`${API_BASE_URL}/sales/category-prices`, {
+                         method: 'POST', 
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
+                    })
+                );
             }
+            await Promise.allSettled(promises);
         }
         
         showToast("Successfully saved to database.", "success");
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // Wait 600ms before pulling fresh data so the database has time to commit transactions
+        // 5. Strict 1000ms delay to ensure DB commits before refreshing table
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
-        }, 600);
+        }, 1000);
         
     } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
@@ -344,10 +353,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           
           showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
           setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
-          await fetchAllData();
+          
+          setTimeout(async () => {
+            await fetchAllData();
+            setIsProcessing(false);
+          }, 1000);
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
-      } finally {
           setIsProcessing(false);
       }
   };
