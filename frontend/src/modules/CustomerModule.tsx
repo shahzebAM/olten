@@ -12,6 +12,7 @@ interface Customer {
   creditLimit: number;
   balance: number;
   createdAt: string;
+  category: string; // Added category field
 }
 
 interface CustomerModuleProps {
@@ -41,6 +42,17 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   const [viewCustomer, setViewCustomer] = useState<Customer | null>(null);
   const [editModal, setEditModal] = useState<{ isOpen: boolean; data: Partial<Customer> }>({ isOpen: false, data: {} });
 
+  // --- CATEGORY & PRICING STATES ---
+  const [categories, setCategories] = useState<{ id: string, name: string }[]>([]);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  
+  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
+  const [pricingCategory, setPricingCategory] = useState('');
+  const [categoryPrices, setCategoryPrices] = useState<Record<number, string>>({});
+  const [bulkPercentage, setBulkPercentage] = useState('');
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -59,7 +71,6 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Replaced new URL() with standard string concatenation to prevent parsing crashes
       let url = `${API_BASE_URL}/sales/customers?company=${encodeURIComponent(selectedCompany)}&page=${currentPage}&limit=${limit}`;
       if (debouncedSearch) {
         url += `&search=${encodeURIComponent(debouncedSearch)}`;
@@ -70,7 +81,6 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
       
       const responseData = await res.json();
       
-      // Handle both paginated object and legacy array fallback safely
       if (Array.isArray(responseData)) {
         setCustomers(responseData);
         setTotalPages(1);
@@ -87,13 +97,27 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   }, [selectedCompany, currentPage, limit, debouncedSearch, API_BASE_URL]);
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/customer-categories?company=${selectedCompany}`);
+      if (res.ok) setCategories(await res.json());
+    } catch (e) {
+      console.error("Failed to fetch categories");
+    }
+  }, [API_BASE_URL, selectedCompany]);
+
   useEffect(() => {
     fetchCustomers();
-  }, [fetchCustomers]);
+    fetchCategories();
+  }, [fetchCustomers, fetchCategories]);
 
   // --- ACTIONS ---
   const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!editModal.data.category) {
+        return showToast("Customer Category is required.", "error");
+    }
+    
     setIsLoading(true);
     try {
       const isNew = !editModal.data.id;
@@ -137,6 +161,111 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
+  // --- CATEGORY ACTIONS ---
+  const handleCreateCategory = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newCategoryName.trim()) return;
+      try {
+          const res = await fetch(`${API_BASE_URL}/customer-categories`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: newCategoryName.trim(), company: selectedCompany })
+          });
+          if (!res.ok) throw new Error();
+          setNewCategoryName('');
+          fetchCategories();
+          showToast("Category created.", "success");
+      } catch (e) {
+          showToast("Failed to create category.", "error");
+      }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+      if (!window.confirm("Delete this category? Customers assigned to it will still retain the name but it won't be selectable.")) return;
+      try {
+          await fetch(`${API_BASE_URL}/customer-categories/${id}`, { method: 'DELETE' });
+          fetchCategories();
+          showToast("Category deleted.", "success");
+      } catch (e) {
+          showToast("Failed to delete category.", "error");
+      }
+  };
+
+  // --- PRICING ACTIONS ---
+  const openPricingEditor = async (catName: string) => {
+    setPricingCategory(catName);
+    setIsLoading(true);
+    try {
+      const [prodRes, priceRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
+      ]);
+      
+      const prods = await prodRes.json();
+      const prices = await priceRes.json();
+      
+      setAllProducts(prods);
+      
+      const priceMap: Record<number, string> = {};
+      prices.forEach((p: any) => { priceMap[p.productId] = String(p.price) });
+      
+      // Pre-fill with default selling price if no specific category price exists
+      prods.forEach((p: any) => {
+          if (!priceMap[p.id]) {
+              priceMap[p.id] = String(p.sellingPrice || 0);
+          }
+      });
+
+      setCategoryPrices(priceMap);
+      setIsPricingModalOpen(true);
+      setIsCategoryModalOpen(false); // Close category manager if open
+    } catch (e) {
+        showToast("Failed to load pricing data.", "error");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  const applyBulkPercentage = () => {
+    const pct = parseFloat(bulkPercentage);
+    if (isNaN(pct)) return;
+    
+    const nextPrices = { ...categoryPrices };
+    allProducts.forEach(p => {
+      const base = Number(p.sellingPrice) || 0;
+      const newPrice = base + (base * (pct / 100)); 
+      nextPrices[p.id] = newPrice.toFixed(2);
+    });
+    
+    setCategoryPrices(nextPrices);
+    setBulkPercentage('');
+  };
+
+  const saveCategoryPrices = async () => {
+    setIsLoading(true);
+    try {
+        const payload = Object.entries(categoryPrices)
+        .map(([productId, price]) => ({ productId: Number(productId), price: Number(price) }))
+        .filter(p => !isNaN(p.price));
+
+        const res = await fetch(`${API_BASE_URL}/category-prices/bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: selectedCompany, categoryName: pricingCategory, prices: payload })
+        });
+        
+        if (!res.ok) throw new Error();
+        
+        setIsPricingModalOpen(false);
+        showToast("Category pricing successfully updated!", "success");
+    } catch (e) {
+        showToast("Failed to save pricing.", "error");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       {toast && (
@@ -153,12 +282,21 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
         <div className="flex-1 py-6 px-3 space-y-1">
           <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Relationships</p>
           <button className="w-full text-left px-4 py-3 rounded-lg font-bold text-sm bg-indigo-600 text-white shadow-sm">Customers</button>
+          
+          {isAuthorizedAdmin && (
+              <button 
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="w-full text-left px-4 py-3 rounded-lg font-bold text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors mt-2"
+              >
+                Categories & Pricing
+              </button>
+          )}
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50">
         <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10">
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Enterprise Bingo <span className="text-slate-400 font-medium">| Customer Details</span></h2></div>
+          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{selectedCompany} <span className="text-slate-400 font-medium">| Customer Details</span></h2></div>
           <button type="button" onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors">Exit Gateway</button>
         </header>
 
@@ -177,12 +315,22 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                   className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-shadow"
                 />
               </div>
-              <button 
-                onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', address: '', creditLimit: 0, balance: 0 } })} 
-                className="px-6 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors whitespace-nowrap"
-              >
-                + Register Customer
-              </button>
+              <div className="flex gap-2">
+                 {isAuthorizedAdmin && (
+                    <button 
+                        onClick={() => setIsCategoryModalOpen(true)}
+                        className="md:hidden px-4 py-3 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-50 transition-colors"
+                    >
+                        Pricing
+                    </button>
+                 )}
+                <button 
+                    onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
+                    className="px-6 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                >
+                    + Register Customer
+                </button>
+              </div>
             </div>
 
             {/* DATA TABLE */}
@@ -198,6 +346,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                     <tr>
                       <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Client Code</th>
                       <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Entity / Name</th>
+                      <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Category</th>
                       <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Contact Info</th>
                       <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Address</th>
                       <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Balance</th>
@@ -207,7 +356,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {customers.length === 0 && !isLoading ? (
-                      <tr><td colSpan={7} className="py-16 text-center text-slate-400 font-medium">No customer records found.</td></tr>
+                      <tr><td colSpan={8} className="py-16 text-center text-slate-400 font-medium">No customer records found.</td></tr>
                     ) : (
                       customers.map(c => (
                         <tr key={c.id || Math.random()} className="hover:bg-slate-50 transition-colors group">
@@ -215,6 +364,9 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                           <td className="py-4 px-6">
                             <div className="font-bold text-slate-900 text-base">{c.name || 'Unknown'}</div>
                             <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mt-0.5">{c.company || 'Unknown'}</div>
+                          </td>
+                          <td className="py-4 px-6">
+                              <span className="px-2 py-1 bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-bold uppercase rounded-md">{c.category || 'General'}</span>
                           </td>
                           <td className="py-4 px-6 text-xs text-slate-600">
                             <div className="font-semibold text-slate-800">{c.contact || 'No Contact'}</div>
@@ -255,6 +407,117 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
 
       {/* --- MODALS --- */}
 
+      {/* CATEGORY MANAGEMENT MODAL */}
+      {isCategoryModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+                      <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Customer Categories</h3>
+                      <button type="button" onClick={() => setIsCategoryModalOpen(false)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
+                  </div>
+                  
+                  <div className="p-6 flex-1 overflow-y-auto">
+                      <form onSubmit={handleCreateCategory} className="mb-8 flex gap-2">
+                          <input 
+                              type="text" 
+                              required 
+                              placeholder="New Category Name..." 
+                              value={newCategoryName} 
+                              onChange={e => setNewCategoryName(e.target.value)} 
+                              className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                          />
+                          <button type="submit" className="px-5 py-3 bg-indigo-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors">Add</button>
+                      </form>
+
+                      <div className="space-y-3">
+                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Existing Categories & Pricing</h4>
+                          {categories.length === 0 ? (
+                              <p className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-300 rounded-xl">No custom categories yet. "General" is used by default.</p>
+                          ) : (
+                              categories.map(cat => (
+                                  <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+                                      <span className="font-bold text-slate-800 uppercase">{cat.name}</span>
+                                      <div className="flex gap-2">
+                                          <button onClick={() => openPricingEditor(cat.name)} className="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-amber-100 transition-colors">Edit Pricing</button>
+                                          <button onClick={() => handleDeleteCategory(cat.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-rose-100 transition-colors">Delete</button>
+                                      </div>
+                                  </div>
+                              ))
+                          )}
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* PRICING EDITOR MODAL */}
+      {isPricingModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-200">
+                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50 shrink-0">
+                      <div>
+                          <h3 className="text-xl font-black text-amber-900 tracking-tight uppercase">Category Pricing</h3>
+                          <p className="text-xs font-bold text-amber-700 tracking-widest uppercase mt-1">Editing Tier: {pricingCategory}</p>
+                      </div>
+                      <button type="button" onClick={() => setIsPricingModalOpen(false)} className="text-amber-400 hover:text-amber-700 font-black text-xl">✕</button>
+                  </div>
+
+                  <div className="p-4 bg-white border-b border-slate-200 flex flex-col sm:flex-row gap-4 items-center justify-between shrink-0">
+                      <div className="flex items-center gap-3 w-full sm:w-auto">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider whitespace-nowrap">Bulk Adjust (%)</label>
+                          <input 
+                              type="number" 
+                              placeholder="e.g. 10 or -5" 
+                              value={bulkPercentage} 
+                              onChange={e => setBulkPercentage(e.target.value)} 
+                              className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
+                          />
+                          <button onClick={applyBulkPercentage} className="px-4 py-2 bg-slate-900 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-slate-800 transition-colors">Apply</button>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 max-w-xs text-right hidden sm:block">Positive numbers increase price, negative numbers grant a discount.</p>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-0 bg-slate-50">
+                      <table className="w-full text-left text-sm whitespace-nowrap">
+                          <thead className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+                              <tr>
+                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">SKU</th>
+                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px]">Product Name</th>
+                                  <th className="py-3 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right">Standard Price</th>
+                                  <th className="py-3 px-6 font-black text-amber-600 uppercase tracking-widest text-[10px] text-right">Category Price</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                              {allProducts.map(p => (
+                                  <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
+                                      <td className="py-2 px-6 font-mono text-xs text-slate-500">{p.sku}</td>
+                                      <td className="py-2 px-6 font-bold text-slate-800 uppercase">{p.name}</td>
+                                      <td className="py-2 px-6 text-right font-mono text-slate-500">₱{Number(p.sellingPrice).toFixed(2)}</td>
+                                      <td className="py-2 px-6 text-right">
+                                          <input 
+                                              type="number" 
+                                              step="0.01"
+                                              value={categoryPrices[p.id] !== undefined ? categoryPrices[p.id] : ''} 
+                                              onChange={e => setCategoryPrices({...categoryPrices, [p.id]: e.target.value})} 
+                                              className="w-32 px-3 py-1.5 border border-slate-200 rounded-md text-sm font-black text-amber-900 outline-none focus:ring-2 focus:ring-amber-500 text-right bg-white shadow-sm"
+                                          />
+                                      </td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+
+                  <div className="p-6 border-t border-slate-100 bg-white shrink-0 flex justify-end gap-3">
+                      <button type="button" onClick={() => setIsPricingModalOpen(false)} className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-200 transition-colors">Cancel</button>
+                      <button onClick={saveCategoryPrices} disabled={isLoading} className="px-8 py-2.5 bg-amber-500 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-amber-600 transition-colors disabled:opacity-50">
+                          {isLoading ? 'Saving...' : 'Save Pricing Rules'}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* VIEW CUSTOMER MODAL */}
       {viewCustomer && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
@@ -280,6 +543,10 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                   <p className="text-sm font-bold text-slate-900">{viewCustomer.company}</p>
                 </div>
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Category</p>
+                  <p className="text-sm font-bold text-slate-900 uppercase">{viewCustomer.category || 'General'}</p>
+                </div>
+                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Primary Contact</p>
                   <p className="text-sm font-bold text-slate-900">{viewCustomer.contact || 'N/A'}</p>
                   <p className="text-xs font-medium text-slate-500 mt-1">{viewCustomer.phone || '-'}</p>
@@ -292,7 +559,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Physical Address</p>
                   <p className="text-sm font-medium text-slate-900 leading-relaxed">{viewCustomer.address || 'N/A'}</p>
                 </div>
-                <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-inner">
+                <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-inner lg:col-span-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Outstanding Balance</p>
                   <p className="text-2xl font-black">₱{(viewCustomer.balance || 0).toLocaleString()}</p>
                 </div>
@@ -336,11 +603,24 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
               <button type="button" onClick={() => setEditModal({ isOpen: false, data: {} })} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
             </div>
             
-            <form onSubmit={handleSaveCustomer} className="p-8 flex flex-col gap-6">
+            <form onSubmit={handleSaveCustomer} className="p-8 flex flex-col gap-6 max-h-[75vh] overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Business / Entity Name *</label>
                   <input required type="text" value={editModal.data.name || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, name: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Category *</label>
+                  <select 
+                    required 
+                    value={editModal.data.category || ''} 
+                    onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, category: e.target.value } })}
+                    className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white"
+                  >
+                    <option value="">Select Category...</option>
+                    <option value="General">General</option>
+                    {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Person</label>
@@ -350,7 +630,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Number</label>
                   <input type="text" value={editModal.data.phone || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, phone: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1.5 sm:col-span-2">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Email Address</label>
                   <input type="email" value={editModal.data.email || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, email: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>

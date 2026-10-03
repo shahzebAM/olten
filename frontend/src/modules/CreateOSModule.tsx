@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 // --- INTERFACES ---
-interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; }
+interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; category?: string; }
 interface WarehouseBreakdown { name: string; quantity: number; }
 interface SearchedProduct { id: number; name: string; sku: string; category: string; sellingPrice: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; }
 interface DraftItem { id?: string; productId: number; sku: string; productName: string; requestedQty: number | ''; unitPrice: number | string; lineTotal: number; officeStock: number; warehouseQty: number; warehouseBreakdown: WarehouseBreakdown[]; selectedWarehouseName: string | null; }
@@ -44,6 +44,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [customerHighlightedIndex, setCustomerHighlightedIndex] = useState(-1);
   const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  // --- CATEGORY PRICING STATE ---
+  const [activeCategoryPrices, setActiveCategoryPrices] = useState<Record<number, number>>({});
 
   const [loadSlipSearch, setLoadSlipSearch] = useState('');
   const [showLoadSlipDropdown, setShowLoadSlipDropdown] = useState(false);
@@ -116,7 +119,11 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         setCustomers(list);
         if (initialCustomerId && list.length > 0) {
           const target = list.find((c: Customer) => c.id === initialCustomerId);
-          if (target) { setSelectedCustomer(target); setCustomerSearch(target.name); }
+          if (target) { 
+              setSelectedCustomer(target); 
+              setCustomerSearch(target.name); 
+              handleCustomerSelect(target); // Fetch pricing
+          }
         }
       }).catch(() => {});
   }, [selectedCompany, API_BASE_URL, initialCustomerId]);
@@ -140,17 +147,42 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const filteredSlips = useMemo(() => {
     const query = loadSlipSearch.toLowerCase();
-    return allSlips.filter(s => s.osNumber.toLowerCase().includes(query) || s.customer?.name.toLowerCase().includes(query));
+    return allSlips.filter(s => s.osNumber.toLowerCase().includes(query) || (s.customer?.name && s.customer.name.toLowerCase().includes(query)));
   }, [allSlips, loadSlipSearch]);
 
   const filteredOsSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('OS')), [filteredSlips]);
   const filteredFoSlips = useMemo(() => filteredSlips.filter(s => s.osNumber.startsWith('FO')), [filteredSlips]);
 
-  const handleSelectCustomer = (c: Customer) => { setSelectedCustomer(c); setCustomerSearch(c.name); setShowCustomerDropdown(false); };
+  // --- FETCH CATEGORY PRICING ON CUSTOMER SELECT ---
+  const handleCustomerSelect = async (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setCustomerSearch(customer.name);
+    setShowCustomerDropdown(false);
+
+    if (customer.category && customer.category !== 'General') {
+      try {
+        const res = await fetch(`${API_BASE_URL}/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const priceMap: Record<number, number> = {};
+          data.forEach((d: any) => { priceMap[d.productId] = d.price; });
+          setActiveCategoryPrices(priceMap);
+          return;
+        }
+      } catch (e) {
+          console.warn("Failed to load category pricing", e);
+      }
+    }
+    setActiveCategoryPrices({}); // Fallback to standard
+  };
+
 
   const handleLoadSlip = async (slip: any) => {
     setLoadedOsId(slip.id); setOsNumber(slip.osNumber); setReferenceOs(slip.referenceOs || null); setIsVatApplied(slip.vatApplied || false); setLoadedOsStatus(slip.status || 'Generated');
-    if (slip.customer) { setSelectedCustomer(slip.customer); setCustomerSearch(slip.customer.name); }
+    
+    if (slip.customer) { 
+        handleCustomerSelect(slip.customer); // Ensure pricing loads if they add more items
+    }
     
     const mappedItems: DraftItem[] = slip.items.map((i: any) => ({
       id: i.id, 
@@ -175,13 +207,18 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     if (!showCustomerDropdown || filteredCustomers.length === 0) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev < filteredCustomers.length - 1 ? prev + 1 : prev)); } 
     else if (e.key === 'ArrowUp') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
-    else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) handleSelectCustomer(filteredCustomers[customerHighlightedIndex]); } 
+    else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) handleCustomerSelect(filteredCustomers[customerHighlightedIndex]); } 
     else if (e.key === 'Escape') { setShowCustomerDropdown(false); setCustomerHighlightedIndex(-1); }
   };
 
   const handleAddProduct = (p: SearchedProduct) => {
     if (draftItems.some(i => i.productId === p.id)) return showToast("Product already exists in the order.", "error");
-    setDraftItems([...draftItems, { productId: p.id, sku: p.sku, productName: p.name, officeStock: p.officeStock, warehouseQty: p.warehouseQty, warehouseBreakdown: p.warehouseBreakdown || [], selectedWarehouseName: null, requestedQty: 1, unitPrice: p.sellingPrice || 0, lineTotal: p.sellingPrice || 0 }]);
+    
+    // Check if category pricing exists, otherwise use sellingPrice
+    const priceToUse = activeCategoryPrices[p.id] !== undefined ? activeCategoryPrices[p.id] : (p.sellingPrice || 0);
+
+    setDraftItems([...draftItems, { productId: p.id, sku: p.sku, productName: p.name, officeStock: p.officeStock, warehouseQty: p.warehouseQty, warehouseBreakdown: p.warehouseBreakdown || [], selectedWarehouseName: null, requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse }]);
+    
     setProductSearch(''); setShowProductDropdown(false); setProductSearchResults([]); setHighlightedIndex(-1);
     setTimeout(() => { const input = document.getElementById(`qty-input-${p.id}`) as HTMLInputElement; if (input) { input.focus(); input.select(); } }, 50);
   };
@@ -294,7 +331,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     setIsProcessing(true);
     try {
       const payload = {
-        osNumber: osNumber.trim(), company: selectedCompany, customerId: selectedCustomer.id, isVatApplied, vatRate, 
+        osNumber: osNumber.trim(), company: selectedCompany, customerId: selectedCustomer?.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername, referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
@@ -395,7 +432,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   };
 
   const handleClosePrintModal = () => {
-    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated');
+    setFinalizedOs(null); setFinalOrderGenerated(false); setDraftItems([]); setSelectedCustomer(null); setCustomerSearch(''); setIsVatApplied(false); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); setActiveCategoryPrices({});
     fetchNextOsNumber();
   };
 
@@ -410,7 +447,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       )}
 
       <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
-        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">Enterprise ERP <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
+        <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">{selectedCompany} <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
           <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
             Records Ledger
@@ -468,18 +505,26 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   {showCustomerDropdown && (
                     <div ref={customerDropdownRef} className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-[90%] max-w-lg bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto z-40">
                       {filteredCustomers.length === 0 ? <div className="p-4 text-slate-500 text-sm font-medium text-center">No matching customers found.</div> : filteredCustomers.map((c, i) => (
-                        <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c); }} onMouseEnter={() => setCustomerHighlightedIndex(i)} className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
+                        <div key={c.id} onMouseDown={(e) => { e.preventDefault(); handleCustomerSelect(c); }} onMouseEnter={() => setCustomerHighlightedIndex(i)} className={`px-5 py-3 border-b border-slate-50 cursor-pointer flex justify-between items-center transition-colors ${customerHighlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
                           <div><span className="font-bold text-slate-900 block uppercase">{c.name}</span></div>
-                          <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
+                          <div className="flex items-center gap-2">
+                             <span className="text-[10px] font-mono text-slate-500 uppercase px-2 py-0.5 bg-slate-100 rounded">{c.category || 'General'}</span>
+                             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{c.company}</span>
+                          </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); }}>
+                <div className="w-full flex items-center justify-center py-4 relative group cursor-pointer" onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setReferenceOs(null); setLoadedOsId(null); setLoadedOsStatus('Generated'); fetchNextOsNumber(); setActiveCategoryPrices({}); }}>
                   <div className="flex flex-col items-center">
-                    <span className="text-lg font-black text-indigo-900 tracking-tight uppercase">{selectedCustomer.name}</span>
+                    <span className="text-lg font-black text-indigo-900 tracking-tight uppercase flex items-center gap-2">
+                        {selectedCustomer.name} 
+                        {selectedCustomer.category && selectedCustomer.category !== 'General' && (
+                            <span className="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded-md tracking-widest border border-amber-200">{selectedCustomer.category} TIER</span>
+                        )}
+                    </span>
                     {referenceOs && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Ref: {referenceOs}</span>}
                   </div>
                   <span className="absolute right-6 text-xs font-bold text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">✕ Remove</span>
@@ -579,7 +624,15 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                       <div ref={searchDropdownRef} className="absolute top-full left-0 mt-1 w-[400px] bg-white border border-slate-300 rounded-lg shadow-2xl max-h-72 overflow-y-auto z-40">
                         {productSearchResults.map((p, i) => (
                           <div key={p.id} onMouseDown={(e) => { e.preventDefault(); handleAddProduct(p); }} onMouseEnter={() => setHighlightedIndex(i)} className={`px-4 py-3 border-b border-slate-100 cursor-pointer flex justify-between items-center transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-indigo-50 bg-white'}`}>
-                            <div><span className="font-bold text-slate-900 uppercase block">{p.name}</span><span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{p.sku}</span></div>
+                            <div>
+                                <span className="font-bold text-slate-900 uppercase block">{p.name}</span>
+                                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{p.sku}</span>
+                            </div>
+                            {activeCategoryPrices[p.id] !== undefined && (
+                                <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold border border-amber-200">
+                                    TIERED: ₱{Number(activeCategoryPrices[p.id]).toFixed(2)}
+                                </span>
+                            )}
                           </div>
                         ))}
                       </div>
