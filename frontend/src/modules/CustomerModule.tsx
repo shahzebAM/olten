@@ -113,10 +113,13 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   }, [API_BASE_URL, selectedCompany]);
 
-  useEffect(() => {
+useEffect(() => {
     fetchCustomers();
+  }, [fetchCustomers, selectedCategoryFilter]); // Added selectedCategoryFilter here
+
+  useEffect(() => {
     fetchCategories();
-  }, [fetchCustomers, fetchCategories]);
+  }, [fetchCategories]);
 
   // --- ACTIONS ---
   const handleSaveCustomer = async (e: React.FormEvent) => {
@@ -271,14 +274,22 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   };
 
   // --- PRICING SEARCH FILTER ---
+// --- PRICING SEARCH FILTER ---
   const filteredProducts = React.useMemo(() => {
-    if (!pricingSearch.trim()) return allProducts;
+    let result = allProducts;
+    
+    // If you only want to show products that belong to the active pricingCategory:
+    // (Uncomment the line below if your Product interface has a category field you want to match)
+    // result = result.filter(p => p.category === pricingCategory);
+
+    if (!pricingSearch.trim()) return result;
+    
     const q = pricingSearch.toLowerCase();
-    return allProducts.filter(p => 
+    return result.filter(p => 
       p.name?.toLowerCase().includes(q) || 
       p.sku?.toLowerCase().includes(q)
     );
-  }, [allProducts, pricingSearch]);
+  }, [allProducts, pricingSearch, pricingCategory]);
 
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
