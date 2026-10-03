@@ -29,11 +29,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-// --- HUB FILTER STATES ---
+  // --- HUB & CATEGORY FILTER STATES ---
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
   const [warehouseSearchQuery, setWarehouseSearchQuery] = useState('');
   
-  // --- NEW: PRODUCT CATEGORY FILTER ---
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
   const uniqueCategories = Array.from(new Set(products.map(p => p.category))).sort();
 
@@ -118,16 +117,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     
     setIsProcessing(true);
     try {
-      // In a real production app you might have a dedicated bulk-delete endpoint
-      // Here we process them concurrently 
       await Promise.all(ids.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })));
       
-      // Cleanup UI
       setProducts(prev => prev.filter(p => !ids.includes(p.id)));
       setSelectedProductIds(prev => prev.filter(id => !ids.includes(id)));
       showToast(`Successfully deleted ${ids.length} product(s).`, "success");
       
-      // Optional: Clean up Image Vault to save memory
       ids.forEach(id => {
         const prod = products.find(p => p.id === id);
         if (prod && prod.sku) {
@@ -187,7 +182,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         }
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
-      if (ctx) {
+        if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
           // Only update imageUrl, do not touch previousImageUrl here
@@ -268,7 +263,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } catch (e) { showToast("Failed to adjust warehouse stock.", "error"); fetchAllData(); } finally { setIsProcessing(false); }
   };
 
-  // --- NEW: HANDLE PHYSICAL PLACEMENT OF P.O. ITEMS ---
   const handlePlacePoItems = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!placementPo) return;
@@ -280,10 +274,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     try {
       for (const item of placementPo.items) {
-        if (!item.confirmedQty || item.confirmedQty <= 0) continue; // Skip unreceived items
+        if (!item.confirmedQty || item.confirmedQty <= 0) continue;
 
         const prod = products.find(p => p.sku === item.sku || String(p.id) === String(item.productId));
-        if (!prod) continue; // Skip items not registered in Master Catalog
+        if (!prod) continue; 
 
         const destId = placementDestinations[item.id] || 'MASTER';
         const q = item.confirmedQty;
@@ -311,7 +305,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         }
       }
 
-      // Mark PO as physically stocked
       apiPromises.push(fetch(`${API_BASE_URL}/procurement/purchase-orders/${placementPo.id}/status`, { 
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Stocked', user: loginUsername }) 
       }));
@@ -531,13 +524,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } catch (error) { showToast("Failed to export Excel file.", "error"); }
   };
 
-const filteredProducts = products.filter(p => {
+  const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
     return matchesSearch && matchesCategory;
   });
-  const filteredProductsForDropdown = products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()));
-  const filteredProductsForHubDropdown = products.filter(p => p.name.toLowerCase().includes(hubTransferSearch.toLowerCase()) || p.sku.toLowerCase().includes(hubTransferSearch.toLowerCase()));
 
   const filteredMovements = movements.filter(m => {
     let keep = true;
@@ -584,7 +575,7 @@ const filteredProducts = products.filter(p => {
             { id: 'products', label: 'Master Catalog' },
             { id: 'movements', label: 'Stock Ledger' },
             { id: 'warehouses', label: 'Warehouses' },
-            { id: 'receiving', label: 'Receiving', badge: pendingReceivables.length } // NEW MENU ITEM
+            { id: 'receiving', label: 'Receiving', badge: pendingReceivables.length }
           ].map(view => (
             <button key={view.id} onClick={() => { setActiveView(view.id as any); setIsMobileMenuOpen(false); }} className={`w-full text-left px-4 py-3 text-sm font-bold uppercase tracking-wider transition-all rounded-xl flex justify-between items-center ${activeView === view.id ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
               {view.label}
@@ -619,26 +610,53 @@ const filteredProducts = products.filter(p => {
           
           {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="space-y-6 max-w-7xl mx-auto">
-              <div className="flex flex-col sm:flex-row justify-between gap-4">
+            <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in duration-300">
+              
+              <div className="flex flex-col sm:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex flex-1 flex-col sm:flex-row gap-3">
-                  <input type="text" placeholder="SEARCH SKU OR NAME..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full sm:w-80 px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" />
-                  <select value={selectedHubFilter} onChange={(e) => setSelectedHubFilter(e.target.value)} className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-auto">
+                  <div className="relative w-full sm:w-80">
+                    <input 
+                      type="text" 
+                      placeholder="SEARCH SKU OR NAME..." 
+                      value={searchQuery} 
+                      onChange={(e) => setSearchQuery(e.target.value)} 
+                      className="w-full pl-4 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" 
+                    />
+                  </div>
+                  
+                  {/* CATEGORY FILTER DROPDOWN */}
+                  <select 
+                    value={selectedCategoryFilter} 
+                    onChange={(e) => setSelectedCategoryFilter(e.target.value)} 
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-48 appearance-none"
+                  >
+                    <option value="ALL">All Categories</option>
+                    {uniqueCategories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+
+                  <select 
+                    value={selectedHubFilter} 
+                    onChange={(e) => setSelectedHubFilter(e.target.value)} 
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-48 appearance-none"
+                  >
                     <option value="ALL">All Hubs (Combined)</option>
                     {warehouses.map(w => <option key={w.id} value={String(w.id)}>{w.name}</option>)}
                   </select>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                
+                <div className="flex flex-wrap gap-2 shrink-0">
                   {isAuthorizedAdmin && (
-                    <button onClick={handleExportExcel} className="px-5 py-3 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
+                    <button onClick={handleExportExcel} className="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
                   )}
-                  <button onClick={() => { setProductForm(initialProductForm); setProductModal({ isOpen: true, editingId: null }); }} className="px-5 py-3 bg-blue-600 text-white font-bold uppercase text-xs rounded-xl shadow-sm hover:bg-blue-700 transition-colors">+ Register Item</button>
+                  <button onClick={() => { setProductForm(initialProductForm); setProductModal({ isOpen: true, editingId: null }); }} className="px-5 py-2.5 bg-blue-600 text-white font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-blue-700 transition-colors">+ Register Item</button>
                 </div>
               </div>
 
               {selectedProductIds.length > 0 && (
-                <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-                  <div className="font-black text-blue-900 uppercase text-sm tracking-widest px-2">{selectedProductIds.length} ITEMS SELECTED</div>
+                <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in slide-in-from-top-2">
+                  <div className="font-black text-blue-900 uppercase text-xs tracking-widest px-2">{selectedProductIds.length} ITEMS SELECTED</div>
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600 transition-colors">Receive</button>
                     <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600 transition-colors">Return to Hub</button>
@@ -651,80 +669,309 @@ const filteredProducts = products.filter(p => {
                 </div>
               )}
 
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-sm">
-                <table className="w-full text-left border-collapse min-w-[1200px]">
+              {/* EXCEL-STYLE TABLE */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                <div className="overflow-x-auto w-full relative">
+                  <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1000px]">
+                    <thead className="bg-white border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4 w-12 text-center border-b border-slate-200">
+                          <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
+                        </th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[35%] border-b border-slate-200">SKU / Item</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">Category</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">Pricing</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">Master Stock</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">
+                          {selectedHubFilter === 'ALL' ? 'Hub Stock (All)' : `Hub Stock`}
+                        </th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[15%] border-b border-slate-200">Settings</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredProducts.length === 0 ? (
+                        <tr><td colSpan={7} className="py-12 text-center text-slate-400 font-medium">No items found matching your filters.</td></tr>
+                      ) : (
+                        filteredProducts.map(p => (
+                          <tr key={p.id} className={`hover:bg-slate-50 transition-colors group ${selectedProductIds.includes(p.id) ? 'bg-blue-50/20' : ''}`}>
+                            
+                            <td className="py-2.5 px-4 text-center align-middle">
+                              <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle">
+                              <div className="flex items-center gap-3">
+                                {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
+                                  <img src={p.imageUrl} alt={p.name} className="w-9 h-9 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
+                                ) : (
+                                  <div className="w-9 h-9 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[7px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
+                                )}
+                                <div className="min-w-0">
+                                  <div className="font-bold text-[11px] text-slate-900 uppercase leading-tight truncate">{p.name}</div>
+                                  <div className="font-mono text-[9px] text-slate-400 uppercase mt-0.5 truncate">{p.sku}</div>
+                                </div>
+                              </div>
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle text-[10px] font-bold text-slate-600 uppercase truncate">
+                              <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle">
+                              <div className="font-mono text-[11px] font-black text-slate-900">₱{Number(p.sellingPrice).toFixed(2)}</div>
+                              <div className="font-mono text-[9px] text-slate-400">Cost: ₱{Number(p.purchasePrice).toFixed(2)}</div>
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle text-center">
+                              <div className={`font-mono text-sm font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-slate-700'}`}>{p.currentStock} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle text-center">
+                              {(() => {
+                                const filteredHubList = hubStock.filter(h => {
+                                  const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
+                                  if (!isMatch) return false;
+                                  if (selectedHubFilter === 'ALL') return warehouses.some(w => String(w.id) === String(h.warehouseId));
+                                  return String(h.warehouseId) === String(selectedHubFilter);
+                                });
+                                const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
+                                return <div className="font-mono text-sm font-black text-slate-700">{displayQty} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>;
+                              })()}
+                            </td>
+                            
+                            <td className="py-2.5 px-4 align-middle text-center">
+                              <div className="flex items-center justify-center gap-1 opacity-100 xl:opacity-0 xl:group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => openTx([p], 'RECEIVE')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Receive into Master Stock">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
+                                </button>
+                                <button onClick={() => openTx([p], 'RETURN')} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Return to Warehouse Hub">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                                </button>
+                                <button onClick={() => openTx([p], 'ISSUE')} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Issue to External Client">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
+                                </button>
+                                <button onClick={() => openTx([p], 'ADJUST')} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Adjust Physical Master Stock">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                </button>
+                                <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                                <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                </button>
+                                {isAuthorizedAdmin && (
+                                  <button onClick={() => handleDeleteProducts([p.id])} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors ml-0.5" title="Permanently Delete Item">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                
+                {/* COMPACT FOOTER */}
+                <div className="p-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0">
+                  <div className="px-2">Showing {filteredProducts.length} Items</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: RECEIVING (NEW P.O. PLACEMENT QUEUE) */}
+          {activeView === 'receiving' && (
+            <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300">
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
+                <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                  <div>
+                    <h3 className="font-bold text-slate-800 uppercase tracking-widest text-sm">Delivery Placement Queue</h3>
+                    <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Assign delivered P.O. items to physical facilities</p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-auto w-full">
+                  <table className="w-full text-left text-sm whitespace-nowrap min-w-[800px] border-collapse">
+                    <thead className="bg-white shadow-sm sticky top-0 z-20">
+                      <tr>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Ref / P.O. Number</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Supplier Origin</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Items to Place</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-center border-b border-slate-200">Delivery Status</th>
+                        <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {pendingReceivables.length === 0 ? (
+                        <tr><td colSpan={5} className="py-20 text-center text-slate-400 font-medium">No verified deliveries pending placement.</td></tr>
+                      ) : (
+                        pendingReceivables.map(po => {
+                          const itemsToPlace = po.items?.filter((i: any) => i.confirmedQty && i.confirmedQty > 0) || [];
+                          return (
+                            <tr key={po.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-4 px-6">
+                                <div className="font-mono text-sm font-black text-sky-700">{po.poNumber}</div>
+                                <div className="text-[10px] font-bold text-slate-400 mt-0.5">Ref: {po.osReference || 'N/A'}</div>
+                              </td>
+                              <td className="py-4 px-6 font-bold text-slate-700 uppercase">{po.supplierName || 'Unknown Vendor'}</td>
+                              <td className="py-4 px-6 text-center font-black text-slate-700">
+                                {itemsToPlace.length} Lines
+                              </td>
+                              <td className="py-4 px-6 text-center">
+                                <span className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-md ${po.status === 'Partially Received' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'}`}>
+                                  {po.status}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right">
+                                <button onClick={() => { 
+                                    setPlacementPo(po); 
+                                    const initDest: Record<string, string> = {};
+                                    itemsToPlace.forEach((i: any) => initDest[i.id] = 'MASTER');
+                                    setPlacementDestinations(initDest);
+                                  }} 
+                                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-colors shadow-sm"
+                                >
+                                  Place Stock
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: MOVEMENTS (LEDGER) */}
+          {activeView === 'movements' && (
+            <div className="max-w-7xl mx-auto space-y-4 animate-in fade-in duration-300">
+              <div className="flex flex-wrap gap-4 items-center bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
+                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Transaction Type</label>
+                  <select value={ledgerFilterType} onChange={e => setLedgerFilterType(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500">
+                    <option value="ALL">All Transactions</option>
+                    <option value="RECEIVE">Receives</option>
+                    <option value="ISSUE">Issues</option>
+                    <option value="RETURN">Returns</option>
+                    <option value="TRANSFER">Transfers</option>
+                    <option value="ADJUST">Adjustments</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Start Date</label>
+                  <input type="date" value={ledgerStartDate} onChange={e => setLedgerStartDate(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">End Date</label>
+                  <input type="date" value={ledgerEndDate} onChange={e => setLedgerEndDate(e.target.value)} className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold outline-none text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="flex gap-2 w-full sm:w-auto sm:ml-auto mt-4 sm:mt-0 items-end">
+                  <button onClick={() => { setLedgerFilterType('ALL'); setLedgerStartDate(''); setLedgerEndDate(''); }} className="px-5 py-2.5 border border-slate-200 rounded-xl font-bold uppercase text-xs hover:bg-slate-50 transition-colors h-[42px]">Clear Filters</button>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="py-4 px-5 w-12 text-center">
-                        <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-4 h-4 rounded border-slate-300 cursor-pointer" />
-                      </th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">SKU / Item</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Category</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Pricing</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Master Stock</th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">
-                        {selectedHubFilter === 'ALL' ? 'Hub Stock (All)' : `Hub: ${warehouses.find(w => String(w.id) === selectedHubFilter)?.name || 'Selected'}`}
-                      </th>
-                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500 text-right">Settings</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Timestamp</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Item</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Type / Qty</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Audit Info</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredProducts.map(p => (
-                      <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${selectedProductIds.includes(p.id) ? 'bg-blue-50/30' : ''}`}>
-                        <td className="py-4 px-5 text-center">
-                          <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-4 h-4 rounded border-slate-300 cursor-pointer" />
+                    {filteredMovements.map(m => (
+                      <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-4 px-5 text-xs font-medium text-slate-500">{new Date(m.date).toLocaleString()}</td>
+                        <td className="py-4 px-5">
+                          <div className="font-black text-slate-900 text-sm uppercase">{m.productName}</div>
+                          <div className="text-[10px] font-bold text-slate-500 mt-0.5">{m.sku}</div>
                         </td>
                         <td className="py-4 px-5">
-                          <div className="flex items-center gap-4">
-                            {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
-                              <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-xl object-cover border border-slate-200 cursor-pointer shadow-sm" onClick={() => setPreviewImage(p.imageUrl || '')} />
-                            ) : (
-                              <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[8px] font-bold uppercase text-center text-slate-400 cursor-pointer" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
-                            )}
-                            <div>
-                              <div className="font-black text-slate-900 uppercase text-sm">{p.name}</div>
-                              <div className="text-xs font-medium text-slate-500 mt-0.5">{p.sku}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-5"><span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-black uppercase rounded-md border border-slate-200">{p.category}</span></td>
-                        <td className="py-4 px-5">
-                          <div className="text-sm font-black text-slate-900">₱{p.sellingPrice}</div>
-                          <div className="text-xs font-medium text-slate-500">Cost: ₱{p.purchasePrice}</div>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase ${m.type === 'RECEIVE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : m.type === 'RETURN' ? 'bg-sky-50 text-sky-700 border border-sky-200' : m.type === 'ISSUE' ? 'bg-rose-50 text-rose-700 border border-rose-200' : m.type === 'TRANSFER' ? 'bg-amber-50 text-amber-700 border border-amber-200' : m.type === 'ADJUST' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>{m.type}</span>
+                          <span className="ml-3 font-black text-slate-900">{m.quantity}</span>
                         </td>
                         <td className="py-4 px-5">
-                          <div className={`text-lg font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-emerald-600'}`}>{p.currentStock} <span className="text-xs text-slate-500">{p.unit}</span></div>
-                        </td>
-                        <td className="py-4 px-5">
-                          {(() => {
-                            const filteredHubList = hubStock.filter(h => {
-                              const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
-                              if (!isMatch) return false;
-                              if (selectedHubFilter === 'ALL') return warehouses.some(w => String(w.id) === String(h.warehouseId));
-                              return String(h.warehouseId) === String(selectedHubFilter);
-                            });
-                            const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
-                            return <div className="text-lg font-black text-slate-700">{displayQty} <span className="text-xs text-slate-400">{p.unit}</span></div>;
-                          })()}
-                        </td>
-                        <td className="py-4 px-5 text-right">
-                          <div className="flex flex-wrap justify-end gap-1.5">
-                            <button onClick={() => openTx([p], 'RECEIVE')} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold uppercase hover:bg-emerald-100 transition-colors" title="Receive into Master Stock">Recv</button>
-                            <button onClick={() => openTx([p], 'RETURN')} className="px-2.5 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[10px] font-bold uppercase hover:bg-sky-100 transition-colors" title="Return to Warehouse Hub">Ret</button>
-                            <button onClick={() => openTx([p], 'ISSUE')} className="px-2.5 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-bold uppercase hover:bg-rose-100 transition-colors" title="Issue to External Client">Iss</button>
-                            <button onClick={() => openTx([p], 'ADJUST')} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors" title="Adjust Physical Master Stock">Adj</button>
-                            <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200 transition-colors ml-2">Edit</button>
-                          </div>
+                          <div className="text-xs font-bold text-slate-900">{m.warehouse?.name || (m.type === 'TRANSFER' || m.type === 'RETURN' ? 'Transfer / Return Log' : 'Master Placement')}</div>
+                          <div className="text-[10px] font-medium text-slate-500 mt-1">Ref: {m.reference || 'N/A'} | User: {m.user} | Bal: {m.previousStock} → {m.newStock}</div>
+                          {m.remarks && <div className="text-[10px] font-bold text-sky-700 mt-1 uppercase bg-sky-50 inline-block px-1.5 py-0.5 rounded">{m.remarks}</div>}
                         </td>
                       </tr>
                     ))}
+                    {filteredMovements.length === 0 && <tr><td colSpan={4} className="py-12 text-center text-sm font-medium text-slate-400 uppercase">No movements match current filters.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-   
+          {/* VIEW: WAREHOUSES */}
+          {activeView === 'warehouses' && (
+            <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-4">
+                 <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouse Control Center</h2>
+                 <div className="flex items-center gap-3 w-full sm:w-auto">
+                   <div className="relative w-full sm:w-80">
+                     <svg className="w-5 h-5 absolute left-3 top-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                     <input type="text" placeholder="SEARCH HUBS OR ITEMS..." value={warehouseSearchQuery} onChange={(e) => setWarehouseSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
+                   </div>
+                 </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {isAuthorizedAdmin && ( <button onClick={() => { setEditingWarehouseId(null); setWarehouseForm({name: '', address: '', status: 'Active'}); setActiveWarehouseModal('REGISTER'); }} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-slate-800 transition-colors">+ Register Warehouse</button> )}
+                <button onClick={() => setActiveWarehouseModal('ADJUST')} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-indigo-700 transition-colors">Adjust Hub Stock</button>
+                <button onClick={() => setActiveWarehouseModal('TRANSFER')} className="px-5 py-2.5 bg-amber-500 text-white rounded-xl font-bold uppercase text-xs shadow-sm hover:bg-amber-600 transition-colors">Transfer Between Hubs</button>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Warehouse / Code</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Location</th>
+                      <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Stored Assets</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {displayedWarehouses.map(w => {
+                      const whStocks = hubStock.filter(h => String(h.warehouseId) === String(w.id) && h.quantity > 0);
+                      const filteredWhStocks = whStocks.filter(stk => {
+                        if (!warehouseSearchQuery) return true;
+                        const q = warehouseSearchQuery.toLowerCase();
+                        if (w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) return true;
+                        const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
+                        return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
+                      });
+                      return (
+                        <tr key={w.id} className="hover:bg-slate-50 transition-colors items-start">
+                          <td className="py-5 px-5 align-top"><div className="font-black text-slate-900 uppercase text-sm">{w.name}</div><div className="text-[10px] font-bold text-slate-400 mt-1">WH-{w.id.toString().padStart(3, '0')}</div></td>
+                          <td className="py-5 px-5 text-xs font-medium text-slate-500 align-top max-w-[250px] leading-relaxed">{w.address}</td>
+                          <td className="py-5 px-5 align-top">
+                            <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-2">
+                              {whStocks.length === 0 ? ( <span className="text-xs text-slate-400 font-medium italic">Facility is empty</span> ) : filteredWhStocks.length === 0 && warehouseSearchQuery ? ( <span className="text-xs text-slate-400 font-medium italic">No matching items</span> ) : (
+                                filteredWhStocks.map(stk => {
+                                  const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
+                                  return (
+                                    <div key={stk.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:border-blue-300 transition-colors">
+                                      <div className="text-[10px] font-bold uppercase text-slate-700 truncate mr-3">{p?.name || stk.sku}</div>
+                                      <div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{stk.quantity} {p?.unit}</div>
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
         </main>
       </div>
@@ -796,7 +1043,8 @@ const filteredProducts = products.filter(p => {
             </div>
             <form onSubmit={handleProductSubmit} className="p-8 flex flex-col gap-8 bg-slate-50">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               {/* NEW IMAGE UPLOAD UI */}
+                
+                {/* NEW IMAGE UPLOAD UI */}
                 <div className="md:col-span-2 flex items-center gap-6 bg-white p-4 border border-slate-200 rounded-2xl shadow-sm">
                   <div className="relative group">
                     {productForm.imageUrl || productForm.previousImageUrl ? (
@@ -806,7 +1054,6 @@ const filteredProducts = products.filter(p => {
                         <button 
                           type="button" 
                           onClick={() => {
-                            // If they are clearing an existing image, log it to the deleted vault
                             if (productForm.previousImageUrl) {
                               deletedImageVault[productForm.sku] = productForm.previousImageUrl;
                               delete globalImageVault[productForm.sku];
