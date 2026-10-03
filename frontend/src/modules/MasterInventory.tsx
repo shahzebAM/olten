@@ -230,6 +230,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
+  // --- STRICT SYNCHRONOUS PRODUCT SAVE ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -237,13 +238,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     const cleanPayload: any = {
       name: productForm.name, sku: productForm.sku, category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0, sellingPrice: parseFloat(String(productForm.sellingPrice)) || 0,
-      minQuantity: parseInt(productForm.minQuantity) || 10, reorderLevel: parseInt(productForm.reorderLevel) || 20,
+      minQuantity: parseInt(String(productForm.minQuantity)) || 10, reorderLevel: parseInt(String(productForm.reorderLevel)) || 20,
       unit: productForm.unit || 'pcs', vatSetting: productForm.vatSetting || 'NONE', imageUrl: productForm.imageUrl || null,
       barcode: productForm.barcode || productForm.sku.toUpperCase(), company: selectedCompany,
     };
 
     if (!productModal.editingId) {
-      cleanPayload.initialQuantity = parseInt(productForm.initialQuantity) || 0;
+      cleanPayload.initialQuantity = parseInt(String(productForm.initialQuantity)) || 0;
       cleanPayload.batchNumber = productForm.batchNumber || null;
       cleanPayload.expirationDate = productForm.expirationDate || null;
       cleanPayload.username = loginUsername;
@@ -263,6 +264,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     
+    // Optimistic UI Update
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -276,11 +278,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
         
         const resData = await res.json();
-        const finalProductId = productModal.editingId || resData.id;
+        // Force strict Number typing for the backend
+        const finalProductId = Number(productModal.editingId || resData.id);
         
         if (Object.keys(sanitizedPricesToSave).length > 0) {
-            const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
-                 return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+            // Strictly wait for each backend request to finish sequentially to prevent database locking errors
+            for (const [catName, price] of Object.entries(sanitizedPricesToSave)) {
+                 const priceRes = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
                      method: 'POST', 
                      headers: { 'Content-Type': 'application/json' },
                      body: JSON.stringify({ 
@@ -288,25 +292,30 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                          categoryName: catName, 
                          prices: [ { productId: finalProductId, price: Number(price) } ] 
                      })
-                 }).catch(console.error);
-            });
-            await Promise.allSettled(catPricePromises);
+                 });
+                 if (!priceRes.ok) {
+                     console.error(`Backend failed to save price for ${catName}`, priceRes.status);
+                 }
+            }
         }
         
         showToast("Successfully saved to database.", "success");
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        await fetchAllData(); 
+        // Wait 600ms before pulling fresh data so the database has time to commit transactions
+        setTimeout(async () => {
+            await fetchAllData(); 
+            setIsProcessing(false);
+        }, 600);
+        
     } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
         await fetchAllData(); 
-    } finally {
         setIsProcessing(false);
     }
   };
 
-  // --- NEW BULK PRICING SUBMIT ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all fields.", "error");
@@ -321,7 +330,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       const payload = products.map(p => {
           const basePrice = Number(p.sellingPrice) || 0;
           const newPrice = basePrice + (basePrice * (pct / 100));
-          return { productId: p.id, price: Number(newPrice.toFixed(2)) };
+          return { productId: Number(p.id), price: Number(newPrice.toFixed(2)) };
       });
 
       try {
@@ -633,6 +642,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
        return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
     });
   });
+
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       
