@@ -556,7 +556,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       <main className="flex flex-1 overflow-hidden relative">
         
         {/* PANE 1: UNIFIED LEFT SIDEBAR */}
-       <aside className={`h-full w-full lg:w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex-col shrink-0 z-40 ${selectedFile || aiAnswer ? (isMobileNavOpen ? 'absolute inset-0 flex z-50' : 'hidden lg:flex') : 'flex'}`}>
+      {/* Dark overlay backdrop for mobile */}
+        {isMobileNavOpen && (
+          <div className="absolute inset-0 bg-slate-900/20 z-30 lg:hidden" onClick={() => setIsMobileNavOpen(false)} />
+        )}
+        <aside className={`absolute lg:relative inset-y-0 left-0 z-40 h-full w-[85%] sm:w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col shrink-0 shadow-2xl lg:shadow-none transition-transform duration-300 ${isMobileNavOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           {/* Action Tools */}
           <div className="px-4 py-4 border-b border-slate-100 flex flex-col gap-3 shrink-0 bg-white">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -673,12 +677,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
         {/* PANE 2: DOCUMENT PREVIEW (RIGHT MAIN AREA WITH RESIZER) */}
         <section 
-  ref={rightPaneRef} 
-  className={`w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex-col z-20 lg:z-auto ${selectedFile || aiAnswer ? 'flex' : 'hidden lg:flex'}`}
->
+          ref={rightPaneRef} 
+          className="w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex flex-col z-20 lg:z-auto"
+        >
  {/* MOBILE BACK BUTTON */}
   <div className="lg:hidden p-4 bg-white border-b border-slate-200 flex items-center shrink-0">
-    <button onClick={() => { setSelectedFile(null); setAiAnswer(null); }} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-indigo-600">
+    <button onClick={() => setIsMobileNavOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-indigo-600">
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
       Back to Directory
     </button>
