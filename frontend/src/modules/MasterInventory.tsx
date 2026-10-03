@@ -112,6 +112,37 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     else setSelectedProductIds(filtered.map(p => p.id));
   };
 
+  const handleDeleteProducts = async (ids: number[]) => {
+    if (!isAuthorizedAdmin) return showToast("Only Administrators can delete products.", "error");
+    if (!window.confirm(`Are you sure you want to permanently delete ${ids.length} product(s)? This will also erase their entire movement history and stock records.`)) return;
+    
+    setIsProcessing(true);
+    try {
+      // In a real production app you might have a dedicated bulk-delete endpoint
+      // Here we process them concurrently 
+      await Promise.all(ids.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })));
+      
+      // Cleanup UI
+      setProducts(prev => prev.filter(p => !ids.includes(p.id)));
+      setSelectedProductIds(prev => prev.filter(id => !ids.includes(id)));
+      showToast(`Successfully deleted ${ids.length} product(s).`, "success");
+      
+      // Optional: Clean up Image Vault to save memory
+      ids.forEach(id => {
+        const prod = products.find(p => p.id === id);
+        if (prod && prod.sku) {
+           delete globalImageVault[prod.sku];
+           delete deletedImageVault[prod.sku];
+        }
+      });
+      
+    } catch (e) {
+      showToast("Failed to delete some products. They may be locked.", "error");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const openTx = (prods: Product[], type: string) => {
     setTxModal({ isOpen: true, products: prods, type: type as any });
     setTxForm({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
@@ -609,10 +640,13 @@ const filteredProducts = products.filter(p => {
                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
                   <div className="font-black text-blue-900 uppercase text-sm tracking-widest px-2">{selectedProductIds.length} ITEMS SELECTED</div>
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600">Receive</button>
-                    <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600">Return to Hub</button>
-                    <button onClick={() => openBulkTx('ISSUE')} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-rose-600">Issue</button>
-                    <button onClick={() => openBulkTx('ADJUST')} className="px-4 py-2 bg-indigo-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-indigo-600">Adjust Master</button>
+                    <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600 transition-colors">Receive</button>
+                    <button onClick={() => openBulkTx('RETURN')} className="px-4 py-2 bg-sky-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-sky-600 transition-colors">Return to Hub</button>
+                    <button onClick={() => openBulkTx('ISSUE')} className="px-4 py-2 bg-amber-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-amber-600 transition-colors">Issue</button>
+                    <button onClick={() => openBulkTx('ADJUST')} className="px-4 py-2 bg-indigo-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-indigo-600 transition-colors">Adjust Master</button>
+                    {isAuthorizedAdmin && (
+                      <button onClick={() => handleDeleteProducts(selectedProductIds)} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-rose-600 transition-colors ml-2 border border-rose-600">Delete</button>
+                    )}
                   </div>
                 </div>
               )}
@@ -834,9 +868,14 @@ const filteredProducts = products.filter(p => {
                                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                                 </button>
                                 <div className="w-px h-4 bg-slate-200 mx-1"></div>
-                                <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
+                              <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
                                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                 </button>
+                                {isAuthorizedAdmin && (
+                                  <button onClick={() => handleDeleteProducts([p.id])} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors ml-0.5" title="Permanently Delete Item">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  </button>
+                                )}
                               </div>
                             </td>
                             
