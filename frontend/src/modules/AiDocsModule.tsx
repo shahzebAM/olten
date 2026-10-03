@@ -219,6 +219,7 @@ useEffect(() => {
 // --- API: UPLOAD FILE(S) ---
 // --- API: UPLOAD FILE(S) ---
 // --- API: UPLOAD FILE(S) ---
+// --- API: UPLOAD FILE(S) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
@@ -226,7 +227,6 @@ useEffect(() => {
     setIsUploading(true);
     let successCount = 0;
     
-    // 1. This creates the array to fix the error
     const newlyUploaded: {id: string, name: string, expiryDate?: string, reminderDays: string}[] = [];
     
     for (let i = 0; i < selectedFiles.length; i++) {
@@ -245,10 +245,18 @@ useEffect(() => {
           headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
           body: formData,
         });
+        
         if (res.ok) {
+          // 1. GET THE REAL DATABASE OBJECT RETURNED BY YOUR BACKEND
+          const uploadedDoc = await res.json();
           successCount++;
-          // Push to the array during the loop
-          newlyUploaded.push({ id: `temp-${Date.now()}-${i}`, name: file.name, reminderDays: '30' });
+          
+          // 2. USE THE REAL ID INSTEAD OF A TEMP STRING
+          newlyUploaded.push({ 
+            id: String(uploadedDoc.id), 
+            name: file.name, 
+            reminderDays: '30' 
+          });
         }
       } catch (err: any) {
         console.error(`Failed to upload ${file.name}`, err);
@@ -260,9 +268,10 @@ useEffect(() => {
       if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
       fetchDirectory(true);
       
-      // 2. Trigger the reminder workflow without errors
       setUploadedRecentFiles(newlyUploaded);
       setReminderModalOpen(true);
+      
+      // 3. NOW GEMINI GETS THE REAL ID AND CAN ACTUALLY READ THE FILE!
       analyzeExpiryDatesWithGemini(newlyUploaded);
 
     } else {
