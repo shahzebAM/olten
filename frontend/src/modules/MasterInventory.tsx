@@ -1375,12 +1375,21 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                      {deletedImageVault[productForm.sku] && (
   <button 
     type="button" 
-    onClick={() => {
-      // Restore image from deleted vault back to form and global vault
-      setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
-      globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
-      delete deletedImageVault[productForm.sku];
-    }}
+  onClick={() => {
+  // 1. Capture the image string FIRST before deleting it
+  const restoredImage = deletedImageVault[productForm.sku];
+  
+  // 2. Update the form state (set BOTH properties so it displays and saves properly)
+  setProductForm((prev: any) => ({ 
+    ...prev, 
+    imageUrl: restoredImage,
+    previousImageUrl: restoredImage 
+  }));
+  
+  // 3. Update the global vault and clean up
+  globalImageVault[productForm.sku] = restoredImage;
+  delete deletedImageVault[productForm.sku];
+}}
     className="text-[9px] font-black text-sky-600 bg-sky-50 hover:bg-sky-100 px-3 py-1 rounded-md uppercase tracking-widest border border-sky-200 transition-colors shadow-sm"
   >
     Restore
