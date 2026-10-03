@@ -1052,6 +1052,24 @@ const filteredProducts = products.filter(p => {
             </div>
             <form onSubmit={handleProductSubmit} className="p-8 flex flex-col gap-8 bg-slate-50">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* NEW IMAGE UPLOAD UI */}
+                <div className="md:col-span-2 flex items-center gap-6 bg-white p-4 border border-slate-200 rounded-2xl shadow-sm">
+                  {productForm.imageUrl || productForm.previousImageUrl ? (
+                    <img src={productForm.imageUrl || productForm.previousImageUrl} alt="Preview" className="w-20 h-20 rounded-xl object-cover border border-slate-200 shadow-sm" />
+                  ) : (
+                    <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
+                  )}
+                  <div className="flex-1 flex flex-col gap-2">
+                    <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Product Image</label>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleModalImageUpload} 
+                      className="text-sm font-medium text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:uppercase file:tracking-widest file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
