@@ -965,31 +965,29 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                 })()}
                               </td>
                               <td className="py-2.5 px-4 align-middle text-center">
-                              <td className="py-2.5 px-4 align-middle text-center">
-  <div className="flex items-center justify-center gap-1.5">
-    <button onClick={() => openTx([p], 'RECEIVE')} className="w-7 h-7 flex items-center justify-center text-emerald-600 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 rounded-md transition-colors shadow-sm" title="Receive into Master Stock">
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
-    </button>
-    <button onClick={() => openTx([p], 'RETURN')} className="w-7 h-7 flex items-center justify-center text-sky-600 bg-sky-50 border border-sky-200 hover:bg-sky-100 hover:border-sky-300 rounded-md transition-colors shadow-sm" title="Return to Warehouse Hub">
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
-    </button>
-    <button onClick={() => openTx([p], 'ISSUE')} className="w-7 h-7 flex items-center justify-center text-amber-600 bg-amber-50 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 rounded-md transition-colors shadow-sm" title="Issue to External Client">
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
-    </button>
-    <button onClick={() => openTx([p], 'ADJUST')} className="w-7 h-7 flex items-center justify-center text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 rounded-md transition-colors shadow-sm" title="Adjust Physical Master Stock">
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-    </button>
-    <div className="w-px h-5 bg-slate-200 mx-1"></div>
-    <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '', categoryPrices: { ...(p.categoryPrices || {}) } }); setProductModal({ isOpen: true, editingId: p.id }); }} className="w-7 h-7 flex items-center justify-center text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 rounded-md transition-colors shadow-sm" title="Edit Product Specs">
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-    </button>
-    {isAuthorizedAdmin && (
-      <button onClick={() => handleDeleteProducts([p.id])} className="w-7 h-7 flex items-center justify-center text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 rounded-md transition-colors shadow-sm" title="Permanently Delete Item">
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-      </button>
-    )}
-  </div>
-</td>
+                                <div className="flex items-center justify-center gap-1">
+                                  <button onClick={() => openTx([p], 'RECEIVE')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Receive into Master Stock">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
+                                  </button>
+                                  <button onClick={() => openTx([p], 'RETURN')} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Return to Warehouse Hub">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                                  </button>
+                                  <button onClick={() => openTx([p], 'ISSUE')} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Issue to External Client">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
+                                  </button>
+                                  <button onClick={() => openTx([p], 'ADJUST')} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Adjust Physical Master Stock">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                  </button>
+                                  <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                                  <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '', categoryPrices: { ...(p.categoryPrices || {}) } }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                  </button>
+                                  {isAuthorizedAdmin && (
+                                    <button onClick={() => handleDeleteProducts([p.id])} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors ml-0.5" title="Permanently Delete Item">
+                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1102,11 +1100,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               </div>
 
-              {/* STICKY SCROLLING TABLE CONTAINER */}
-              <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-0">
-                <div className="flex-1 overflow-auto w-full relative">
-                  <table className="w-full text-left border-collapse min-w-[1000px]">
-                    <thead className="bg-slate-50 sticky top-0 z-20 shadow-sm border-b border-slate-200">
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[1000px]">
+                  <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Timestamp</th>
                       <th className="py-4 px-5 text-xs font-bold uppercase tracking-widest text-slate-500">Item</th>
@@ -1379,21 +1375,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                      {deletedImageVault[productForm.sku] && (
   <button 
     type="button" 
-  onClick={() => {
-  // 1. Capture the image string FIRST before deleting it
-  const restoredImage = deletedImageVault[productForm.sku];
-  
-  // 2. Update the form state (set BOTH properties so it displays and saves properly)
-  setProductForm((prev: any) => ({ 
-    ...prev, 
-    imageUrl: restoredImage,
-    previousImageUrl: restoredImage 
-  }));
-  
-  // 3. Update the global vault and clean up
-  globalImageVault[productForm.sku] = restoredImage;
-  delete deletedImageVault[productForm.sku];
-}}
+    onClick={() => {
+      // Restore image from deleted vault back to form and global vault
+      setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
+      globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
+      delete deletedImageVault[productForm.sku];
+    }}
     className="text-[9px] font-black text-sky-600 bg-sky-50 hover:bg-sky-100 px-3 py-1 rounded-md uppercase tracking-widest border border-sky-200 transition-colors shadow-sm"
   >
     Restore
