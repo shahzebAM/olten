@@ -271,11 +271,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        });
        const expiryData = await analysisRes.json();
 
-       // 3. Populate Modal with AI Results (Defaulting reminder to 30 days)
+     // 3. Populate Modal with AI Results
        const reviewFiles = uploadedDocs.map((doc: any) => ({
           id: doc.id,
           name: doc.originalName || doc.filename || 'Document',
-          expiryDate: expiryData[doc.id] || '',
+          // Force it to grab the string from the AI, or default to an empty string
+          expiryDate: expiryData[doc.id] || '', 
           reminderDays: 30 
        }));
 
