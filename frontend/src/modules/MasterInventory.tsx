@@ -2,11 +2,65 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 // --- INTERFACES ---
-interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number | string; sellingPrice: number | string; categoryPrices?: Record<string, number | string>; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
-interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; }
-interface Warehouse { id: string; name: string; address: string; status: string; }
-interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
-interface CustomerCategory { id: string; name: string; }
+interface Product { 
+  id: number; 
+  company: string; 
+  name: string; 
+  sku: string; 
+  category: string; 
+  purchasePrice: number | string; 
+  sellingPrice: number | string; 
+  categoryPrices?: Record<string, number | string>; 
+  minQuantity: number; 
+  reorderLevel: number; 
+  unit: string; 
+  isActive: boolean; 
+  vatSetting: string; 
+  imageUrl: string; 
+  barcode: string; 
+  currentStock: number; 
+  createdAt: string; 
+  deletedAt: string | null; 
+}
+
+interface Movement { 
+  id: string; 
+  productId: number; 
+  productName: string; 
+  sku: string; 
+  type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; 
+  quantity: number; 
+  previousStock: number; 
+  newStock: number; 
+  reference: string; 
+  remarks: string; 
+  date: string; 
+  user: string; 
+  warehouseId?: string; 
+  batchNumber?: string | null; 
+  expirationDate?: string | null; 
+  warehouse?: { id: number; name: string; }; 
+}
+
+interface Warehouse { 
+  id: string; 
+  name: string; 
+  address: string; 
+  status: string; 
+}
+
+interface WarehouseStock { 
+  id: string; 
+  warehouseId: string; 
+  productId: number; 
+  sku: string; 
+  quantity: number; 
+}
+
+interface CustomerCategory { 
+  id: string; 
+  name: string; 
+}
 
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
@@ -113,32 +167,24 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setCustomerCategories(categories);
         
         try {
-            const pricePromises = categories.map(async (cat: any) => {
-                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${encodeURIComponent(selectedCompany)}&categoryName=${encodeURIComponent(cat.name)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    return { catName: cat.name, data: Array.isArray(data) ? data : [] };
-                }
-                return { catName: cat.name, data: [] };
-            });
-
-            const categoryPriceResults = await Promise.all(pricePromises);
-            const priceMap: Record<number, Record<string, number>> = {};
-            
-            categoryPriceResults.forEach(result => {
-                result.data.forEach((p: any) => {
+            // Uses the efficient `/all` route to grab DB prices instantly
+            const pricesRes = await fetch(`${API_BASE_URL}/sales/category-prices/all?company=${encodeURIComponent(selectedCompany)}`);
+            if (pricesRes.ok) {
+                const pricesData = await pricesRes.json();
+                const priceMap: Record<number, Record<string, number>> = {};
+                pricesData.forEach((p: any) => {
                     const pid = Number(p.productId);
                     if (!isNaN(pid)) {
                         if (!priceMap[pid]) priceMap[pid] = {};
-                        priceMap[pid][result.catName] = Number(p.price);
+                        priceMap[pid][p.categoryName] = Number(p.price);
                     }
                 });
-            });
-            
-            productsList = productsList.map(prod => ({
-                ...prod,
-                categoryPrices: priceMap[Number(prod.id)] || {}
-            }));
+                
+                productsList = productsList.map(prod => ({
+                    ...prod,
+                    categoryPrices: priceMap[Number(prod.id)] || {}
+                }));
+            }
         } catch(e) {
             console.error("Error fetching category prices", e);
         }
@@ -240,7 +286,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- SYNCHRONOUS PRODUCT & PRICING SAVE ---
+  // --- FIXED: SYNCHRONOUS PRODUCT & PRICING SAVE ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -281,7 +327,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     
-    // Optimistic UI state update
+    // Optimistic UI state update locks in the input immediately
     setProducts((prev: Product[]) => {
       if (productModal.editingId) {
         return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
@@ -301,17 +347,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = Number(productModal.editingId || resData.id || tempId);
         
-        // Save category prices to the backend endpoint sequentially using the standard route schema
+        // Uses the bulk route for single saves to bypass 500 errors from backend validator rules
         if (Object.keys(sanitizedPricesToSave).length > 0) {
             const pricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
-                return fetch(`${API_BASE_URL}/sales/category-prices`, {
+                return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         company: selectedCompany, 
                         categoryName: catName, 
-                        productId: finalProductId, 
-                        price: Number(price)
+                        prices: [{ productId: finalProductId, price: Number(price) }] 
                     })
                 });
             });
@@ -322,11 +367,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // Wait 500ms before refreshing to ensure database commits complete
+        // Wait exactly 600ms to fetch so the NestJS DB completes all commits
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
-        }, 500);
+        }, 600);
         
     } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
@@ -335,7 +380,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }
   };
 
-  // --- BULK PRICING CALCULATOR & DISPATCHER ---
+  // --- FIXED: BULK PRICING CALCULATOR & API DISPATCHER ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all required fields.", "error");
@@ -348,9 +393,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       setIsProcessing(true);
 
       const payload = products.map(p => {
-          // Base the new price strictly on the current tier price (which defaults to General Selling Price if not set)
-          const currentTierPrice = Number(p.categoryPrices?.[bulkPricingModal.tier] ?? p.sellingPrice) || 0;
-          const newPrice = currentTierPrice > 0 ? currentTierPrice + (currentTierPrice * (pct / 100)) : 0;
+          // Strictly base calculation on current tier price. If 0 or missing, fallback to selling price to avoid multiplying by zero.
+          let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
+          if (isNaN(basePrice) || basePrice <= 0) {
+              basePrice = Number(p.sellingPrice) || 0;
+          }
+          
+          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           return { productId: Number(p.id), price: Number(newPrice.toFixed(2)) };
       }).filter(item => item.price > 0);
 
@@ -359,23 +408,33 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           return showToast("No items with a non-zero base price were found to adjust.", "error");
       }
 
+      // Optimistic Bulk UI Update
+      setProducts((prev: Product[]) => prev.map(p => {
+          let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
+          if (isNaN(basePrice) || basePrice <= 0) {
+              basePrice = Number(p.sellingPrice) || 0;
+          }
+          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
+          if (newPrice > 0) {
+              return { ...p, categoryPrices: { ...(p.categoryPrices || {}), [bulkPricingModal.tier]: Number(newPrice.toFixed(2)) } };
+          }
+          return p;
+      }));
+
       try {
-          const promises = payload.map(item => 
-              fetch(`${API_BASE_URL}/sales/category-prices`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                      company: selectedCompany, 
-                      categoryName: bulkPricingModal.tier, 
-                      productId: item.productId, 
-                      price: item.price 
-                  })
+          const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                company: selectedCompany, 
+                categoryName: bulkPricingModal.tier, 
+                prices: payload 
               })
-          );
+          });
+
+          if (!res.ok) throw new Error(`Server returned error ${res.status}`);
           
-          await Promise.allSettled(promises);
-          
-          showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
+          showToast(`Applied ${pct}% adjustment to ${payload.length} products in ${bulkPricingModal.tier}.`, "success");
           setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
           
           setTimeout(async () => {
@@ -385,6 +444,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
           setIsProcessing(false);
+          fetchAllData(); 
       }
   };
 
@@ -790,7 +850,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 
                 <div className="flex flex-wrap gap-2 shrink-0">
                   {isAuthorizedAdmin && customerCategories.length > 0 && (
-                    <button onClick={() => setBulkPricingModal({ isOpen: true, tier: '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
+                    <button onClick={() => setBulkPricingModal({ isOpen: true, tier: customerCategories[0]?.name || '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
                   )}
                   {isAuthorizedAdmin && (
                     <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
@@ -1190,7 +1250,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
             <form onSubmit={handleBulkPricingSubmit} className="p-8 flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier *</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier</label>
                 <select required value={bulkPricingModal.tier} onChange={e=>setBulkPricingModal({...bulkPricingModal, tier: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
                   <option value="">Select Tier...</option>
                   {customerCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -1198,12 +1258,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%) *</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%)</label>
                 <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 or -5" />
-                <span className="text-[9px] font-medium text-slate-400 mt-1">Percentage is applied to the current tier price (defaults to general selling price if unset).</span>
+                <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from the current Tier Price (or General Selling Price if unset).</span>
               </div>
 
-              <button type="submit" disabled={isProcessing} className="mt-2 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
+              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
             </form>
           </div>
         </div>
