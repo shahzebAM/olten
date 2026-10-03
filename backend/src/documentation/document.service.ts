@@ -68,14 +68,14 @@ export class DocumentService {
     return doc;
   }
 
-  // --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
-  async analyzeExpiryDates(fileIds: number[], company: string) {
+// --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
+  async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string | null> = {};
     
     // Fetch docs from DB to get their pre-existing Gemini URI
     const docs = await (prisma as any).document.findMany({
       where: { 
-        id: { in: fileIds },
+        id: { in: fileIds }, // <--- Now uses the raw IDs perfectly
         company: company
       }
     });
@@ -94,26 +94,26 @@ export class DocumentService {
   }
 
   // --- SAVE REMINDERS TO DATABASE ---
-// --- SAVE REMINDERS TO DATABASE ---
   async saveReminders(reminders: any[], company: string) {
-    // FIX: Added ": any[]" so TypeScript knows this array can hold data
     const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
-      const docId = Number(rem.id);
-      // Skip if the user cleared the date or if the ID is invalid
-      if (isNaN(docId) || !rem.expiryDate) continue;
+      // FIX: Removed Number() cast so String UUIDs survive
+      const docId = rem.id; 
+      
+      // Skip if the user cleared the date or if the ID is missing
+      if (!docId || !rem.expiryDate) continue;
 
-const saved = await (prisma as any).documentReminder.create({
+      const saved = await (prisma as any).documentReminder.create({
         data: {
           company: company,
           documentId: docId,
           fileName: rem.name,
-          expiryDate: new Date(rem.expiryDate), // <--- Add new Date() right here
+          expiryDate: new Date(rem.expiryDate),
           reminderDays: Number(rem.reminderDays) || 30
         }
       });
-      savedReminders.push(saved); // The red line here will now be gone!
+      savedReminders.push(saved); 
     }
     
     return { success: true, count: savedReminders.length };

@@ -102,11 +102,6 @@ CRITICAL RULES:
     return { text: response.text, usage: response.usageMetadata };
   }
 
-  // --- NEW EXPIRY DATE EXTRACTION ---
-// --- NEW EXPIRY DATE EXTRACTION ---
-// --- NEW EXPIRY DATE EXTRACTION ---
-// --- NEW EXPIRY DATE EXTRACTION ---
-// --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
@@ -137,7 +132,6 @@ CRITICAL RULES:
           return ''; // Send blank so placeholder shows
       }
       
-      // Return the natural text straight to the frontend! No strict regex blocking it.
       return text; 
     } catch (error: any) {
       this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
