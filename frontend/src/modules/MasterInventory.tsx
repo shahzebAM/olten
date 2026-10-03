@@ -802,11 +802,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         </header>
 
         {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
-        <main className="flex-1 flex flex-col p-6 bg-[#F8FAFC] overflow-hidden min-h-0">
+        <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden relative">
           
-          {/* VIEW: PRODUCTS */}
+         {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="flex flex-col h-full w-full max-w-[1600px] mx-auto animate-in fade-in duration-300 space-y-4">
+            <div className="absolute inset-0 flex flex-col p-4 sm:p-6 space-y-4 animate-in fade-in duration-300">
               
               <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                 <div className="flex flex-1 flex-col xl:flex-row gap-3">
@@ -997,7 +997,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
           {/* VIEW: RECEIVING (NEW P.O. PLACEMENT QUEUE) */}
           {activeView === 'receiving' && (
-            <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300">
+            <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300 p-4 sm:p-6">
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
                 <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                   <div>
@@ -1062,7 +1062,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
           {/* VIEW: MOVEMENTS (LEDGER) */}
           {activeView === 'movements' && (
-            <div className="max-w-7xl mx-auto space-y-4 animate-in fade-in duration-300">
+            <div className="max-w-7xl mx-auto space-y-4 animate-in fade-in duration-300 p-4 sm:p-6">
               <div className="flex flex-wrap gap-4 items-center bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
                 <div className="flex flex-col gap-1 w-full sm:w-auto">
                   <label className="text-[10px] font-bold uppercase text-slate-500">Transaction Type</label>
@@ -1124,9 +1124,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
           )}
 
-          {/* VIEW: WAREHOUSES */}
+       {/* VIEW: WAREHOUSES */}
           {activeView === 'warehouses' && (
-            <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300">
+            <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300 p-4 sm:p-6">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-4">
                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Warehouse Control Center</h2>
                  <div className="flex items-center gap-3 w-full sm:w-auto">
