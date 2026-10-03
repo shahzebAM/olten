@@ -144,14 +144,14 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     }
   };
 
-  const handleDeleteCustomer = async (id: string) => {
+const handleDeleteCustomer = async (id: string) => {
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
-    if (!window.confirm("CRITICAL: Are you sure you want to permanently delete this customer record?")) return;
     
+    // Deletes instantly without confirmation popup
     setIsLoading(true);
     try {
       await fetch(`${API_BASE_URL}/sales/customers/${id}`, { method: 'DELETE' });
-      showToast("Customer record removed.", "success");
+      showToast("Customer record deleted instantly.", "success");
       fetchCustomers();
       setViewCustomer(null);
     } catch (e) {
@@ -334,81 +334,73 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
             </div>
 
             {/* DATA TABLE */}
-           {/* DATA TABLE */}
-            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
-              <div className="overflow-x-auto w-full relative">
+         {/* DATA TABLE - EXCEL STYLE COMPACT */}
+            <div className="bg-white border border-slate-300 shadow-sm flex flex-col overflow-hidden">
+              <div className="w-full relative">
                 {isLoading && (
                   <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex items-center justify-center">
-                    <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm">Syncing Records...</div>
+                    <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-xs">Syncing...</div>
                   </div>
                 )}
-                {/* Removed whitespace-nowrap and min-w to prevent horizontal scrolling */}
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200">
+                
+                <table className="w-full text-left text-xs border-collapse table-fixed">
+                  <thead className="bg-slate-100 border-b border-slate-300">
                     <tr>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden sm:table-cell w-20 sm:w-24">Client Code</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px]">Entity / Name</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden md:table-cell w-24">Category</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px]">Contact Info</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] hidden lg:table-cell w-48">Address</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-24 sm:w-28">Balance</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-center hidden xl:table-cell w-20">Status</th>
-                      <th className="py-2.5 px-3 sm:px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] text-right w-32 sm:w-40">Actions</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-16 sm:w-20 hidden sm:table-cell">Code</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider">Entity / Name</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-20 sm:w-24 hidden md:table-cell">Category</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-32 hidden lg:table-cell">Contact</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider w-36 hidden xl:table-cell">Address</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-right w-24 sm:w-28">Balance</th>
+                      <th className="border border-slate-300 py-1.5 px-2 font-bold text-slate-700 uppercase text-[10px] tracking-wider text-center w-16">Edit</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="bg-white">
                     {customers.length === 0 && !isLoading ? (
-                      <tr><td colSpan={8} className="py-12 text-center text-slate-400 font-medium">No customer records found.</td></tr>
+                      <tr><td colSpan={7} className="py-8 text-center text-slate-400 font-medium border border-slate-300">No customer records found.</td></tr>
                     ) : (
                       customers.map(c => (
-                        <tr key={c.id || Math.random()} className="hover:bg-slate-50 transition-colors group">
+                        <tr key={c.id || Math.random()} className="hover:bg-indigo-50/30 transition-colors">
                           
-                          {/* Client Code - Hidden on Mobile */}
-                          <td className="py-2 px-3 sm:px-4 font-mono text-[10px] sm:text-xs text-slate-500 uppercase hidden sm:table-cell align-top mt-0.5">{c.id ? c.id.slice(0, 8) : 'N/A'}</td>
+                          <td className="border border-slate-300 py-1 px-2 font-mono text-[10px] text-slate-500 uppercase hidden sm:table-cell truncate" title={c.id}>
+                            {c.id ? c.id.slice(0, 8) : 'N/A'}
+                          </td>
                           
-                          {/* Entity Name - Always Visible & Wraps naturally */}
-                          <td className="py-2 px-3 sm:px-4 align-top">
-                            <div className="font-bold text-slate-900 text-xs sm:text-sm leading-tight">{c.name || 'Unknown'}</div>
-                            <div className="flex flex-wrap items-center gap-2 mt-1">
-                               {/* Mobile Category Fallback */}
-                               <span className="md:hidden px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[8px] font-bold uppercase rounded">{c.category || 'General'}</span>
-                               <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600">{c.company || 'Unknown'}</span>
+                          <td className="border border-slate-300 py-1 px-2 overflow-hidden">
+                            <div className="font-bold text-slate-900 text-[11px] sm:text-xs truncate" title={c.name}>{c.name || 'Unknown'}</div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                               <span className="md:hidden px-1 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[8px] font-bold uppercase rounded leading-none">{c.category || 'General'}</span>
+                               <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600 truncate" title={c.company}>{c.company || 'Unknown'}</span>
                             </div>
                           </td>
                           
-                          {/* Category - Hidden on Mobile */}
-                          <td className="py-2 px-3 sm:px-4 hidden md:table-cell align-top mt-0.5">
-                              <span className="px-2 py-1 bg-slate-100 border border-slate-200 text-slate-700 text-[9px] font-bold uppercase rounded-md">{c.category || 'General'}</span>
+                          <td className="border border-slate-300 py-1 px-2 hidden md:table-cell text-[10px] truncate uppercase font-medium text-slate-700" title={c.category || 'General'}>
+                              {c.category || 'General'}
                           </td>
                           
-                          {/* Contact Info - Compacted */}
-                          <td className="py-2 px-3 sm:px-4 text-[10px] sm:text-xs text-slate-600 align-top mt-0.5">
-                            <div className="font-semibold text-slate-800 leading-tight">{c.contact || 'No Contact'}</div>
-                            <div className="text-slate-500 mt-0.5">{c.phone || '-'} | {c.email || '-'}</div>
+                          <td className="border border-slate-300 py-1 px-2 hidden lg:table-cell text-[10px] text-slate-600 truncate" title={`${c.contact || ''} ${c.phone || ''} ${c.email || ''}`}>
+                            {c.contact || c.phone || c.email || '-'}
                           </td>
                           
-                          {/* Address - Hidden on small screens, truncated heavily */}
-                          <td className="py-2 px-3 sm:px-4 text-[10px] sm:text-xs text-slate-500 hidden lg:table-cell align-top mt-0.5">
-                            <div className="truncate max-w-[150px] xl:max-w-[200px]" title={c.address || ''}>{c.address || 'N/A'}</div>
+                          <td className="border border-slate-300 py-1 px-2 hidden xl:table-cell text-[10px] text-slate-500 truncate" title={c.address || ''}>
+                            {c.address || 'N/A'}
                           </td>
                           
-                          {/* Balance - Always visible, restricted wrapping */}
-                          <td className="py-2 px-3 sm:px-4 text-right font-black text-slate-900 text-[11px] sm:text-sm align-top mt-0.5 whitespace-nowrap">
+                          <td className="border border-slate-300 py-1 px-2 text-right font-mono font-bold text-slate-900 text-[11px] sm:text-xs truncate">
                             ₱{(c.balance || 0).toLocaleString()}
                           </td>
                           
-                          {/* Status - Hidden on most screens to save space */}
-                          <td className="py-2 px-3 sm:px-4 text-center hidden xl:table-cell align-top mt-0.5">
-                            <span className="px-2 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase rounded-md">Active</span>
-                          </td>
-                          
-                          {/* Actions - Always visible, never wraps */}
-                          <td className="py-2 px-3 sm:px-4 text-right space-x-2 sm:space-x-3 whitespace-nowrap align-top mt-0.5">
-                            <button onClick={() => setViewCustomer(c)} className="text-indigo-600 hover:text-indigo-900 font-bold text-[10px] sm:text-[11px] uppercase tracking-wider underline">View</button>
-                            {onRouteToOrderSlip && c.id && (
-                              <button onClick={() => onRouteToOrderSlip(c.id)} className="px-2 sm:px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[9px] sm:text-[10px] font-bold uppercase hover:bg-slate-800 transition-colors shadow-sm inline-block">Create O.S.</button>
+                          <td className="border border-slate-300 py-1 px-2 text-center whitespace-nowrap">
+                            <button onClick={() => setEditModal({ isOpen: true, data: c })} className="p-1 text-slate-400 hover:text-indigo-600 transition-colors" title="Edit Profile">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                            </button>
+                            {isAuthorizedAdmin && (
+                              <button onClick={() => handleDeleteCustomer(c.id)} className="p-1 text-slate-400 hover:text-rose-600 transition-colors ml-1" title="Delete Instantly">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                              </button>
                             )}
                           </td>
+                          
                         </tr>
                       ))
                     )}
@@ -417,12 +409,12 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
               </div>
               
               {/* PAGINATION CONTROLS */}
-              <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest">
-                <div>Showing {customers.length} of {totalRecords} records</div>
-                <div className="flex gap-2">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || isLoading} className="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50">Prev</button>
-                  <span className="px-3 py-1.5 bg-white border border-slate-200 rounded">{currentPage} / {totalPages}</span>
-                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages || isLoading} className="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50">Next</button>
+              <div className="p-2 border-t border-slate-300 bg-slate-100 flex items-center justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
+                <div>Showing {customers.length} of {totalRecords}</div>
+                <div className="flex gap-1.5 sm:gap-2">
+                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || isLoading} className="px-2 py-1 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Prev</button>
+                  <span className="px-3 py-1 bg-white border border-slate-300 rounded shadow-sm">{currentPage} / {totalPages}</span>
+                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages || isLoading} className="px-2 py-1 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">Next</button>
                 </div>
               </div>
             </div>
