@@ -300,7 +300,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- FIXED SAVE ALGORITHM: STRICT ENDPOINTS & BULK SCHEMAS ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -381,7 +380,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setProductModal({ isOpen: false, editingId: null });
         setProductForm(initialProductForm);
         
-        // Wait exactly 1000ms to fetch so the NestJS DB completes all commits
         setTimeout(async () => {
             await fetchAllData(); 
             setIsProcessing(false);
@@ -394,9 +392,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     }
   };
 
-  // --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
-// --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
-// --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all required fields.", "error");
@@ -409,10 +404,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       setIsProcessing(true);
 
       const payload = products.map(p => {
-          // Strictly base calculation on current tier price. If 0 or missing, fallback to selling price (General Pricing).
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.sellingPrice) || 0;
+              basePrice = Number(p.purchasePrice) || 0;
           }
           
           const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
@@ -428,7 +422,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       setProducts((prev: Product[]) => prev.map(p => {
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.sellingPrice) || 0;
+              basePrice = Number(p.purchasePrice) || 0;
           }
           const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           if (newPrice > 0) {
@@ -456,7 +450,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           setTimeout(async () => {
             await fetchAllData();
             setIsProcessing(false);
-          }, 600);
+          }, 1000);
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
           setIsProcessing(false);
@@ -815,20 +809,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           
           {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-300">
+            <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-300 flex flex-col h-[calc(100vh-8rem)]">
               
-              <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                 <div className="flex flex-1 flex-col xl:flex-row gap-3">
-                  <div className="relative w-full xl:w-80">
-                    <input 
-                      type="text" 
-                      placeholder="SEARCH SKU OR NAME..." 
-                      value={searchQuery} 
-                      onChange={(e) => setSearchQuery(e.target.value)} 
-                      className="w-full pl-4 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" 
-                    />
-                  </div>
-                  
                   {/* CATEGORY FILTER DROPDOWN */}
                   <select 
                     value={selectedCategoryFilter} 
@@ -841,7 +825,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     ))}
                   </select>
 
-                  {/* CUSTOMER PRICING TIER FILTER DROPDOWN (Now Mandatory Selection) */}
+                  {/* CUSTOMER PRICING TIER FILTER DROPDOWN */}
                   <select 
                     value={selectedPricingTierFilter} 
                     onChange={(e) => setSelectedPricingTierFilter(e.target.value)} 
@@ -875,7 +859,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               </div>
 
               {selectedProductIds.length > 0 && (
-                <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in slide-in-from-top-2">
+                <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in slide-in-from-top-2 shrink-0">
                   <div className="font-black text-blue-900 uppercase text-xs tracking-widest px-2">{selectedProductIds.length} ITEMS SELECTED</div>
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => openBulkTx('RECEIVE')} className="px-4 py-2 bg-emerald-500 text-white font-bold uppercase text-[10px] rounded-lg shadow-sm hover:bg-emerald-600 transition-colors">Receive</button>
@@ -889,25 +873,33 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
               )}
 
-              {/* EXCEL-STYLE TABLE */}
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                <div className="overflow-x-auto w-full relative">
+              {/* EXCEL-STYLE TABLE (Now strictly scrollable independent of the page) */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden min-h-0">
+                <div className="overflow-auto w-full relative flex-1">
                   <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1200px]">
-                    <thead className="bg-white border-b border-slate-200">
+                    <thead className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
                       <tr>
-                        <th className="py-3 px-4 w-12 text-center border-b border-slate-200">
+                        <th className="py-3 px-4 w-12 text-center border-b border-slate-200 align-middle">
                           <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
                         </th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[30%] border-b border-slate-200">SKU / Item</th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[12%] border-b border-slate-200">Category</th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">
+                        <th className="py-2 px-4 w-[30%] border-b border-slate-200 align-middle">
+                          <input 
+                            type="text" 
+                            placeholder="SEARCH SKU OR NAME..." 
+                            value={searchQuery} 
+                            onChange={(e) => setSearchQuery(e.target.value)} 
+                            className="w-full pl-3 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" 
+                          />
+                        </th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[12%] border-b border-slate-200 align-middle">Category</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200 align-middle">
                           {selectedPricingTierFilter ? `Tier: ${selectedPricingTierFilter}` : 'Tier Price'}
                         </th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">Master Stock</th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200 align-middle">Master Stock</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200 align-middle">
                           {selectedHubFilter === 'ALL' ? 'Hub Stock (All)' : `Hub Stock`}
                         </th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[20%] border-b border-slate-200">Settings</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[20%] border-b border-slate-200 align-middle">Settings</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
@@ -1263,7 +1255,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
             <form onSubmit={handleBulkPricingSubmit} className="p-8 flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier *</label>
                 <select required value={bulkPricingModal.tier} onChange={e=>setBulkPricingModal({...bulkPricingModal, tier: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
                   <option value="">Select Tier...</option>
                   {customerCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -1271,7 +1263,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%)</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%) *</label>
                 <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 or -5" />
                 <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from the current Tier Price (or Cost Price if unset).</span>
               </div>
