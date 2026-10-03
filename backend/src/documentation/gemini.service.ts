@@ -107,18 +107,17 @@ CRITICAL RULES:
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
+// --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
-      // Ultimate foolproof prompt. Tells it exactly what to look for and forces a clean MM,DD,YYYY output.
-      const prompt = `Analyze this document and find the final expiration date, validity end date, or renewal deadline. 
-      Look for phrases like "Validity of License", "Valid Until", "Expiry Date", or similar.
+      const prompt = `Find the final expiration date, validity end date, or renewal deadline in this document. 
+      Look for phrases like "Validity of License" or "Valid Until".
       
-      No matter how the date is written (e.g., "28 January 2028", "05/16/2028", "January 28, 2028"), you MUST translate it into EXACTLY this format: MM,DD,YYYY (for example, 01,28,2028).
+      You MUST return the date written out in natural text format exactly like this: Month DD, YYYY (e.g., January 28, 2028).
       
       CRITICAL RULES:
-      1. Return ONLY the formatted date string (MM,DD,YYYY).
-      2. Do NOT include any other text, spaces, or words.
-      3. If no date is found, return exactly the word: null`;
+      1. Return ONLY the date. No other words, no explanations.
+      2. If you absolutely cannot find a date, return exactly the word: null`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
@@ -134,15 +133,12 @@ CRITICAL RULES:
       
       const text = response.text?.trim() || 'null';
       
-      // Safety catch: If AI returns null or blank, return empty string for frontend
       if (text.toLowerCase().includes('null') || text === '') {
-          return ''; 
+          return ''; // Send blank so placeholder shows
       }
       
-      // Clean the string just in case the AI added a period or space at the end
-      const cleanDate = text.replace(/[^0-9,]/g, '');
-      
-      return cleanDate; 
+      // Return the natural text straight to the frontend! No strict regex blocking it.
+      return text; 
     } catch (error: any) {
       this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
       return ''; 
