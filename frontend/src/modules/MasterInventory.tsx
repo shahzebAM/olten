@@ -327,7 +327,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       cleanPayload.username = loginUsername;
     }
 
-    if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
+    if (cleanPayload.sku && cleanPayload.imageUrl) {
+  globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
+  delete deletedImageVault[cleanPayload.sku]; // This ensures the old deleted image is permanently forgotten
+}
 
     const rawPricesToSave = productForm.categoryPrices || {};
     const sanitizedPricesToSave: Record<string, number> = {};
