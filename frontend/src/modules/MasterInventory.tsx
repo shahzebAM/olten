@@ -612,9 +612,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {activeView === 'products' && (
             <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in duration-300">
               
-              <div className="flex flex-col sm:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="flex flex-1 flex-col sm:flex-row gap-3">
-                  <div className="relative w-full sm:w-80">
+           <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex flex-1 flex-col xl:flex-row gap-3">
+                  <div className="relative w-full xl:w-80">
                     <input 
                       type="text" 
                       placeholder="SEARCH SKU OR NAME..." 
@@ -628,7 +628,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   <select 
                     value={selectedCategoryFilter} 
                     onChange={(e) => setSelectedCategoryFilter(e.target.value)} 
-                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-48 appearance-none"
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full xl:w-48 appearance-none"
                   >
                     <option value="ALL">All Categories</option>
                     {uniqueCategories.map(cat => (
@@ -639,7 +639,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   <select 
                     value={selectedHubFilter} 
                     onChange={(e) => setSelectedHubFilter(e.target.value)} 
-                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full sm:w-48 appearance-none"
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full xl:w-48 appearance-none"
                   >
                     <option value="ALL">All Hubs (Combined)</option>
                     {warehouses.map(w => <option key={w.id} value={String(w.id)}>{w.name}</option>)}
@@ -648,9 +648,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 
                 <div className="flex flex-wrap gap-2 shrink-0">
                   {isAuthorizedAdmin && (
-                    <button onClick={handleExportExcel} className="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
+                    <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
                   )}
-                  <button onClick={() => { setProductForm(initialProductForm); setProductModal({ isOpen: true, editingId: null }); }} className="px-5 py-2.5 bg-blue-600 text-white font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-blue-700 transition-colors">+ Register Item</button>
+                  <button onClick={() => { setProductForm(initialProductForm); setProductModal({ isOpen: true, editingId: null }); }} className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 text-white font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-blue-700 transition-colors">+ Register Item</button>
                 </div>
               </div>
 
@@ -740,7 +740,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             </td>
                             
                             <td className="py-2.5 px-4 align-middle text-center">
-                              <div className="flex items-center justify-center gap-1 opacity-100 xl:opacity-0 xl:group-hover:opacity-100 transition-opacity">
+                             <div className="flex items-center justify-center gap-1">
                                 <button onClick={() => openTx([p], 'RECEIVE')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Receive into Master Stock">
                                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
                                 </button>
@@ -1066,8 +1066,24 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                       </>
-                    ) : (
-                      <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
+                  ) : (
+                      <div className="flex flex-col items-center gap-2 shrink-0">
+                        <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
+                        {deletedImageVault[productForm.sku] && (
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              // Restore image from deleted vault back to form and global vault
+                              setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
+                              globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
+                              delete deletedImageVault[productForm.sku];
+                            }}
+                            className="text-[9px] font-black text-sky-600 bg-sky-50 hover:bg-sky-100 px-3 py-1 rounded-md uppercase tracking-widest border border-sky-200 transition-colors shadow-sm"
+                          >
+                            Restore
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="flex-1 flex flex-col gap-2">
