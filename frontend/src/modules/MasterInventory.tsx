@@ -1365,20 +1365,20 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     ) : (
                       <div className="flex flex-col items-center gap-2 shrink-0">
                         <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
-                        {deletedImageVault[productForm.sku] && (
-                          <button 
-                            type="button" 
-                            onClick={() => {
-                              // Restore image from deleted vault back to form and global vault
-                              setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
-                              globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
-                              delete deletedImageVault[productForm.sku];
-                            }}
-                            className="text-[9px] font-black text-sky-600 bg-sky-50 hover:bg-sky-100 px-3 py-1 rounded-md uppercase tracking-widest border border-sky-200 transition-colors shadow-sm"
-                          >
-                            Restore
-                          </button>
-                        )}
+                     {deletedImageVault[productForm.sku] && (
+  <button 
+    type="button" 
+    onClick={() => {
+      // Restore image from deleted vault back to form and global vault
+      setProductForm((prev: any) => ({ ...prev, previousImageUrl: deletedImageVault[productForm.sku] }));
+      globalImageVault[productForm.sku] = deletedImageVault[productForm.sku];
+      delete deletedImageVault[productForm.sku];
+    }}
+    className="text-[9px] font-black text-sky-600 bg-sky-50 hover:bg-sky-100 px-3 py-1 rounded-md uppercase tracking-widest border border-sky-200 transition-colors shadow-sm"
+  >
+    Restore
+  </button>
+)}
                       </div>
                     )}
                   </div>
