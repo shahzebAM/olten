@@ -104,9 +104,15 @@ CRITICAL RULES:
 
   // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
+// --- NEW EXPIRY DATE EXTRACTION ---
+// --- NEW EXPIRY DATE EXTRACTION ---
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string | null> {
     try {
-      const prompt = "Find the most important expiration date, validity end date, or renewal deadline in this document. You MUST return ONLY the date formatted exactly as 'Month DD, YYYY' (e.g., January 28, 2026). Do not write any other words or explanations. If no such date exists, return the exact word: null";
+      // Instruct Gemini to aggressively find any date format and translate it into strictly MM,DD,YYYY
+      const prompt = `Analyze this document and find the most relevant expiration date, validity end date, or renewal deadline. 
+      Regardless of how the date is written in the document, you MUST translate and return it EXACTLY in the format: MM,DD,YYYY (e.g., 01,28,2026 or 11,05,2025). 
+      Do NOT include any other text, spaces, words, or punctuation. 
+      If you absolutely cannot find any date, return the exact word: null`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
@@ -117,16 +123,21 @@ CRITICAL RULES:
             { text: prompt }
           ]
         }],
-        config: { temperature: 0.0 }
+        config: { temperature: 0.0 } // Keep temperature at 0.0 for strict factual extraction
       });
       
       const text = response.text?.trim() || 'null';
-      if (text.toLowerCase().includes('null')) return null;
       
-      return text; // Returns the exact text: "January 28, 2026"
+      // If the AI says null, return an empty string so the frontend placeholder shows
+      if (text.toLowerCase().includes('null') || text === '') {
+          return ''; 
+      }
+      
+      // Return the newly formatted MM,DD,YYYY string
+      return text; 
     } catch (error: any) {
       this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
-      return null; 
+      return ''; 
     }
   }
 }
