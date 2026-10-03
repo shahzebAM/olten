@@ -851,17 +851,33 @@ useEffect(() => {
                 {/* </div> */}
               {/* </div> */}
 
+                    {/* Direct Download Header */}
+              <div className="px-6 py-3 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
+                <span className="text-sm font-bold text-slate-800 truncate pr-4">{selectedFile.name}</span>
+                <a 
+                  href={`https://drive.google.com/uc?export=download&id=${selectedFile.id}`}
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-2 shrink-0 shadow-sm"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download
+                </a>
+              </div>
+
               {/* Document Canvas Area */}
               <div className="flex-1 bg-white flex flex-col w-full h-full">
                 <div className="flex-1 w-full flex flex-col h-full">
                   <div className="flex-1 bg-white rounded-lg overflow-hidden flex flex-col shadow-sm border border-slate-200/60 min-h-[400px]">
                     {selectedFile.webViewLink ? (
-                      <iframe 
-                        src={selectedFile.webViewLink.replace('/view', '/preview')} 
-                        className="w-full h-full border-0"
-                        title={selectedFile.name}
-                        sandbox="allow-scripts allow-same-origin allow-popups"
-                      />
+                     <iframe 
+    src={selectedFile.webViewLink.replace('/view', '/preview')} 
+    className="w-full h-full border-0"
+    title={selectedFile.name}
+    sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
+  />
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50">
                         <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mb-4">{getFileIcon(selectedFile.mimeType)}</div>
