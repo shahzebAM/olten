@@ -914,16 +914,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                               <td className="py-2.5 px-4 text-center align-middle">
                                 <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
                               </td>
-                           <td className="py-2.5 px-4 align-middle">
+                          <td className="py-2.5 px-4 align-middle">
                                 <div className="flex items-center gap-3">
                                   {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
-                                    <img src={p.imageUrl} alt={p.name} className="w-9 h-9 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
+                                    <img src={p.imageUrl} alt={p.name} className="w-10 h-10 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
                                   ) : (
-                                    <div className="w-9 h-9 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[7px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
+                                    <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[8px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
                                   )}
                                   <div className="min-w-0 flex flex-col items-start">
-                                    <div className="font-bold text-[11px] text-slate-900 uppercase leading-tight truncate">{p.name}</div>
-                                    <div className="mt-1 font-mono text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 truncate shadow-sm">{p.sku}</div>
+                                    <div className="font-bold text-xs text-slate-900 uppercase leading-tight truncate">{p.name}</div>
+                                    <div className="mt-1 font-mono text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100 truncate shadow-sm">{p.sku}</div>
                                   </div>
                                 </div>
                               </td>
@@ -931,11 +931,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                 <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
                               </td>
                            <td className="py-2.5 px-4 align-middle">
-                                <div className="font-mono text-xs font-black text-amber-600 mb-1">
+                                <div className="font-mono text-sm font-black text-amber-600 mb-1.5">
                                   ₱{displayPrice.toFixed(2)}
                                 </div>
-                                <div className="inline-flex items-center gap-1 font-mono text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shadow-sm">
-                                  <span className="text-[8px] uppercase tracking-widest text-emerald-600/70">COST</span>
+                                <div className="inline-flex items-center gap-1.5 font-mono text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 shadow-sm">
+                                  <span className="text-[9px] uppercase tracking-widest text-emerald-600/70">COST</span>
                                   ₱{Number(p.purchasePrice).toFixed(2)}
                                 </div>
                               </td>
