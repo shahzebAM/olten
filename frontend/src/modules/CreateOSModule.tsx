@@ -161,7 +161,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
     if (customer.category && customer.category !== 'General') {
       try {
-        const res = await fetch(`${API_BASE_URL}/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`);
         if (res.ok) {
           const data = await res.json();
           const priceMap: Record<number, number> = {};

@@ -99,7 +99,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchCategories = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/customer-categories?company=${selectedCompany}`);
+      const res = await fetch(`${API_BASE_URL}/sales/customer-categories?company=${selectedCompany}`);
       if (res.ok) setCategories(await res.json());
     } catch (e) {
       console.error("Failed to fetch categories");
@@ -166,7 +166,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
       e.preventDefault();
       if (!newCategoryName.trim()) return;
       try {
-          const res = await fetch(`${API_BASE_URL}/customer-categories`, {
+         const res = await fetch(`${API_BASE_URL}/sales/customer-categories`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: newCategoryName.trim(), company: selectedCompany })
@@ -183,7 +183,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   const handleDeleteCategory = async (id: string) => {
       if (!window.confirm("Delete this category? Customers assigned to it will still retain the name but it won't be selectable.")) return;
       try {
-          await fetch(`${API_BASE_URL}/customer-categories/${id}`, { method: 'DELETE' });
+         await fetch(`${API_BASE_URL}/sales/customer-categories/${id}`, { method: 'DELETE' });
           fetchCategories();
           showToast("Category deleted.", "success");
       } catch (e) {
@@ -198,7 +198,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
     try {
       const [prodRes, priceRes] = await Promise.all([
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
+       fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
       ]);
       
       const prods = await prodRes.json();
@@ -248,7 +248,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
         .map(([productId, price]) => ({ productId: Number(productId), price: Number(price) }))
         .filter(p => !isNaN(p.price));
 
-        const res = await fetch(`${API_BASE_URL}/category-prices/bulk`, {
+       const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company: selectedCompany, categoryName: pricingCategory, prices: payload })
