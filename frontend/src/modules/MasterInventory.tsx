@@ -51,7 +51,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [placementPo, setPlacementPo] = useState<any>(null);
   const [placementDestinations, setPlacementDestinations] = useState<Record<string, string>>({});
 
-  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
+  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: '', sellingPrice: '', categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
@@ -101,7 +101,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       if (prodRes.ok) { 
         productsList = await prodRes.json(); 
         updateImageVault(productsList); 
-        setProducts(productsList); 
       }
       if (movRes.ok) setMovements(await movRes.json());
       if (whRes.ok) setWarehouses(await whRes.json());
@@ -122,13 +121,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     priceMap[p.productId][p.categoryName] = p.price;
                 });
                 
-                setProducts(productsList.map(prod => ({
+                productsList = productsList.map(prod => ({
                     ...prod,
                     categoryPrices: priceMap[prod.id] || {}
-                })));
+                }));
             }
         } catch(e) {}
       }
+      setProducts(productsList);
     } catch (e) { console.error("API Error", e); }
   }, [API_BASE_URL, selectedCompany]);
 
@@ -223,7 +223,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  const handleProductSubmit = (e: React.FormEvent) => {
+  const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     
@@ -242,22 +242,27 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       cleanPayload.username = loginUsername;
     }
 
-    const tempId = productModal.editingId || Date.now();
-    setProducts((prev: Product[]) => {
-      if (productModal.editingId) return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: productForm.categoryPrices } as Product : p);
-      return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0, categoryPrices: productForm.categoryPrices } as Product, ...prev];
-    });
-
     if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
 
-    const pricesToSave = productForm.categoryPrices || {};
+    const rawPricesToSave = productForm.categoryPrices || {};
+    const sanitizedPricesToSave: Record<string, number> = {};
+    
+    // Cleanly parse all prices to strict numbers before saving to local or backend
+    Object.keys(rawPricesToSave).forEach(cat => {
+        const val = parseFloat(String(rawPricesToSave[cat]));
+        if (!isNaN(val)) sanitizedPricesToSave[cat] = val;
+    });
 
-    setProductModal({ isOpen: false, editingId: null });
-    setProductForm(initialProductForm);
-    showToast("Saving to database...", "success");
+    const tempId = productModal.editingId || Date.now();
+    
+    setProducts((prev: Product[]) => {
+      if (productModal.editingId) {
+        return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: sanitizedPricesToSave } as Product : p);
+      }
+      return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0, categoryPrices: sanitizedPricesToSave } as Product, ...prev];
+    });
 
-   Promise.resolve().then(async () => {
-      try {
+    try {
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
         if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
@@ -265,26 +270,30 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const resData = await res.json();
         const finalProductId = productModal.editingId || resData.id;
         
-        // Wait for ALL pricing updates to finish writing to the database
-        if (Object.keys(pricesToSave).length > 0) {
-            const catPricePromises = Object.entries(pricesToSave).map(([catName, price]) => {
-                 // Use PATCH or PUT for updates to ensure we overwrite old prices, not just create duplicates
+        if (Object.keys(sanitizedPricesToSave).length > 0) {
+            const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
                  return fetch(`${API_BASE_URL}/sales/category-prices`, {
-                     method: 'POST', // Assuming your backend handles upsert on POST. If not, change to PATCH/PUT.
+                     method: 'POST', 
                      headers: { 'Content-Type': 'application/json' },
                      body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
-                 });
+                 }).then(r => {
+                     if(!r.ok) console.warn(`Failed to save price for ${catName}`, r.status);
+                 }).catch(console.error);
             });
-            await Promise.all(catPricePromises);
+            await Promise.allSettled(catPricePromises);
         }
         
-        // ONLY fetch the fresh data after all promises have successfully resolved
+        showToast("Successfully saved to database.", "success");
+        setProductModal({ isOpen: false, editingId: null });
+        setProductForm(initialProductForm);
+        
         await fetchAllData(); 
-      } catch (error: any) { 
+    } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); 
         await fetchAllData(); 
-      }
-    }).finally(() => setIsProcessing(false));
+    } finally {
+        setIsProcessing(false);
+    }
   };
 
   const processDirectWarehouseAdjustment = async (warehouseId: string, prod: Product, deltaQty: number, remarks: string) => {
@@ -1142,7 +1151,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
-               <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price (General Tier)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice ?? ''} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: e.target.value}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
                 
                 {/* DYNAMIC CATEGORY PRICING UI */}
@@ -1155,7 +1164,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                             <label className="text-[10px] font-bold uppercase text-amber-600 tracking-wider">{cat.name} Tier Price</label>
                             <div className="relative">
                               <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">₱</span>
-                            <input 
+                              <input 
                                 type="number" 
                                 step="0.01" 
                                 placeholder="Uses General Price..."
