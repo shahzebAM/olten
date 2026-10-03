@@ -1213,10 +1213,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                         const p = products.find(prod => Number(prod.id) === Number(stk.productId) || String(prod.sku) === String(stk.sku));
                                         return (
                                           <div key={stk.id} className="flex justify-between items-center bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm">
-                                            <div className="flex flex-col min-w-0 flex-1 mr-3">
-                                              <div className="text-[10px] font-bold uppercase text-slate-800 truncate">{p?.name || stk.sku}</div>
-                                              <div className="text-[8px] font-mono text-slate-400 mt-0.5">{p?.sku}</div>
-                                            </div>
+                                           <div className="flex flex-col min-w-0 flex-1 mr-3">
+  <div className="text-xs font-bold uppercase text-slate-900 truncate">{p?.name || stk.sku}</div>
+  <div className="text-[10px] font-mono font-medium text-slate-500 mt-1">{p?.sku}</div>
+</div>
                                             <div className="text-xs font-black text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 shrink-0 shadow-sm">
                                               {stk.quantity} <span className="text-[8px] text-blue-400">{p?.unit}</span>
                                             </div>
