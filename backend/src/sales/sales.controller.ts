@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Query, Param } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Query, Param, Delete } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -53,6 +53,54 @@ export class SalesController {
       page: pageNum,
       totalPages: Math.ceil(total / limitNum)
     };
+  }
+
+  // ==========================================
+  // CUSTOMER CATEGORIES & PRICING
+  // ==========================================
+
+  @Get('customer-categories')
+  async getCategories(@Query('company') company: string) {
+    return prisma.customerCategory.findMany({ where: { company } });
+  }
+
+  @Post('customer-categories')
+  async createCategory(@Body() data: { name: string; company: string }) {
+    return prisma.customerCategory.create({ data });
+  }
+
+  @Delete('customer-categories/:id')
+  async deleteCategory(@Param('id') id: string) {
+    return prisma.customerCategory.delete({ where: { id } });
+  }
+
+  @Get('category-prices')
+  async getCategoryPrices(
+    @Query('company') company: string, 
+    @Query('categoryName') categoryName: string
+  ) {
+    return prisma.categoryPrice.findMany({ 
+      where: { company, categoryName } 
+    });
+  }
+
+  @Post('category-prices/bulk')
+  async updateCategoryPrices(@Body() data: { company: string; categoryName: string; prices: { productId: number; price: number }[] }) {
+    const { company, categoryName, prices } = data;
+    
+    // Uses a transaction to safely upsert (update or insert) all price changes at once
+    const upserts = prices.map(p => 
+      prisma.categoryPrice.upsert({
+        where: {
+          productId_categoryName_company: { productId: p.productId, categoryName, company }
+        },
+        update: { price: p.price },
+        create: { productId: p.productId, categoryName, company, price: p.price }
+      })
+    );
+
+    await prisma.$transaction(upserts);
+    return { message: "Prices updated successfully" };
   }
 
   @Post('customers')

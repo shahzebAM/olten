@@ -228,6 +228,7 @@ model Customer {
 
   orderSlips  OrderSlip[]
   shortages   Shortage[]
+  category String @default("General")
 }
 
 model Supplier {
@@ -249,6 +250,24 @@ model Supplier {
   // Relational link to Purchase Orders
   purchaseOrders PurchaseOrder[] 
   catalog Json? @default("[]")
+}
+
+model CustomerCategory {
+  id        String   @id @default(uuid())
+  name      String   // e.g., "Category A", "Wholesale"
+  company   String
+  createdAt DateTime @default(now())
+}
+
+model CategoryPrice {
+  id           String  @id @default(uuid())
+  productId    Int
+  categoryName String
+  price        Float
+  company      String
+
+  // Ensures a product only has one specific price per category per company
+  @@unique([productId, categoryName, company]) 
 }
 
 model OrderSlip {
