@@ -396,6 +396,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   // --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
 // --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
+// --- FIXED: BULK PRICING CALCULATOR (CURRENT TIER ONLY) ---
   const handleBulkPricingSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all required fields.", "error");
@@ -408,14 +409,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       setIsProcessing(true);
 
       const payload = products.map(p => {
-          // Base calculation on current tier price. If 0 or missing, fallback to cost price.
+          // Strictly base calculation on current tier price. If 0 or missing, fallback to selling price (General Pricing).
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.purchasePrice) || 0;
+              basePrice = Number(p.sellingPrice) || 0;
           }
           
-          // Strict math calculation
-          const newPrice = basePrice > 0 ? basePrice * (1 + (pct / 100)) : 0;
+          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           return { productId: Number(p.id), price: Number(newPrice.toFixed(2)) };
       }).filter(item => item.price > 0);
 
@@ -424,13 +424,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           return showToast("No items with a non-zero base price were found to adjust.", "error");
       }
 
-      // Optimistic Bulk UI Update (Fixes the visual glitch where it doesn't seem to deduct)
+      // Optimistic Bulk UI Update
       setProducts((prev: Product[]) => prev.map(p => {
           let basePrice = Number(p.categoryPrices?.[bulkPricingModal.tier]);
           if (isNaN(basePrice) || basePrice <= 0) {
-              basePrice = Number(p.purchasePrice) || 0;
+              basePrice = Number(p.sellingPrice) || 0;
           }
-          const newPrice = basePrice > 0 ? basePrice * (1 + (pct / 100)) : 0;
+          const newPrice = basePrice > 0 ? basePrice + (basePrice * (pct / 100)) : 0;
           if (newPrice > 0) {
               return { ...p, categoryPrices: { ...(p.categoryPrices || {}), [bulkPricingModal.tier]: Number(newPrice.toFixed(2)) } };
           }
@@ -438,28 +438,25 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       }));
 
       try {
-          const promises = payload.map(item => 
-              fetch(`${API_BASE_URL}/sales/category-prices`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                      company: selectedCompany, 
-                      categoryName: bulkPricingModal.tier, 
-                      productId: item.productId, 
-                      price: item.price 
-                  })
+          const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                company: selectedCompany, 
+                categoryName: bulkPricingModal.tier, 
+                prices: payload 
               })
-          );
+          });
+
+          if (!res.ok) throw new Error(`Server returned error ${res.status}`);
           
-          await Promise.allSettled(promises);
-          
-          showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
+          showToast(`Applied ${pct}% adjustment to ${payload.length} products in ${bulkPricingModal.tier}.`, "success");
           setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
           
           setTimeout(async () => {
             await fetchAllData();
             setIsProcessing(false);
-          }, 1000);
+          }, 600);
       } catch (err: any) {
           showToast(`Bulk Sync Error: ${err.message}`, "error");
           setIsProcessing(false);
