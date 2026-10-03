@@ -46,6 +46,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const [productModal, setProductModal] = useState<{ isOpen: boolean; editingId: number | null }>({ isOpen: false, editingId: null });
   const [txModal, setTxModal] = useState<{ isOpen: boolean; products: Product[]; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' }>({ isOpen: false, products: [], type: 'RECEIVE' });
+  const [bulkPricingModal, setBulkPricingModal] = useState({ isOpen: false, tier: '', percentage: '' });
 
   // --- RECEIVING MODAL STATES ---
   const [placementPo, setPlacementPo] = useState<any>(null);
@@ -86,7 +87,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     });
   };
 
-  // --- FIXED FETCH ALGORITHM ---
   const fetchAllData = useCallback(async () => {
     try {
       const [prodRes, movRes, whRes, stkRes, poRes, catRes] = await Promise.all([
@@ -113,7 +113,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         setCustomerCategories(categories);
         
         try {
-            // Specifically loop over the categories to hit the correct individual API endpoints
             const pricePromises = categories.map(async (cat: any) => {
                 const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(cat.name)}`);
                 if(res.ok) return { catName: cat.name, data: await res.json() };
@@ -130,7 +129,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 });
             });
             
-            // Merge prices securely into the local table array
             productsList = productsList.map(prod => ({
                 ...prod,
                 categoryPrices: priceMap[prod.id] || {}
@@ -232,7 +230,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsDataURL(file);
   };
 
-  // --- FIXED SUBMISSION ALGORITHM ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -282,7 +279,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const finalProductId = productModal.editingId || resData.id;
         
         if (Object.keys(sanitizedPricesToSave).length > 0) {
-            // Uses the proper bulk route to correctly map properties inside the NestJS Database
             const catPricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
                  return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
                      method: 'POST', 
@@ -308,6 +304,43 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } finally {
         setIsProcessing(false);
     }
+  };
+
+  // --- NEW BULK PRICING SUBMIT ---
+  const handleBulkPricingSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!bulkPricingModal.tier || !bulkPricingModal.percentage) return showToast("Please fill all fields.", "error");
+
+      const pct = parseFloat(bulkPricingModal.percentage);
+      if (isNaN(pct)) return showToast("Invalid percentage.", "error");
+
+      if (!window.confirm(`Are you sure you want to adjust ALL product prices for the ${bulkPricingModal.tier} tier by ${pct}% based on their General Selling Price?`)) return;
+
+      setIsProcessing(true);
+
+      const payload = products.map(p => {
+          const basePrice = Number(p.sellingPrice) || 0;
+          const newPrice = basePrice + (basePrice * (pct / 100));
+          return { productId: p.id, price: Number(newPrice.toFixed(2)) };
+      });
+
+      try {
+          const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ company: selectedCompany, categoryName: bulkPricingModal.tier, prices: payload })
+          });
+
+          if (!res.ok) throw new Error("Server rejected bulk update.");
+          
+          showToast(`Successfully applied ${pct}% adjustment to ${bulkPricingModal.tier}.`, "success");
+          setBulkPricingModal({ isOpen: false, tier: '', percentage: '' });
+          await fetchAllData();
+      } catch (err: any) {
+          showToast(`Bulk Sync Error: ${err.message}`, "error");
+      } finally {
+          setIsProcessing(false);
+      }
   };
 
   const processDirectWarehouseAdjustment = async (warehouseId: string, prod: Product, deltaQty: number, remarks: string) => {
@@ -575,7 +608,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
-    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; // Pricing view changes table output, does not hide items
+    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; 
     return matchesSearch && matchesCategory && matchesPricingTier;
   });
 
@@ -600,7 +633,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
        return p?.name.toLowerCase().includes(q) || stk.sku.toLowerCase().includes(q);
     });
   });
-
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       
@@ -711,6 +743,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 </div>
                 
                 <div className="flex flex-wrap gap-2 shrink-0">
+                  {isAuthorizedAdmin && customerCategories.length > 0 && (
+                    <button onClick={() => setBulkPricingModal({ isOpen: true, tier: '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
+                  )}
                   {isAuthorizedAdmin && (
                     <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
                   )}
@@ -1092,6 +1127,35 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               <button type="submit" disabled={isProcessing} className="mt-4 py-4 bg-sky-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-sky-700 transition-colors shadow-md disabled:opacity-50">
                 {isProcessing ? 'Processing Routing...' : 'Confirm Stock Placement'}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* BULK PRICING MODAL */}
+      {bulkPricingModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50">
+              <h2 className="text-xl font-black text-amber-900 uppercase tracking-tight">Bulk Pricing</h2>
+              <button onClick={() => setBulkPricingModal({ isOpen: false, tier: '', percentage: '' })} className="p-2 text-amber-400 hover:text-amber-600 hover:bg-amber-100 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleBulkPricingSubmit} className="p-8 flex flex-col gap-5">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Tier</label>
+                <select required value={bulkPricingModal.tier} onChange={e=>setBulkPricingModal({...bulkPricingModal, tier: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
+                  <option value="">Select Tier...</option>
+                  {customerCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment (%)</label>
+                <input required type="number" step="0.01" value={bulkPricingModal.percentage} onChange={e=>setBulkPricingModal({...bulkPricingModal, percentage: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="e.g. 10 (add) or -5 (deduct)" />
+                <span className="text-[9px] font-medium text-slate-400 mt-1">Calculated from General Selling Price</span>
+              </div>
+              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Apply to All Products</button>
             </form>
           </div>
         </div>
