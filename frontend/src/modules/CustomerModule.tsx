@@ -379,7 +379,7 @@ useEffect(() => {
                   {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
-            <div className="flex shrink-0">
+            <div className="hidden md:flex shrink-0">
                 <button 
                   onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })}
                   className="w-full sm:w-auto px-5 py-3 bg-indigo-600 text-white font-bold uppercase tracking-wider text-xs rounded-xl shadow-sm hover:bg-indigo-700 transition-colors"
