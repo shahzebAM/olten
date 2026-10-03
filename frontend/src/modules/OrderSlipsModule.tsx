@@ -86,7 +86,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
           const prefix = lastFo.osNumber.substring(0, match.index);
-          const padding = match[0].length;
+          const padding = Math.max(match[0].length, 6);
           setFoNumberInput(`${prefix}${String(nextNum).padStart(padding, '0')}`);
         } else {
           setFoNumberInput('FO-000001');
@@ -321,7 +321,14 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                 {/* NEW FO GENERATION WITH THICK TEAL STYLING */}
                 {viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned' && (
                   <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
-                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())}
+                    onBlur={() => {
+    // Auto-formats a typed number like "500" into "FO-000500"
+    if (/^\d+$/.test(foNumberInput.trim())) {
+      setFoNumberInput(`FO-${foNumberInput.trim().padStart(6, '0')}`);
+    }
+  }}
+                    className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
                     <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFo ? 'Gen...' : 'Gen Final Order'}
                     </button>
