@@ -94,8 +94,10 @@ export class DocumentService {
   }
 
   // --- SAVE REMINDERS TO DATABASE ---
+// --- SAVE REMINDERS TO DATABASE ---
   async saveReminders(reminders: any[], company: string) {
-    const savedReminders = [];
+    // FIX: Added ": any[]" so TypeScript knows this array can hold data
+    const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
       const docId = Number(rem.id);
@@ -111,7 +113,7 @@ export class DocumentService {
           reminderDays: Number(rem.reminderDays) || 30
         }
       });
-      savedReminders.push(saved);
+      savedReminders.push(saved); // The red line here will now be gone!
     }
     
     return { success: true, count: savedReminders.length };
