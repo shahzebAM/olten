@@ -50,6 +50,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   
+  // --- EXPIRY REMINDER STATES ---
+  const [reminderModalOpen, setReminderModalOpen] = useState(false);
+  const [uploadedRecentFiles, setUploadedRecentFiles] = useState<{id: string, name: string, expiryDate?: string, reminderDays: string}[]>([]);
+  const [isAnalyzingExpiry, setIsAnalyzingExpiry] = useState(false);
+  const [isSavingReminders, setIsSavingReminders] = useState(false);
+
   // --- MULTI-SELECT STATE ---
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
@@ -211,12 +217,17 @@ useEffect(() => {
 
   // --- API: UPLOAD FILE ---
 // --- API: UPLOAD FILE(S) ---
+// --- API: UPLOAD FILE(S) ---
+// --- API: UPLOAD FILE(S) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
     
     setIsUploading(true);
     let successCount = 0;
+    
+    // 1. This creates the array to fix the error
+    const newlyUploaded: {id: string, name: string, expiryDate?: string, reminderDays: string}[] = [];
     
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i];
@@ -234,7 +245,11 @@ useEffect(() => {
           headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
           body: formData,
         });
-        if (res.ok) successCount++;
+        if (res.ok) {
+          successCount++;
+          // Push to the array during the loop
+          newlyUploaded.push({ id: `temp-${Date.now()}-${i}`, name: file.name, reminderDays: '30' });
+        }
       } catch (err: any) {
         console.error(`Failed to upload ${file.name}`, err);
       }
@@ -244,6 +259,12 @@ useEffect(() => {
       showToast(`Successfully uploaded ${successCount} document(s)`, 'success');
       if (activeFolderId) setExpandedFolders(prev => new Set(prev).add(activeFolderId));
       fetchDirectory(true);
+      
+      // 2. Trigger the reminder workflow without errors
+      setUploadedRecentFiles(newlyUploaded);
+      setReminderModalOpen(true);
+      analyzeExpiryDatesWithGemini(newlyUploaded);
+
     } else {
       showToast('Upload failed for all selected files.', 'error');
     }
@@ -251,6 +272,53 @@ useEffect(() => {
     setIsUploading(false);
     setUploadProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // --- API: GEMINI EXPIRY ANALYSIS ---
+  const analyzeExpiryDatesWithGemini = async (filesToAnalyze: {id: string, name: string}[]) => {
+    setIsAnalyzingExpiry(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+        body: JSON.stringify({ fileIds: filesToAnalyze.map(f => f.id) })
+      });
+      
+      if (res.ok) {
+        const aiResults = await res.json(); 
+        
+        setUploadedRecentFiles(prev => prev.map(file => ({
+          ...file,
+          expiryDate: aiResults[file.id] || ''
+        })));
+      }
+    } catch (err) {
+      console.error("Failed to analyze expiry dates", err);
+    } finally {
+      setIsAnalyzingExpiry(false);
+    }
+  };
+
+  // --- API: SAVE REMINDERS ---
+  const handleSaveReminders = async () => {
+    setIsSavingReminders(true);
+    try {
+      const validReminders = uploadedRecentFiles.filter(f => f.expiryDate);
+      
+      if (validReminders.length > 0) {
+        await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+          body: JSON.stringify({ reminders: validReminders })
+        });
+        showToast('Reminders scheduled successfully', 'success');
+      }
+      setReminderModalOpen(false);
+    } catch (err) {
+      showToast('Failed to save reminders', 'error');
+    } finally {
+      setIsSavingReminders(false);
+    }
   };
 
   // --- API: CREATE FOLDER ---
@@ -836,6 +904,88 @@ useEffect(() => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Expiry Reminder Modal */}
+      {reminderModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl flex flex-col max-h-[80vh]">
+            
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
+                {isAnalyzingExpiry ? (
+                  <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                )}
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-800 tracking-tight leading-tight">Document Expiry Reminders</h3>
+                <p className="text-[11px] font-bold text-slate-400 mt-0.5">
+                  {isAnalyzingExpiry ? 'Gemini is scanning your documents for expiry dates...' : 'Review Gemini\'s findings and set your reminders.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto pr-2 space-y-3 mb-4 flex-1 min-h-0">
+              {uploadedRecentFiles.map((file, idx) => (
+                <div key={file.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <p className="text-xs font-bold text-slate-700 truncate mb-3">{file.name}</p>
+                  
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Expiry Date</label>
+                      <input 
+                        type="date" 
+                        value={file.expiryDate || ''}
+                        onChange={(e) => {
+                          const newFiles = [...uploadedRecentFiles];
+                          newFiles[idx].expiryDate = e.target.value;
+                          setUploadedRecentFiles(newFiles);
+                        }}
+                        disabled={isAnalyzingExpiry}
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-500 disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Remind me (Days Before)</label>
+                      <input 
+                        type="number" 
+                        min="1"
+                        value={file.reminderDays}
+                        onChange={(e) => {
+                          const newFiles = [...uploadedRecentFiles];
+                          newFiles[idx].reminderDays = e.target.value;
+                          setUploadedRecentFiles(newFiles);
+                        }}
+                        disabled={isAnalyzingExpiry}
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-500 disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 shrink-0">
+              <button 
+                type="button" 
+                onClick={() => setReminderModalOpen(false)} 
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50"
+              >
+                Skip Reminders
+              </button>
+              <button 
+                onClick={handleSaveReminders}
+                disabled={isAnalyzingExpiry || isSavingReminders} 
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white text-xs font-bold shadow-sm flex items-center gap-2"
+              >
+                {isSavingReminders ? 'Saving...' : 'Save Reminders'}
+              </button>
+            </div>
+            
           </div>
         </div>
       )}
