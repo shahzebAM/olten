@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 // --- INTERFACES ---
-interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number; sellingPrice: number; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
+interface Product { id: number; company: string; name: string; sku: string; category: string; purchasePrice: number; sellingPrice: number; categoryPrices?: Record<string, number>; minQuantity: number; reorderLevel: number; unit: string; isActive: boolean; vatSetting: string; imageUrl: string; barcode: string; currentStock: number; createdAt: string; deletedAt: string | null; }
 interface Movement { id: string; productId: number; productName: string; sku: string; type: 'RECEIVE' | 'ISSUE' | 'ADJUST' | 'RETURN' | 'TRANSFER' | 'DELETE'; quantity: number; previousStock: number; newStock: number; reference: string; remarks: string; date: string; user: string; warehouseId?: string; batchNumber?: string | null; expirationDate?: string | null; warehouse?: { id: number; name: string; }; }
 interface Warehouse { id: string; name: string; address: string; status: string; }
 interface WarehouseStock { id: string; warehouseId: string; productId: number; sku: string; quantity: number; }
+interface CustomerCategory { id: string; name: string; }
 
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
@@ -20,7 +21,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [movements, setMovements] = useState<Movement[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [hubStock, setHubStock] = useState<WarehouseStock[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]); // New state for POs
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [customerCategories, setCustomerCategories] = useState<CustomerCategory[]>([]);
   
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -29,11 +31,11 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // --- HUB & CATEGORY FILTER STATES ---
+  // --- FILTERS ---
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
   const [warehouseSearchQuery, setWarehouseSearchQuery] = useState('');
-  
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
+  const [selectedPricingTierFilter, setSelectedPricingTierFilter] = useState<string>('ALL');
   const uniqueCategories = Array.from(new Set(products.map(p => p.category))).sort();
 
   // --- MODAL CONTROLLERS ---
@@ -49,7 +51,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [placementPo, setPlacementPo] = useState<any>(null);
   const [placementDestinations, setPlacementDestinations] = useState<Record<string, string>>({});
 
-  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
+  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: 0, sellingPrice: 0, categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
@@ -84,24 +86,53 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     });
   };
 
-  const fetchAllData = async () => {
+  const fetchAllData = useCallback(async () => {
     try {
-      const [prodRes, movRes, whRes, stkRes, poRes] = await Promise.all([
+      const [prodRes, movRes, whRes, stkRes, poRes, catRes] = await Promise.all([
         fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/inventory-movements?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`),
         fetch(`${API_BASE_URL}/warehouse-stock?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${selectedCompany}`),
+        fetch(`${API_BASE_URL}/sales/customer-categories?company=${selectedCompany}`)
       ]);
-      if (prodRes.ok) { const p = await prodRes.json(); updateImageVault(p); setProducts(p); }
+      
+      let productsList: Product[] = [];
+      if (prodRes.ok) { 
+        productsList = await prodRes.json(); 
+        updateImageVault(productsList); 
+        setProducts(productsList); 
+      }
       if (movRes.ok) setMovements(await movRes.json());
       if (whRes.ok) setWarehouses(await whRes.json());
       if (stkRes.ok) setHubStock(await stkRes.json());
       if (poRes.ok) setPurchaseOrders(await poRes.json());
+      
+      if (catRes.ok) {
+        const categories = await catRes.json();
+        setCustomerCategories(categories);
+        
+        try {
+            const pricesRes = await fetch(`${API_BASE_URL}/sales/category-prices/all?company=${selectedCompany}`);
+            if (pricesRes.ok) {
+                const pricesData = await pricesRes.json();
+                const priceMap: Record<number, Record<string, number>> = {};
+                pricesData.forEach((p: any) => {
+                    if (!priceMap[p.productId]) priceMap[p.productId] = {};
+                    priceMap[p.productId][p.categoryName] = p.price;
+                });
+                
+                setProducts(productsList.map(prod => ({
+                    ...prod,
+                    categoryPrices: priceMap[prod.id] || {}
+                })));
+            }
+        } catch(e) {}
+      }
     } catch (e) { console.error("API Error", e); }
-  };
+  }, [API_BASE_URL, selectedCompany]);
 
-  useEffect(() => { fetchAllData(); }, [selectedCompany]);
+  useEffect(() => { fetchAllData(); }, [fetchAllData]);
 
   const pendingReceivables = purchaseOrders.filter(po => po.status === 'Received' || po.status === 'Partially Received');
 
@@ -130,7 +161,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
            delete deletedImageVault[prod.sku];
         }
       });
-      
     } catch (e) {
       showToast("Failed to delete some products. They may be locked.", "error");
     } finally {
@@ -185,7 +215,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-          // Only update imageUrl, do not touch previousImageUrl here
           setProductForm((prev: any) => ({ ...prev, imageUrl: compressedBase64 }));
         }
       };
@@ -215,11 +244,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     const tempId = productModal.editingId || Date.now();
     setProducts((prev: Product[]) => {
-      if (productModal.editingId) return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload } as Product : p);
-      return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0 } as Product, ...prev];
+      if (productModal.editingId) return prev.map(p => p.id === tempId ? { ...p, ...cleanPayload, categoryPrices: productForm.categoryPrices } as Product : p);
+      return [{ ...cleanPayload, id: tempId, currentStock: cleanPayload.initialQuantity || 0, categoryPrices: productForm.categoryPrices } as Product, ...prev];
     });
 
     if (cleanPayload.sku && cleanPayload.imageUrl) globalImageVault[cleanPayload.sku] = cleanPayload.imageUrl;
+
+    const pricesToSave = productForm.categoryPrices || {};
 
     setProductModal({ isOpen: false, editingId: null });
     setProductForm(initialProductForm);
@@ -230,6 +261,21 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { method: productModal.editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanPayload) });
         if (!res.ok) throw new Error(`Server rejected request (${res.status})`);
+        
+        const resData = await res.json();
+        const finalProductId = productModal.editingId || resData.id;
+        
+        if (Object.keys(pricesToSave).length > 0) {
+            const catPricePromises = Object.entries(pricesToSave).map(([catName, price]) => {
+                 return fetch(`${API_BASE_URL}/sales/category-prices`, {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ company: selectedCompany, categoryName: catName, productId: finalProductId, price: Number(price) })
+                 });
+            });
+            await Promise.all(catPricePromises);
+        }
+        
         fetchAllData(); 
       } catch (error: any) { 
         showToast(`Sync Error: ${error.message}`, "error"); fetchAllData(); 
@@ -379,21 +425,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } catch (e) { showToast("Transfer failed.", "error"); fetchAllData(); } finally { setIsProcessing(false); }
   };
 
-  const handleEditWarehouseStock = async (warehouseId: string, product: Product, currentQty: number) => {
-    const input = window.prompt(`Adjust stock for [${product.sku}] ${product.name}\nCurrent quantity: ${currentQty}\n\nEnter the NEW TOTAL quantity for this facility:`, String(currentQty));
-    if (input === null || input.trim() === '') return;
-    const newQty = Number(input);
-    if (isNaN(newQty) || newQty < 0) return showToast("Enter a valid positive number or 0.", "error");
-    const delta = newQty - currentQty;
-    if (delta === 0) return;
-    await processDirectWarehouseAdjustment(warehouseId, product, delta, 'Inline Stock Revision');
-  };
-
-  const handleDeleteWarehouseStock = async (warehouseId: string, product: Product, currentQty: number) => {
-    if (!window.confirm(`Remove all ${currentQty} units of [${product.sku}] from this facility?`)) return;
-    await processDirectWarehouseAdjustment(warehouseId, product, -currentQty, 'Inline Stock Deletion');
-  };
-
   const handleWarehouseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -409,16 +440,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         fetchAllData();
       }
     } catch (e) { showToast("Failed to process warehouse.", "error"); } finally { setIsProcessing(false); }
-  };
-
-  const handleWarehouseDelete = async (id: string) => {
-    if (!window.confirm("Permanently delete this warehouse? All stock will be wiped.")) return;
-    setIsProcessing(true);
-    try {
-      await fetch(`${API_BASE_URL}/warehouses/${id}`, { method: 'DELETE' });
-      showToast("Warehouse and internal stocks deleted.", "success");
-      fetchAllData();
-    } catch (e) { showToast("Failed to delete warehouse.", "error"); } finally { setIsProcessing(false); }
   };
 
   const executeTransaction = async (e: React.FormEvent) => {
@@ -527,8 +548,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesPricingTier = selectedPricingTierFilter === 'ALL' || true; // Pricing view changes table output, does not hide items
+    return matchesSearch && matchesCategory && matchesPricingTier;
   });
+
+  const filteredProductsForDropdown = products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()));
+  const filteredProductsForHubDropdown = products.filter(p => p.name.toLowerCase().includes(hubTransferSearch.toLowerCase()) || p.sku.toLowerCase().includes(hubTransferSearch.toLowerCase()));
 
   const filteredMovements = movements.filter(m => {
     let keep = true;
@@ -610,9 +635,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           
           {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in duration-300">
+            <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-300">
               
-           <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex flex-1 flex-col xl:flex-row gap-3">
                   <div className="relative w-full xl:w-80">
                     <input 
@@ -630,9 +655,21 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     onChange={(e) => setSelectedCategoryFilter(e.target.value)} 
                     className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer text-slate-700 w-full xl:w-48 appearance-none"
                   >
-                    <option value="ALL">All Categories</option>
+                    <option value="ALL">All Prod Categories</option>
                     {uniqueCategories.map(cat => (
                       <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+
+                  {/* CUSTOMER PRICING TIER FILTER DROPDOWN */}
+                  <select 
+                    value={selectedPricingTierFilter} 
+                    onChange={(e) => setSelectedPricingTierFilter(e.target.value)} 
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer text-slate-700 w-full xl:w-48 appearance-none"
+                  >
+                    <option value="ALL">General Pricing Tier</option>
+                    {customerCategories.map(cat => (
+                      <option key={cat.id} value={cat.name}>Tier: {cat.name}</option>
                     ))}
                   </select>
 
@@ -672,101 +709,103 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               {/* EXCEL-STYLE TABLE */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
                 <div className="overflow-x-auto w-full relative">
-                  <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1000px]">
+                  <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1200px]">
                     <thead className="bg-white border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4 w-12 text-center border-b border-slate-200">
                           <input type="checkbox" checked={selectedProductIds.length === filteredProducts.length && filteredProducts.length > 0} onChange={() => toggleSelectAll(filteredProducts)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
                         </th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[35%] border-b border-slate-200">SKU / Item</th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">Category</th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">Pricing</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[30%] border-b border-slate-200">SKU / Item</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[12%] border-b border-slate-200">Category</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] w-[15%] border-b border-slate-200">
+                          {selectedPricingTierFilter === 'ALL' ? 'General Pricing' : `Tier: ${selectedPricingTierFilter}`}
+                        </th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">Master Stock</th>
                         <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[10%] border-b border-slate-200">
                           {selectedHubFilter === 'ALL' ? 'Hub Stock (All)' : `Hub Stock`}
                         </th>
-                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[15%] border-b border-slate-200">Settings</th>
+                        <th className="py-3 px-4 font-black text-slate-500 uppercase tracking-widest text-[9px] text-center w-[20%] border-b border-slate-200">Settings</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {filteredProducts.length === 0 ? (
                         <tr><td colSpan={7} className="py-12 text-center text-slate-400 font-medium">No items found matching your filters.</td></tr>
                       ) : (
-                        filteredProducts.map(p => (
-                          <tr key={p.id} className={`hover:bg-slate-50 transition-colors group ${selectedProductIds.includes(p.id) ? 'bg-blue-50/20' : ''}`}>
+                        filteredProducts.map(p => {
+                          const displayPrice = selectedPricingTierFilter === 'ALL' 
+                            ? Number(p.sellingPrice) 
+                            : Number(p.categoryPrices?.[selectedPricingTierFilter] || p.sellingPrice);
                             
-                            <td className="py-2.5 px-4 text-center align-middle">
-                              <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle">
-                              <div className="flex items-center gap-3">
-                                {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
-                                  <img src={p.imageUrl} alt={p.name} className="w-9 h-9 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
-                                ) : (
-                                  <div className="w-9 h-9 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[7px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
-                                )}
-                                <div className="min-w-0">
-                                  <div className="font-bold text-[11px] text-slate-900 uppercase leading-tight truncate">{p.name}</div>
-                                  <div className="font-mono text-[9px] text-slate-400 uppercase mt-0.5 truncate">{p.sku}</div>
+                          return (
+                            <tr key={p.id} className={`hover:bg-slate-50 transition-colors group ${selectedProductIds.includes(p.id) ? 'bg-blue-50/20' : ''}`}>
+                              <td className="py-2.5 px-4 text-center align-middle">
+                                <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleSelection(p.id)} className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer" />
+                              </td>
+                              <td className="py-2.5 px-4 align-middle">
+                                <div className="flex items-center gap-3">
+                                  {p.imageUrl && typeof p.imageUrl === 'string' && p.imageUrl.length > 0 ? (
+                                    <img src={p.imageUrl} alt={p.name} className="w-9 h-9 rounded-lg object-cover border border-slate-200 cursor-pointer shadow-sm shrink-0" onClick={() => setPreviewImage(p.imageUrl || '')} />
+                                  ) : (
+                                    <div className="w-9 h-9 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[7px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-[11px] text-slate-900 uppercase leading-tight truncate">{p.name}</div>
+                                    <div className="font-mono text-[9px] text-slate-400 uppercase mt-0.5 truncate">{p.sku}</div>
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle text-[10px] font-bold text-slate-600 uppercase truncate">
-                              <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle">
-                              <div className="font-mono text-[11px] font-black text-slate-900">₱{Number(p.sellingPrice).toFixed(2)}</div>
-                              <div className="font-mono text-[9px] text-slate-400">Cost: ₱{Number(p.purchasePrice).toFixed(2)}</div>
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle text-center">
-                              <div className={`font-mono text-sm font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-slate-700'}`}>{p.currentStock} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle text-center">
-                              {(() => {
-                                const filteredHubList = hubStock.filter(h => {
-                                  const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
-                                  if (!isMatch) return false;
-                                  if (selectedHubFilter === 'ALL') return warehouses.some(w => String(w.id) === String(h.warehouseId));
-                                  return String(h.warehouseId) === String(selectedHubFilter);
-                                });
-                                const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
-                                return <div className="font-mono text-sm font-black text-slate-700">{displayQty} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>;
-                              })()}
-                            </td>
-                            
-                            <td className="py-2.5 px-4 align-middle text-center">
-                             <div className="flex items-center justify-center gap-1">
-                                <button onClick={() => openTx([p], 'RECEIVE')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Receive into Master Stock">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
-                                </button>
-                                <button onClick={() => openTx([p], 'RETURN')} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Return to Warehouse Hub">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
-                                </button>
-                                <button onClick={() => openTx([p], 'ISSUE')} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Issue to External Client">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
-                                </button>
-                                <button onClick={() => openTx([p], 'ADJUST')} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Adjust Physical Master Stock">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                </button>
-                                <div className="w-px h-4 bg-slate-200 mx-1"></div>
-                                <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '' }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                </button>
-                                {isAuthorizedAdmin && (
-                                  <button onClick={() => handleDeleteProducts([p.id])} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors ml-0.5" title="Permanently Delete Item">
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                              </td>
+                              <td className="py-2.5 px-4 align-middle text-[10px] font-bold text-slate-600 uppercase truncate">
+                                <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{p.category}</span>
+                              </td>
+                              <td className="py-2.5 px-4 align-middle">
+                                <div className={`font-mono text-[11px] font-black ${selectedPricingTierFilter !== 'ALL' && p.categoryPrices?.[selectedPricingTierFilter] ? 'text-amber-600' : 'text-slate-900'}`}>
+                                  ₱{displayPrice.toFixed(2)}
+                                </div>
+                                <div className="font-mono text-[9px] text-slate-400">Cost: ₱{Number(p.purchasePrice).toFixed(2)}</div>
+                              </td>
+                              <td className="py-2.5 px-4 align-middle text-center">
+                                <div className={`font-mono text-sm font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-slate-700'}`}>{p.currentStock} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>
+                              </td>
+                              <td className="py-2.5 px-4 align-middle text-center">
+                                {(() => {
+                                  const filteredHubList = hubStock.filter(h => {
+                                    const isMatch = (String(h.productId) === String(p.id) || String(h.sku) === String(p.sku));
+                                    if (!isMatch) return false;
+                                    if (selectedHubFilter === 'ALL') return warehouses.some(w => String(w.id) === String(h.warehouseId));
+                                    return String(h.warehouseId) === String(selectedHubFilter);
+                                  });
+                                  const displayQty = filteredHubList.reduce((acc, val) => acc + val.quantity, 0);
+                                  return <div className="font-mono text-sm font-black text-slate-700">{displayQty} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>;
+                                })()}
+                              </td>
+                              <td className="py-2.5 px-4 align-middle text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button onClick={() => openTx([p], 'RECEIVE')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Receive into Master Stock">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
                                   </button>
-                                )}
-                              </div>
-                            </td>
-                            
-                          </tr>
-                        ))
+                                  <button onClick={() => openTx([p], 'RETURN')} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Return to Warehouse Hub">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                                  </button>
+                                  <button onClick={() => openTx([p], 'ISSUE')} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors" title="Issue to External Client">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
+                                  </button>
+                                  <button onClick={() => openTx([p], 'ADJUST')} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Adjust Physical Master Stock">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                  </button>
+                                  <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                                  <button onClick={() => { setProductForm({ ...p, previousImageUrl: deletedImageVault[p.sku] || globalImageVault[p.sku] || '', categoryPrices: p.categoryPrices || {} }); setProductModal({ isOpen: true, editingId: p.id }); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Product Specs">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                  </button>
+                                  {isAuthorizedAdmin && (
+                                    <button onClick={() => handleDeleteProducts([p.id])} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors ml-0.5" title="Permanently Delete Item">
+                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -1066,7 +1105,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                       </>
-                  ) : (
+                    ) : (
                       <div className="flex flex-col items-center gap-2 shrink-0">
                         <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 border-dashed flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase text-center">No Img</div>
                         {deletedImageVault[productForm.sku] && (
@@ -1100,11 +1139,45 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.purchasePrice} onChange={e=>setProductForm((prev: any) => ({...prev, purchasePrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Selling Price (General Tier)</label><div className="relative"><span className="absolute left-4 top-3 text-slate-400 font-bold">₱</span><input required type="number" step="0.01" value={productForm.sellingPrice} onChange={e=>setProductForm((prev: any) => ({...prev, sellingPrice: parseFloat(e.target.value)}))} className="w-full pl-8 pr-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div></div>
+                
+                {/* DYNAMIC CATEGORY PRICING UI */}
+                {customerCategories.length > 0 && (
+                  <div className="md:col-span-2 mt-2">
+                     <h3 className="font-black text-slate-900 uppercase text-xs tracking-tight mb-3">Customer Category Pricing Overrides</h3>
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                       {customerCategories.map(cat => (
+                          <div key={cat.id} className="flex flex-col gap-1.5 p-3 bg-white border border-slate-200 rounded-xl shadow-sm">
+                            <label className="text-[10px] font-bold uppercase text-amber-600 tracking-wider">{cat.name} Tier Price</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">₱</span>
+                              <input 
+                                type="number" 
+                                step="0.01" 
+                                placeholder="Uses General Price..."
+                                value={productForm.categoryPrices?.[cat.name] || ''} 
+                                onChange={e => {
+                                  const val = e.target.value ? parseFloat(e.target.value) : undefined;
+                                  setProductForm((prev: any) => ({
+                                    ...prev,
+                                    categoryPrices: {
+                                      ...prev.categoryPrices,
+                                      [cat.name]: val
+                                    }
+                                  }));
+                                }} 
+                                className="w-full pl-7 pr-3 py-2 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" 
+                              />
+                            </div>
+                          </div>
+                       ))}
+                     </div>
+                  </div>
+                )}
               </div>
               
               {!productModal.editingId && (
-                <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm mt-2">
                   <h3 className="font-black text-slate-900 uppercase mb-5 tracking-tight">Initial Master / Office Audit (Optional)</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                     <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Starting Qty</label><input type="number" value={productForm.initialQuantity} onChange={e=>setProductForm((prev: any) => ({...prev, initialQuantity: parseInt(e.target.value) || 0}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 bg-emerald-50 text-emerald-900" /></div>
@@ -1155,78 +1228,102 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
+      {/* ADJUST HUB STOCK MODAL */}
       {activeWarehouseModal === 'ADJUST' && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-500 text-white">
-              <h2 className="text-xl font-black uppercase tracking-tight">Adjust Hub Stock</h2>
-              <button onClick={() => { setActiveWarehouseModal(null); setDirectStockForm({ warehouseId: '', productId: '', quantity: '' }); }} className="p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50">
+              <h2 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Adjust Hub Stock</h2>
+              <button onClick={() => { setActiveWarehouseModal(null); setDirectStockForm({ warehouseId: '', productId: '', quantity: '' }); setProductSearchTerm(''); }} className="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-full transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={handleDirectStockSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+            <form onSubmit={handleDirectStockSubmit} className="p-8 flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target Warehouse</label>
-                <select required value={directStockForm.warehouseId} onChange={e => setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white cursor-pointer">
-                  <option value="">Select Warehouse...</option>
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Select Warehouse</label>
+                <select required value={directStockForm.warehouseId} onChange={e=>setDirectStockForm({...directStockForm, warehouseId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer bg-white">
+                  <option value="">Choose facility...</option>
                   {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Product</label>
-                <select required value={directStockForm.productId} onChange={e => setDirectStockForm({...directStockForm, productId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white cursor-pointer">
-                   <option value="">Select Product...</option>
-                   {products.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name}</option>)}
-                </select>
+              <div className="flex flex-col gap-1.5 relative">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
+                <input type="text" placeholder="Search SKU or Name..." value={productSearchTerm} onChange={e => { setProductSearchTerm(e.target.value); setIsProductDropdownOpen(true); }} onClick={() => setIsProductDropdownOpen(true)} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                {isProductDropdownOpen && productSearchTerm && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-10">
+                    {filteredProductsForDropdown.length === 0 ? (
+                      <div className="p-3 text-xs text-slate-400 font-medium">No items found.</div>
+                    ) : (
+                      filteredProductsForDropdown.map(p => (
+                        <div key={p.id} onClick={() => { setDirectStockForm({...directStockForm, productId: String(p.id)}); setProductSearchTerm(`${p.sku} - ${p.name}`); setIsProductDropdownOpen(false); }} className="p-3 hover:bg-indigo-50 cursor-pointer border-b border-slate-50 last:border-0 flex justify-between items-center transition-colors">
+                          <div className="font-bold text-xs text-slate-800 uppercase">{p.name}</div>
+                          <div className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{p.sku}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment Quantity (+/-)</label>
-                <input required type="number" placeholder="e.g. 5 (add) or -2 (deduct)" value={directStockForm.quantity} onChange={e => setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Adjustment Quantity (Use - for negative)</label>
+                <input required type="number" value={directStockForm.quantity} onChange={e=>setDirectStockForm({...directStockForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="e.g. 50 or -10" />
               </div>
-              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
+              <button type="submit" disabled={isProcessing || !directStockForm.productId} className="mt-4 w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">Apply Adjustment</button>
             </form>
           </div>
         </div>
       )}
 
+      {/* TRANSFER BETWEEN HUBS MODAL */}
       {activeWarehouseModal === 'TRANSFER' && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-500 text-white">
-              <h2 className="text-xl font-black uppercase tracking-tight">Hub-to-Hub Transfer</h2>
-              <button onClick={() => { setActiveWarehouseModal(null); setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' }); }} className="p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50">
+              <h2 className="text-xl font-black text-amber-900 uppercase tracking-tight">Inter-Hub Transfer</h2>
+              <button onClick={() => { setActiveWarehouseModal(null); setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' }); setHubTransferSearch(''); }} className="p-2 text-amber-400 hover:text-amber-600 hover:bg-amber-100 rounded-full transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={handleHubTransferSubmit} className="p-8 flex flex-col gap-5 bg-slate-50">
+            <form onSubmit={handleHubTransferSubmit} className="p-8 flex flex-col gap-5">
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Source Hub</label>
-                  <select required value={hubTransferForm.sourceId} onChange={e => setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Source (From)</label>
+                  <select required value={hubTransferForm.sourceId} onChange={e=>setHubTransferForm({...hubTransferForm, sourceId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
                     <option value="">Select...</option>
-                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.destId === String(w.id)}>{w.name}</option>)}
+                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={w.id === hubTransferForm.destId}>{w.name}</option>)}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Destination Hub</label>
-                  <select required value={hubTransferForm.destId} onChange={e => setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
+                  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Destination (To)</label>
+                  <select required value={hubTransferForm.destId} onChange={e=>setHubTransferForm({...hubTransferForm, destId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm cursor-pointer bg-white">
                     <option value="">Select...</option>
-                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={hubTransferForm.sourceId === String(w.id)}>{w.name}</option>)}
+                    {warehouses.map(w => <option key={w.id} value={w.id} disabled={w.id === hubTransferForm.sourceId}>{w.name}</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Product</label>
-                <select required value={hubTransferForm.productId} onChange={e => setHubTransferForm({...hubTransferForm, productId: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm bg-white cursor-pointer">
-                   <option value="">Select Product...</option>
-                   {products.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name}</option>)}
-                </select>
+              <div className="flex flex-col gap-1.5 relative">
+                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Product</label>
+                <input type="text" placeholder="Search SKU or Name..." value={hubTransferSearch} onChange={e => { setHubTransferSearch(e.target.value); setIsHubDropdownOpen(true); }} onClick={() => setIsHubDropdownOpen(true)} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" />
+                {isHubDropdownOpen && hubTransferSearch && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-10">
+                    {filteredProductsForHubDropdown.length === 0 ? (
+                      <div className="p-3 text-xs text-slate-400 font-medium">No items found.</div>
+                    ) : (
+                      filteredProductsForHubDropdown.map(p => (
+                        <div key={p.id} onClick={() => { setHubTransferForm({...hubTransferForm, productId: String(p.id)}); setHubTransferSearch(`${p.sku} - ${p.name}`); setIsHubDropdownOpen(false); }} className="p-3 hover:bg-amber-50 cursor-pointer border-b border-slate-50 last:border-0 flex justify-between items-center transition-colors">
+                          <div className="font-bold text-xs text-slate-800 uppercase">{p.name}</div>
+                          <div className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{p.sku}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Transfer Quantity</label>
-                <input required type="number" min="1" placeholder="e.g. 10" value={hubTransferForm.quantity} onChange={e => setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" />
+                <input required type="number" min="1" value={hubTransferForm.quantity} onChange={e=>setHubTransferForm({...hubTransferForm, quantity: e.target.value})} className="px-4 py-3 border border-slate-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-amber-500 shadow-sm" placeholder="Positive numbers only..." />
               </div>
-              <button type="submit" disabled={isProcessing} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Execute Transfer</button>
+              <button type="submit" disabled={isProcessing || !hubTransferForm.productId} className="mt-4 w-full py-3.5 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-50">Transfer Stock</button>
             </form>
           </div>
         </div>
