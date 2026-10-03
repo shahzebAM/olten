@@ -930,11 +930,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
                          </div>
                          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                            <div className="flex flex-col gap-1.5">
+                            <div className="flex flex-col gap-1.5 w-48 shrink-0">
                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry Date</label>
                                <input 
-                                 type="date" 
-                                 value={file.expiryDate} 
+                                 type="text" 
+                                 placeholder="e.g. January 28, 2026"
+                                 value={file.expiryDate || ''} 
                                  onChange={(e) => {
                                     const newFiles = [...expiryReviewModal.files];
                                     newFiles[index].expiryDate = e.target.value;
