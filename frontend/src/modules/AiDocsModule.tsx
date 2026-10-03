@@ -257,28 +257,35 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        return showToast("Failed to upload files.", "error");
     }
 
-    // 2. Open Modal & Trigger Gemini AI Expiry Analysis
+   // 2. Open Modal & Trigger Gemini AI Expiry Analysis
     setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: [] });
     setIsProcessing(false);
     fetchDirectory(true); // Fast refresh background tree
 
     try {
-       const fileIds = uploadedDocs.map((d: any) => d.id);
+       // FIX: Use the actual database ID created during upload for the backend check
+       const dbFileIds = uploadedDocs.map((d: any) => d.id);
+       
        const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-          body: JSON.stringify({ fileIds })
+          body: JSON.stringify({ fileIds: dbFileIds })
        });
+       
        const expiryData = await analysisRes.json();
 
-     // 3. Populate Modal with AI Results
-       const reviewFiles = uploadedDocs.map((doc: any) => ({
-          id: doc.id,
-          name: doc.originalName || doc.filename || 'Document',
-          // Force it to grab the string from the AI, or default to an empty string
-          expiryDate: expiryData[doc.id] || '', 
-          reminderDays: 30 
-       }));
+       // 3. Populate Modal with AI Results
+       const reviewFiles = uploadedDocs.map((doc: any) => {
+          // Double check the expiry data using BOTH possible ID formats just to be safe
+          const foundExpiry = expiryData[doc.id] || expiryData[String(doc.id)] || '';
+          
+          return {
+            id: doc.id, // Keep the correct DB ID for saving later
+            name: doc.originalName || doc.filename || 'Document',
+            expiryDate: foundExpiry, 
+            reminderDays: 30 
+          };
+       });
 
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
     } catch (err) {
