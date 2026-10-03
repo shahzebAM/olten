@@ -10,10 +10,11 @@ export class SalesController {
   // CUSTOMER MANAGEMENT
   // ==========================================
 
-  @Get('customers')
+ @Get('customers')
   async getCustomers(
     @Query('company') company: string,
     @Query('search') search?: string,
+    @Query('category') category?: string,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10'
   ) {
@@ -23,7 +24,11 @@ export class SalesController {
     const limitNum = Math.max(1, parseInt(limit, 10) || 10);
     const skip = (pageNum - 1) * limitNum;
 
-    const whereClause: any = { company };
+   const whereClause: any = { company };
+    
+    if (category && category.trim() !== '') {
+      whereClause.category = category.trim();
+    }
 
     if (search && search.trim() !== '') {
       const searchTerm = search.trim();
