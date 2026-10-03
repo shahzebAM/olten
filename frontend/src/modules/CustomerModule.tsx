@@ -515,13 +515,13 @@ useEffect(() => {
                               <p className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-300 rounded-xl">No custom categories yet. "General" is used by default.</p>
                           ) : (
                               categories.map(cat => (
-                                  <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
-                                      <span className="font-bold text-slate-800 uppercase">{cat.name}</span>
-                                      <div className="flex gap-2">
-                                          <button onClick={() => openPricingEditor(cat.name)} className="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-amber-100 transition-colors">Edit Pricing</button>
-                                          <button onClick={() => handleDeleteCategory(cat.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-rose-100 transition-colors">Delete</button>
-                                      </div>
-                                  </div>
+                                 <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+          <span className="font-bold text-slate-800 uppercase">{cat.name}</span>
+          <div className="flex gap-2">
+              {/* Edit Pricing button removed - Pricing is now managed in Master Inventory */}
+              <button onClick={() => handleDeleteCategory(cat.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-rose-100 transition-colors">Delete</button>
+          </div>
+      </div>
                               ))
                           )}
                       </div>
