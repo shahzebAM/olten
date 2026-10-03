@@ -801,12 +801,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           </div>
         </header>
 
-        {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
-        <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden relative">
+       {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
+        <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden min-h-0">
           
-         {/* VIEW: PRODUCTS */}
+        {/* VIEW: PRODUCTS */}
           {activeView === 'products' && (
-            <div className="absolute inset-0 flex flex-col p-4 sm:p-6 space-y-4 animate-in fade-in duration-300">
+            <div className="flex flex-col flex-1 h-full w-full max-w-[1600px] mx-auto animate-in fade-in duration-300 p-4 sm:p-6 gap-4 min-h-0">
               
               <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                 <div className="flex flex-1 flex-col xl:flex-row gap-3">
@@ -871,8 +871,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               )}
 
               {/* STICKY SCROLLING TABLE CONTAINER */}
-              <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm relative min-h-0 overflow-hidden flex flex-col">
-                <div className="absolute inset-0 overflow-auto">
+              <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-0">
+                <div className="flex-1 overflow-auto w-full relative">
                   <table className="w-full text-left text-xs border-collapse table-fixed min-w-[1200px]">
                     <thead className="bg-slate-50 sticky top-0 z-20 shadow-sm border-b border-slate-200">
                       <tr>
