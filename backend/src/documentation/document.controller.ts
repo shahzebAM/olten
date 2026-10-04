@@ -61,10 +61,6 @@ export class DocumentController {
     return this.documentService.processNewDocument(file, company, username, targetFolderId);
   }
 
-  // --- NEW: ANALYZE EXPIRY DATES ---
-// --- NEW: ANALYZE EXPIRY DATES ---
-// --- NEW: ANALYZE EXPIRY DATES ---
-// --- NEW: ANALYZE EXPIRY DATES ---
   @Post('analyze-expiry')
   async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
     if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
