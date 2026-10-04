@@ -672,12 +672,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                </div>
             </div>
 
-            {/* MINI PROGRESS BAR FOR UPLOADS */}
+         {/* MINI PROGRESS BAR FOR UPLOADS */}
             {isUploading && uploadProgress && (
               <div className="flex flex-col gap-1.5 mt-1 mb-1">
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest text-center truncate">
-                  Uploading ({uploadProgress.current}/{uploadProgress.total}): {uploadProgress.filename}
-                </span>
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest truncate max-w-[75%]">
+                    Uploading ({uploadProgress.current}/{uploadProgress.total}): {uploadProgress.filename}
+                  </span>
+                  <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                    {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+                  </span>
+                </div>
                 <div className="w-full h-1.5 bg-indigo-100 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-indigo-500 transition-all duration-300" 
