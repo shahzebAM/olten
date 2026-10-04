@@ -304,15 +304,18 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        
        const expiryData = await analysisRes.json();
 
-       // 3. Populate Modal with AI Results
+      // 3. Populate Modal with AI Results
        const reviewFiles = uploadedDocs.map((doc: any) => {
-          // Double check the expiry data using BOTH possible ID formats just to be safe
           const foundExpiry = expiryData[doc.id] || expiryData[String(doc.id)] || '';
           
+          // FRONTEND SAFEGUARD: Force strip all text fluff so the HTML5 Date Input accepts it
+          const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
+          const finalDate = safeDateMatch ? safeDateMatch[0] : '';
+          
           return {
-            id: doc.id, // Keep the correct DB ID for saving later
+            id: doc.id, 
             name: doc.originalName || doc.filename || 'Document',
-            expiryDate: foundExpiry, 
+            expiryDate: finalDate, 
             reminderDays: 30 
           };
        });
