@@ -223,10 +223,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     
     setIsUploading(true);
     setIsProcessing(true);
-    const uploadedDocs = [];
+    const uploadedDocs: any[] = [];
 
     // 1. Upload files to Drive & Gemini
-// 1. Upload files to Drive & Gemini
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
        const uploadStart = Date.now();
@@ -282,8 +281,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setUploadProgress(null);
     setIsUploading(false);
 
-   // ... (Keep the upload loop as is) ...
-
     if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
@@ -307,9 +304,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
+  }; // <-- FIX: This closing brace was missing!
 
   // --- API: SAVE REMINDERS ---
-// --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
@@ -1057,4 +1054,4 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
     </div>
   );
-}}
+}
