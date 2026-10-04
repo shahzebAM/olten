@@ -33,7 +33,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string, progressPct: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string, progressPct: number, startTime: number } | null>(null);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -225,22 +225,25 @@ const [uploadProgress, setUploadProgress] = useState<{ current: number, total: n
     setIsProcessing(true);
     const uploadedDocs = [];
 
-// 1. Upload files to Drive & Gemini
+    // 1. Upload files to Drive & Gemini
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
        
+       // Record exactly when this file started uploading
+       const uploadStart = Date.now();
+       
        // Start progress at 0%
-       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0 });
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0, startTime: uploadStart });
        
        // SMART FAKE PROGRESS: Smoothly fill up to 90% while waiting for network
        const progressInterval = setInterval(() => {
            setUploadProgress(prev => {
                if (!prev) return prev;
-               const nextPct = prev.progressPct + (Math.random() * 15); // Randomly jump by up to 15%
-               return { ...prev, progressPct: Math.min(nextPct, 90) }; // Cap at 90% until done
+               const nextPct = prev.progressPct + (Math.random() * 15); 
+               return { ...prev, progressPct: Math.min(nextPct, 90) }; 
            });
        }, 400);
-       
+
        const formData = new FormData();
        formData.append('file', file);
        
@@ -261,7 +264,7 @@ const [uploadProgress, setUploadProgress] = useState<{ current: number, total: n
 
        // Upload finished! Clear the interval and snap satisfyingly to 100%
        clearInterval(progressInterval);
-       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100 });
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100, startTime: uploadStart });
        
        // Brief pause to let the user visually enjoy it hitting 100% before moving on
        await new Promise(resolve => setTimeout(resolve, 400));
@@ -690,13 +693,26 @@ const [uploadProgress, setUploadProgress] = useState<{ current: number, total: n
                </div>
             </div>
 
-{/* THICK FILLABLE PROGRESS BAR */}
+            {/* THICK FILLABLE PROGRESS BAR WITH ETA */}
             {isUploading && uploadProgress && (
               <div className="flex flex-col mt-2 mb-3 bg-white p-3.5 rounded-2xl border border-indigo-100 shadow-sm animate-in fade-in">
                 <div className="flex justify-between items-end mb-2 px-1">
                   <div className="flex flex-col min-w-0 pr-4">
-                    <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
+                    <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-2">
                       {uploadProgress.progressPct === 100 ? 'Finalizing...' : `Uploading (${uploadProgress.current}/${uploadProgress.total})`}
+                      
+                      {/* DYNAMIC ETA CALCULATOR */}
+                      {uploadProgress.progressPct > 5 && uploadProgress.progressPct < 100 && (
+                        <span className="text-[9px] font-bold text-slate-400 normal-case bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                          {(() => {
+                            const elapsedSec = (Date.now() - uploadProgress.startTime) / 1000;
+                            const totalEstSec = elapsedSec / (uploadProgress.progressPct / 100);
+                            const remainingSec = Math.max(0, Math.ceil(totalEstSec - elapsedSec));
+                            if (remainingSec < 1) return 'Almost done...';
+                            return `~${remainingSec}s left`;
+                          })()}
+                        </span>
+                      )}
                     </span>
                     <span className="text-xs font-bold text-slate-600 truncate mt-0.5">
                       {uploadProgress.filename}
@@ -712,7 +728,6 @@ const [uploadProgress, setUploadProgress] = useState<{ current: number, total: n
                     className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-300 ease-out relative" 
                     style={{ width: `${uploadProgress.progressPct}%` }}
                   >
-                    {/* Diagonal stripes for active "working" effect */}
                     <div className="absolute inset-0 bg-white/20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
                   </div>
                 </div>
