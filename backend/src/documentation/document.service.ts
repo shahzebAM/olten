@@ -39,16 +39,21 @@ async processNewDocument(file: any, company: string, username: string, targetFol
 
     let driveLink;
     let geminiData;
+    let autoExpiryDate = ''; 
 
     try {
-      // Upload to Drive and Gemini instantly without waiting for AI analysis
-      const [driveResponse, geminiResponse] = await Promise.all([
+      // 1. Upload to Drive, Gemini, AND Extract Date all at the exact same time!
+      const [driveResponse, geminiResponse, expiryResponse] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname)
+        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname),
+        // Bypasses the slow File API queue by reading the file directly from memory!
+        this.geminiService.extractExpiryFromBuffer(file.buffer, safeMimeType, file.originalname)
       ]);
       
       driveLink = driveResponse;
       geminiData = geminiResponse;
+      autoExpiryDate = expiryResponse;
+
     } catch (error: any) {
       this.logger.error(`Upload Process Failed: ${error.message}`);
       throw new BadRequestException(`Upload failed: ${error.message}`);
@@ -73,8 +78,11 @@ async processNewDocument(file: any, company: string, username: string, targetFol
 
     this.companyCache.delete(company);
     
-    // Return instantly. AI analysis will happen in the background!
-    return doc;
+    // Return document + extracted date instantly to the frontend!
+    return {
+      ...doc,
+      expiryDate: autoExpiryDate
+    };
   }
 
 async analyzeExpiryDates(fileIds: any[], company: string) {
