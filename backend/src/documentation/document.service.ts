@@ -31,20 +31,24 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
-    // Force PDF mimetype so Gemini never goes blind
     let safeMimeType = file.mimetype;
     if (file.originalname.toLowerCase().endsWith('.pdf')) safeMimeType = 'application/pdf';
 
     let driveLink;
-    let geminiData;
+    let geminiData: any = {};
+    let autoExpiryDate = ''; 
 
     try {
-      const [driveResponse, geminiResponse] = await Promise.all([
+      // Run all three intense operations concurrently! Instant extraction!
+      const [driveRes, geminiRes, expiryRes] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname)
+        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname),
+        this.geminiService.extractExpiryFromBuffer(file.buffer, safeMimeType, file.originalname)
       ]);
-      driveLink = driveResponse;
-      geminiData = geminiResponse;
+      
+      driveLink = driveRes;
+      geminiData = geminiRes;
+      autoExpiryDate = expiryRes; // GUARANTEED to be YYYY-MM-DD or ''
     } catch (error: any) {
       throw new BadRequestException(`Upload failed: ${error.message}`);
     } finally {
@@ -67,7 +71,9 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     });
 
     this.companyCache.delete(company);
-    return doc; // Return instantly!
+    
+    // Return document with the date embedded instantly
+    return { ...doc, expiryDate: autoExpiryDate };
   }
 
   async analyzeExpiryDates(fileIds: any[], company: string) {

@@ -104,20 +104,15 @@ CRITICAL RULES:
 
   // --- NEW FAST INSTANT BUFFER EXTRACTION ---
 // --- NEW FAST INSTANT BUFFER EXTRACTION ---
+// --- NEW FAST INSTANT BUFFER EXTRACTION ---
   async extractExpiryFromBuffer(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
     try {
       const base64Data = buffer.toString('base64');
       
-      // CRITICAL FIX: Sanitize Multer's generic mimetypes so Gemini accepts them
       let safeMimeType = mimeType;
-      const lowerName = filename.toLowerCase();
-      if (lowerName.endsWith('.pdf')) safeMimeType = 'application/pdf';
-      else if (lowerName.endsWith('.png')) safeMimeType = 'image/png';
-      else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) safeMimeType = 'image/jpeg';
+      if (filename.toLowerCase().endsWith('.pdf')) safeMimeType = 'application/pdf';
 
-      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. 
-      You MUST return the date strictly in YYYY-MM-DD format (e.g., 2028-01-28).
-      If no expiry date is found, return exactly: null`;
+      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. Return ONLY the date.`;
 
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash', 
@@ -132,6 +127,14 @@ CRITICAL RULES:
       });
 
       const text = response.text?.trim() || '';
+      
+      // 1. Let Javascript powerfully parse natural text like "January 28, 2028" into YYYY-MM-DD
+      const parsedDate = new Date(text);
+      if (!isNaN(parsedDate.getTime())) {
+          return parsedDate.toISOString().split('T')[0]; 
+      }
+      
+      // 2. Fallback if it's hidden in weird text
       const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
       return dateMatch ? dateMatch[0] : '';
     } catch (error: any) {
