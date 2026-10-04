@@ -1013,7 +1013,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
                             <div className="flex flex-col gap-1.5 w-48 shrink-0">
                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry Date</label>
-                              <input 
+    <input 
   type="date" 
   value={file.expiryDate ? file.expiryDate.split('T')[0] : ''} 
   onChange={(e) => {
