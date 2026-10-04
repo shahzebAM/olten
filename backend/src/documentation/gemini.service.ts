@@ -141,27 +141,15 @@ CRITICAL RULES:
   }
 
   // --- OLD SLOW EXTRACTION (Kept as fallback) ---
-  async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
+async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
     try {
       const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. 
-      Look for phrases like "Validity of License" or "Valid Until".
-      
-      You MUST return the date exactly in this format: YYYY-MM-DD. 
-      Example: 2028-01-28.
-      
-      CRITICAL RULES:
-      1. Return ONLY the YYYY-MM-DD date. No other words.
-      2. If you absolutely cannot find a date, return exactly the word: null`;
+      You MUST return the date strictly in YYYY-MM-DD format (e.g., 2028-01-28).
+      If no expiry date is found, return exactly: null`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
-        contents: [{
-          role: 'user',
-          parts: [
-            { fileData: { fileUri, mimeType } },
-            { text: prompt }
-          ]
-        }],
+        contents: [{ role: 'user', parts: [{ fileData: { fileUri, mimeType } }, { text: prompt }] }],
         config: { temperature: 0.0 } 
       });
       
@@ -169,7 +157,6 @@ CRITICAL RULES:
       const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
       return dateMatch ? dateMatch[0] : ''; 
     } catch (error: any) {
-      this.logger.warn(`Expiry Extraction Failed: ${error.message}`);
       return ''; 
     }
   }

@@ -64,11 +64,10 @@ export class DocumentController {
   // --- NEW: ANALYZE EXPIRY DATES ---
 // --- NEW: ANALYZE EXPIRY DATES ---
 // --- NEW: ANALYZE EXPIRY DATES ---
+// --- NEW: ANALYZE EXPIRY DATES ---
   @Post('analyze-expiry')
   async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
     if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
-    
-    // Pass the IDs to the service to trigger Gemini
     return this.documentService.analyzeExpiryDates(body.fileIds, company);
   }
   // --- NEW: SAVE REMINDERS ---

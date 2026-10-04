@@ -31,31 +31,21 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
-    // CRITICAL FIX: Ensure PDFs are identified correctly so Gemini is never blind!
+    // Force PDF mimetype so Gemini never goes blind
     let safeMimeType = file.mimetype;
-    if (file.originalname.toLowerCase().endsWith('.pdf')) {
-        safeMimeType = 'application/pdf';
-    }
+    if (file.originalname.toLowerCase().endsWith('.pdf')) safeMimeType = 'application/pdf';
 
     let driveLink;
     let geminiData;
-    let autoExpiryDate = ''; 
 
     try {
-      // 1. Upload to Drive, Gemini, AND Extract Date all at the exact same time!
-      const [driveResponse, geminiResponse, expiryResponse] = await Promise.all([
+      const [driveResponse, geminiResponse] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname),
-        // Bypasses the slow File API queue by reading the file directly from memory!
-        this.geminiService.extractExpiryFromBuffer(file.buffer, safeMimeType, file.originalname)
+        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname)
       ]);
-      
       driveLink = driveResponse;
       geminiData = geminiResponse;
-      autoExpiryDate = expiryResponse;
-
     } catch (error: any) {
-      this.logger.error(`Upload Process Failed: ${error.message}`);
       throw new BadRequestException(`Upload failed: ${error.message}`);
     } finally {
       if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); 
@@ -77,50 +67,34 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     });
 
     this.companyCache.delete(company);
-    
-    // Return document + extracted date instantly to the frontend!
-    return {
-      ...doc,
-      expiryDate: autoExpiryDate
-    };
+    return doc; // Return instantly!
   }
 
-async analyzeExpiryDates(fileIds: any[], company: string) {
+  async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
     const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
 
     const docs = await (prisma as any).document.findMany({
-      where: { 
-        id: { in: numericIds.length > 0 ? numericIds : [-1] },
-        company: company
-      }
+      where: { id: { in: numericIds.length > 0 ? numericIds : [-1] }, company: company }
     });
 
-    // Process ALL documents simultaneously for maximum speed
     await Promise.all(docs.map(async (doc) => {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
-          
           while (status === 'PROCESSING' && retries < 15) {
              await new Promise(resolve => setTimeout(resolve, 1500));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
-          
           if (status === 'ACTIVE') {
             const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
-            if (expiry) {
-              results[doc.id.toString()] = expiry;
-            }
+            if (expiry) results[doc.id.toString()] = expiry;
           }
-        } catch (e) {
-          this.logger.warn(`Gemini check failed for ${doc.geminiFileId}`);
-        }
+        } catch (e) {}
       }
     }));
-
     return results;
   }
 
