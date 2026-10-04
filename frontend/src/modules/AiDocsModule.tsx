@@ -282,50 +282,31 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setUploadProgress(null);
     setIsUploading(false);
 
+   // ... (Keep the upload loop as is) ...
+
     if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
     }
 
-   // 2. Open Modal & Trigger Gemini AI Expiry Analysis
-    setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: [] });
+    // Populate Modal with AI Results immediately using data returned from upload
+    const reviewFiles = uploadedDocs.map((doc: any) => {
+       const foundExpiry = doc.expiryDate || '';
+       const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
+       const finalDate = safeDateMatch ? safeDateMatch[0] : '';
+       
+       return {
+         id: doc.id, 
+         name: doc.originalName || doc.filename || 'Document',
+         expiryDate: finalDate, 
+         reminderDays: 30 
+       };
+    });
+
+    // Open modal directly without the loading spinner
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
     setIsProcessing(false);
-    fetchDirectory(true); // Fast refresh background tree
-
-    try {
-       // FIX: Use the actual database ID created during upload for the backend check
-       const dbFileIds = uploadedDocs.map((d: any) => d.id);
-       
-       const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-          body: JSON.stringify({ fileIds: dbFileIds })
-       });
-       
-       const expiryData = await analysisRes.json();
-
-      // 3. Populate Modal with AI Results
-       const reviewFiles = uploadedDocs.map((doc: any) => {
-          const foundExpiry = expiryData[doc.id] || expiryData[String(doc.id)] || '';
-          
-          // FRONTEND SAFEGUARD: Force strip all text fluff so the HTML5 Date Input accepts it
-          const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
-          const finalDate = safeDateMatch ? safeDateMatch[0] : '';
-          
-          return {
-            id: doc.id, 
-            name: doc.originalName || doc.filename || 'Document',
-            expiryDate: finalDate, 
-            reminderDays: 30 
-          };
-       });
-
-       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
-    } catch (err) {
-       showToast("Failed to auto-analyze dates.", "error");
-       setExpiryReviewModal({ isOpen: false, isAnalyzing: false, files: [] });
-    }
-  };
+    fetchDirectory(true);
 
   // --- API: SAVE REMINDERS ---
 // --- API: SAVE REMINDERS ---
@@ -1076,4 +1057,4 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
     </div>
   );
-}
+}}
