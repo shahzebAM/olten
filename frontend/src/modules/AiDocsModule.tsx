@@ -278,35 +278,58 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        await new Promise(resolve => setTimeout(resolve, 400));
     }
 
-    setUploadProgress(null);
+setUploadProgress(null);
     setIsUploading(false);
 
-if (uploadedDocs.length === 0) {
+    if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Process dates instantly from the uploadedDocs response
-    const finalReviewFiles = uploadedDocs.map((doc: any) => {
-       const foundExpiry = doc.expiryDate || '';
-       
-       // Ensure strictly formatted YYYY-MM-DD for the HTML5 Date Picker
-       const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
-       
-       return {
-         id: doc.id, 
-         name: doc.originalName || doc.filename || 'Document',
-         expiryDate: safeDateMatch ? safeDateMatch[0] : '', 
-         reminderDays: 30 
-       };
-    });
-
-    // 2. Open modal instantly with fully populated dates! No spinners needed!
-    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: finalReviewFiles });
+    // 1. Instantly open modal with a loading state (Upload bar vanishes immediately)
+    const initialReviewFiles = uploadedDocs.map((doc: any) => ({
+      id: doc.id,
+      name: doc.originalName || doc.filename || 'Document',
+      expiryDate: '',
+      reminderDays: 30
+    }));
+    
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: initialReviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
-  }; // <-- Closes handleFileUpload
-  // --- API: SAVE REMINDERS ---
+
+    // 2. Fetch the dates from the AI in the background!
+    try {
+       const dbFileIds = uploadedDocs.map((d: any) => d.id);
+       
+       const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+          body: JSON.stringify({ fileIds: dbFileIds })
+       });
+       
+       if (!analysisRes.ok) throw new Error("Backend API failed");
+
+       const expiryData = await analysisRes.json();
+
+       // 3. Inject dates once AI finishes
+       const finalReviewFiles = initialReviewFiles.map((file: any) => {
+          const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
+          const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
+          
+          return { 
+            ...file, 
+            expiryDate: safeDateMatch ? safeDateMatch[0] : '' 
+          };
+       });
+
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: finalReviewFiles });
+    } catch (err) {
+       showToast("Failed to auto-analyze dates.", "error");
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
+    }
+  };
+    // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
