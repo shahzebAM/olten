@@ -33,7 +33,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string } | null>(null);
+const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string, progressPct: number } | null>(null);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -225,10 +225,21 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsProcessing(true);
     const uploadedDocs = [];
 
-    // 1. Upload files to Drive & Gemini
+// 1. Upload files to Drive & Gemini
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
-       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name });
+       
+       // Start progress at 0%
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0 });
+       
+       // SMART FAKE PROGRESS: Smoothly fill up to 90% while waiting for network
+       const progressInterval = setInterval(() => {
+           setUploadProgress(prev => {
+               if (!prev) return prev;
+               const nextPct = prev.progressPct + (Math.random() * 15); // Randomly jump by up to 15%
+               return { ...prev, progressPct: Math.min(nextPct, 90) }; // Cap at 90% until done
+           });
+       }, 400);
        
        const formData = new FormData();
        formData.append('file', file);
@@ -247,6 +258,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        } catch (err) {
          console.error(`Failed to upload ${file.name}`);
        }
+
+       // Upload finished! Clear the interval and snap satisfyingly to 100%
+       clearInterval(progressInterval);
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100 });
+       
+       // Brief pause to let the user visually enjoy it hitting 100% before moving on
+       await new Promise(resolve => setTimeout(resolve, 400));
     }
 
     setUploadProgress(null);
@@ -672,22 +690,31 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                </div>
             </div>
 
-         {/* MINI PROGRESS BAR FOR UPLOADS */}
+{/* THICK FILLABLE PROGRESS BAR */}
             {isUploading && uploadProgress && (
-              <div className="flex flex-col gap-1.5 mt-1 mb-1">
-                <div className="flex justify-between items-center px-1">
-                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest truncate max-w-[75%]">
-                    Uploading ({uploadProgress.current}/{uploadProgress.total}): {uploadProgress.filename}
-                  </span>
-                  <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded shadow-sm shrink-0">
-                    {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+              <div className="flex flex-col mt-2 mb-3 bg-white p-3.5 rounded-2xl border border-indigo-100 shadow-sm animate-in fade-in">
+                <div className="flex justify-between items-end mb-2 px-1">
+                  <div className="flex flex-col min-w-0 pr-4">
+                    <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
+                      {uploadProgress.progressPct === 100 ? 'Finalizing...' : `Uploading (${uploadProgress.current}/${uploadProgress.total})`}
+                    </span>
+                    <span className="text-xs font-bold text-slate-600 truncate mt-0.5">
+                      {uploadProgress.filename}
+                    </span>
+                  </div>
+                  <span className="text-xl font-black text-indigo-600 shrink-0 tabular-nums">
+                    {Math.round(uploadProgress.progressPct)}%
                   </span>
                 </div>
-                <div className="w-full h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner relative border border-slate-200">
                   <div 
-                    className="h-full bg-indigo-500 transition-all duration-300" 
-                    style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
-                  ></div>
+                    className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-300 ease-out relative" 
+                    style={{ width: `${uploadProgress.progressPct}%` }}
+                  >
+                    {/* Diagonal stripes for active "working" effect */}
+                    <div className="absolute inset-0 bg-white/20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
+                  </div>
                 </div>
               </div>
             )}
