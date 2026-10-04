@@ -281,30 +281,54 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setUploadProgress(null);
     setIsUploading(false);
 
-    if (uploadedDocs.length === 0) {
+   if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
     }
 
-    // Populate Modal with AI Results immediately using data returned from upload
-    const reviewFiles = uploadedDocs.map((doc: any) => {
-       const foundExpiry = doc.expiryDate || '';
-       const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
-       const finalDate = safeDateMatch ? safeDateMatch[0] : '';
-       
-       return {
-         id: doc.id, 
-         name: doc.originalName || doc.filename || 'Document',
-         expiryDate: finalDate, 
-         reminderDays: 30 
-       };
-    });
-
-    // Open modal directly without the loading spinner
-    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
+    // 1. Instantly open modal with a loading state (Allows the upload bar to vanish instantly!)
+    const initialReviewFiles = uploadedDocs.map((doc: any) => ({
+      id: doc.id,
+      name: doc.originalName || doc.filename || 'Document',
+      expiryDate: '',
+      reminderDays: 30
+    }));
+    
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: initialReviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
-  }; // <-- FIX: This closing brace was missing!
+
+    // 2. Call analyze-expiry in the background so the UI doesn't freeze
+    try {
+       const dbFileIds = uploadedDocs.map((d: any) => d.id);
+       
+       const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+          body: JSON.stringify({ fileIds: dbFileIds })
+       });
+       
+       const expiryData = await analysisRes.json();
+
+       // 3. Inject the safely formatted AI dates directly into the modal
+       const finalReviewFiles = initialReviewFiles.map((file: any) => {
+          const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
+          
+          // Triple-check formatting to ensure the HTML5 Date Input accepts it
+          const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
+          
+          return { 
+            ...file, 
+            expiryDate: safeDateMatch ? safeDateMatch[0] : '' 
+          };
+       });
+
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: finalReviewFiles });
+    } catch (err) {
+       showToast("Failed to auto-analyze dates.", "error");
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
+    }
+  }; // <-- End of handleFileUpload // <-- FIX: This closing brace was missing!
 
   // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
