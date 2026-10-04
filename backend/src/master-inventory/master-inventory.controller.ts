@@ -224,4 +224,56 @@ export class MasterInventoryController {
   async clearAllHubStocks(@Param('company') company: string) {
     return this.prisma.warehouseStock.deleteMany({ where: { company } });
   }
+
+
+// ==========================================
+  // 5. CUSTOMER CATEGORIES & AUTO-PRICING
+  // ==========================================
+  @Post('customer-categories')
+  async createCustomerCategory(@Body() data: any) {
+    const { company, name, markupPercent = 20 } = data; // Defaults to 20% markup if not provided
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. Create the new customer category
+        const category = await tx.customerCategory.create({
+          data: {
+            name: name,
+            company: company,
+          }
+        });
+
+        // 2. Fetch all products for this company
+        const products = await tx.product.findMany({
+          where: { company: company },
+          select: { id: true, purchasePrice: true, sellingPrice: true }
+        });
+
+        if (products.length > 0) {
+          // 3. Generate distinct price entries for the new tier
+          const newTierPrices = products.map((p: any) => {
+            const baseCost = Number(p.purchasePrice) || Number(p.sellingPrice) || 0;
+            const generatedPrice = Number((baseCost * (1 + markupPercent / 100)).toFixed(2));
+
+            return {
+              company: company,
+              categoryName: name, 
+              productId: p.id,
+              price: generatedPrice,
+            };
+          });
+
+          // 4. Batch-save the new prices without touching existing category prices
+          await tx.categoryPrice.createMany({
+            data: newTierPrices,
+            skipDuplicates: true, // Safely ignores if a price somehow already exists
+          });
+        }
+
+        return { category, message: `Successfully created tier and generated prices for ${products.length} products.` };
+      });
+    } catch (error: any) {
+      throw new Error(`Failed to create category and generate prices: ${error.message}`);
+    }
+  }
 }
