@@ -31,16 +31,16 @@ export class DocumentService {
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
-let driveLink;
+    let driveLink;
     let geminiData;
-    let autoExpiryDate = ''; // Add this variable
+    let autoExpiryDate = ''; // Holds the instantly extracted date
 
     try {
-      // Update Promise.all to include the new buffer extraction
+      // NEW: Promise.all runs extraction instantly alongside uploads
       const [driveResponse, geminiResponse, expiryResult] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
         this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname),
-        this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype) 
+        this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype)
       ]);
       
       driveLink = driveResponse;
@@ -69,18 +69,18 @@ let driveLink;
     });
 
     this.companyCache.delete(company);
-    return doc;
+    
+    // NEW: Return the document WITH the expiry date back to the frontend
+    return {
+      ...doc,
+      expiryDate: autoExpiryDate
+    };
   }
 
-// --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
-// --- ANALYZE EXPIRY DATES DIRECTLY FROM GEMINI CACHE ---
-async analyzeExpiryDates(fileIds: any[], company: string) {
+  async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
-    
-    // Convert all incoming IDs to safe numbers
     const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
 
-    // Fetch documents cleanly using only the verified integer ID field
     const docs = await (prisma as any).document.findMany({
       where: { 
         id: { in: numericIds.length > 0 ? numericIds : [-1] },
@@ -88,16 +88,13 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
       }
     });
 
-   // document.service.ts
-// Inside analyzeExpiryDates()
     for (const doc of docs) {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
           
-          // FIX: Increased retries from 15 to 30 (gives Gemini up to 60 seconds to process large PDFs)
-          while (status === 'PROCESSING' && retries < 30) {
+          while (status === 'PROCESSING' && retries < 15) {
              await new Promise(resolve => setTimeout(resolve, 2000));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
@@ -117,15 +114,12 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
     return results;
   }
 
-  // --- SAVE REMINDERS TO DATABASE ---
   async saveReminders(reminders: any[], company: string) {
     const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
-      // CRITICAL FIX: Convert back to Number before saving to DB
       const docId = Number(rem.id); 
       
-      // Skip if the user cleared the date or if the ID is invalid
       if (isNaN(docId) || !rem.expiryDate) continue;
 
       const saved = await (prisma as any).documentReminder.create({
@@ -133,7 +127,7 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
           company: company,
           documentId: docId,
           fileName: rem.name,
-          expiryDate: new Date(rem.expiryDate), // Ensures JS Date format for Prisma
+          expiryDate: new Date(rem.expiryDate), 
           reminderDays: Number(rem.reminderDays) || 30
         }
       });
