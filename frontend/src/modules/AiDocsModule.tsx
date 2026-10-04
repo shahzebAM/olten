@@ -1010,17 +1010,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
                             <div className="flex flex-col gap-1.5 w-48 shrink-0">
                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry Date</label>
-                               <input 
-                                 type="text" 
-                                 placeholder="e.g. January 28, 2026"
-                                 value={file.expiryDate || ''} 
-                                 onChange={(e) => {
-                                    const newFiles = [...expiryReviewModal.files];
-                                    newFiles[index].expiryDate = e.target.value;
-                                    setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                 }} 
-                                 className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                               />
+                              <input 
+  type="date" 
+  value={file.expiryDate ? file.expiryDate.split('T')[0] : ''} 
+  onChange={(e) => {
+     const newFiles = [...expiryReviewModal.files];
+     newFiles[index].expiryDate = e.target.value;
+     setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+  }} 
+  className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+/>
+                               
                             </div>
                             <div className="flex flex-col gap-1.5 w-32">
                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Notify Days Before</label>
