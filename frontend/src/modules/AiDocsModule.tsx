@@ -226,24 +226,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     const uploadedDocs = [];
 
     // 1. Upload files to Drive & Gemini
+// 1. Upload files to Drive & Gemini
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
-       
-       // Record exactly when this file started uploading
        const uploadStart = Date.now();
        
-       // Start progress at 0%
        setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0, startTime: uploadStart });
        
-       // SMART FAKE PROGRESS: Smoothly fill up to 90% while waiting for network
-       const progressInterval = setInterval(() => {
-           setUploadProgress(prev => {
-               if (!prev) return prev;
-               const nextPct = prev.progressPct + (Math.random() * 15); 
-               return { ...prev, progressPct: Math.min(nextPct, 90) }; 
-           });
-       }, 400);
-
        const formData = new FormData();
        formData.append('file', file);
        
@@ -252,21 +241,41 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        }
 
        try {
-         const res = await fetch(`${API_BASE_URL}/api/docs/upload`, {
-             method: 'POST',
-             headers: { 'x-company': selectedCompany, 'x-username': loginUsername },
-             body: formData
+         // USE REAL NETWORK TRACKING INSTEAD OF FAKE PROGRESS
+         const uploadedDoc = await new Promise((resolve, reject) => {
+             const xhr = new XMLHttpRequest();
+             xhr.open('POST', `${API_BASE_URL}/api/docs/upload`);
+             xhr.setRequestHeader('x-company', selectedCompany);
+             xhr.setRequestHeader('x-username', loginUsername);
+
+             // This tracks the actual physical bytes being sent to your server
+             xhr.upload.onprogress = (event) => {
+                 if (event.lengthComputable) {
+                     const actualPct = (event.loaded / event.total) * 100;
+                     // Cap at 99.9% while the server finishes processing and sends the final OK
+                     setUploadProgress(prev => prev ? { ...prev, progressPct: Math.min(actualPct, 99.9) } : prev);
+                 }
+             };
+
+             xhr.onload = () => {
+                 if (xhr.status >= 200 && xhr.status < 300) {
+                     resolve(JSON.parse(xhr.responseText));
+                 } else {
+                     reject(new Error('Upload failed'));
+                 }
+             };
+
+             xhr.onerror = () => reject(new Error('Network error'));
+             xhr.send(formData);
          });
-         if (res.ok) uploadedDocs.push(await res.json());
+         
+         uploadedDocs.push(uploadedDoc);
        } catch (err) {
          console.error(`Failed to upload ${file.name}`);
        }
 
-       // Upload finished! Clear the interval and snap satisfyingly to 100%
-       clearInterval(progressInterval);
+       // Upload perfectly finished! Snap to 100%
        setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100, startTime: uploadStart });
-       
-       // Brief pause to let the user visually enjoy it hitting 100% before moving on
        await new Promise(resolve => setTimeout(resolve, 400));
     }
 
@@ -316,13 +325,27 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   // --- API: SAVE REMINDERS ---
+// --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
+         // TRANSLATE TEXT DATES TO DATABASE-SAFE FORMAT BEFORE SENDING
+         const safeReminders = expiryReviewModal.files.map(file => {
+             let dbSafeDate = file.expiryDate;
+             const parsedDate = new Date(file.expiryDate);
+             
+             // If JS successfully parses "January 28, 2028", turn it into an ISO string
+             if (!isNaN(parsedDate.getTime())) {
+                 dbSafeDate = parsedDate.toISOString(); 
+             }
+             
+             return { ...file, expiryDate: dbSafeDate };
+         });
+
          const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
              method: 'POST',
              headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-             body: JSON.stringify({ reminders: expiryReviewModal.files })
+             body: JSON.stringify({ reminders: safeReminders })
          });
          
          if (!res.ok) throw new Error("Failed to save");
