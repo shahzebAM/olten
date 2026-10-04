@@ -73,17 +73,13 @@ export class DocumentService {
 async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
     
-    // Separate numeric IDs (Prisma ID) and string IDs (Google Drive ID)
+    // Convert all incoming IDs to safe numbers
     const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
-    const stringIds = fileIds.map(id => String(id));
 
-    // Search by whichever ID the frontend provided
+    // Fetch documents cleanly using only the verified integer ID field
     const docs = await (prisma as any).document.findMany({
       where: { 
-        OR: [
-          { id: { in: numericIds.length > 0 ? numericIds : [-1] } },
-          { driveFileId: { in: stringIds } }
-        ],
+        id: { in: numericIds.length > 0 ? numericIds : [-1] },
         company: company
       }
     });
@@ -103,9 +99,7 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
           if (status === 'ACTIVE') {
             const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
             if (expiry) {
-              // Map the date to BOTH ID types so the frontend is guaranteed to find it
               results[doc.id.toString()] = expiry;
-              if (doc.driveFileId) results[doc.driveFileId] = expiry; 
             }
           }
         } catch (e) {
