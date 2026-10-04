@@ -31,14 +31,20 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
+    // CRITICAL FIX: Ensure PDFs are identified correctly so Gemini is never blind!
+    let safeMimeType = file.mimetype;
+    if (file.originalname.toLowerCase().endsWith('.pdf')) {
+        safeMimeType = 'application/pdf';
+    }
+
     let driveLink;
     let geminiData;
 
     try {
-      // 1. Upload to Drive and Gemini simultaneously for MAXIMUM speed
+      // Upload to Drive and Gemini instantly without waiting for AI analysis
       const [driveResponse, geminiResponse] = await Promise.all([
-        this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname)
+        this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
+        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname)
       ]);
       
       driveLink = driveResponse;
@@ -50,12 +56,11 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); 
     }
 
-    // 2. Save directly to DB and return immediately! No waiting for AI!
     const doc = await (prisma as any).document.create({
       data: {
         filename: file.originalname,
         originalName: file.originalname,
-        mimeType: file.mimetype,
+        mimeType: safeMimeType,
         sizeBytes: file.size,
         company: company,
         geminiFileUri: geminiData.fileUri,
@@ -67,10 +72,12 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     });
 
     this.companyCache.delete(company);
+    
+    // Return instantly. AI analysis will happen in the background!
     return doc;
   }
 
-  async analyzeExpiryDates(fileIds: any[], company: string) {
+async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
     const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
 
@@ -81,7 +88,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       }
     });
 
-    // 3. Process ALL documents concurrently instead of one by one
+    // Process ALL documents simultaneously for maximum speed
     await Promise.all(docs.map(async (doc) => {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
@@ -89,7 +96,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
           let retries = 0;
           
           while (status === 'PROCESSING' && retries < 15) {
-             await new Promise(resolve => setTimeout(resolve, 1000)); // Fast poll every 1s
+             await new Promise(resolve => setTimeout(resolve, 1500));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
@@ -105,7 +112,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
         }
       }
     }));
-    
+
     return results;
   }
 
