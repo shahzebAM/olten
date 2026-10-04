@@ -33,10 +33,9 @@ async processNewDocument(file: any, company: string, username: string, targetFol
 
     let driveLink;
     let geminiData;
-    let autoExpiryDate = ''; 
 
     try {
-      // 1. Upload to Drive and Gemini simultaneously
+      // 1. Upload to Drive and Gemini simultaneously for MAXIMUM speed
       const [driveResponse, geminiResponse] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
         this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname)
@@ -44,28 +43,6 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       
       driveLink = driveResponse;
       geminiData = geminiResponse;
-
-      // 2. ATTEMPT A: Instant Buffer Extraction (Fastest)
-      // Pass file.originalname so the mimeType sanitizer works
-      autoExpiryDate = await this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype, file.originalname);
-
-      // 3. ATTEMPT B: Fallback if file is too large for memory/inline extraction
-      if (!autoExpiryDate && geminiData.fileId) {
-         let status = await this.geminiService.checkFileStatus(geminiData.fileId);
-         let retries = 0;
-         
-         // Wait a few seconds for Google's servers to finish indexing large PDFs
-         while (status === 'PROCESSING' && retries < 15) {
-             await new Promise(resolve => setTimeout(resolve, 1500));
-             status = await this.geminiService.checkFileStatus(geminiData.fileId);
-             retries++;
-         }
-         
-         if (status === 'ACTIVE') {
-             autoExpiryDate = await this.geminiService.extractExpiryDate(geminiData.fileUri, file.mimetype);
-         }
-      }
-
     } catch (error: any) {
       this.logger.error(`Upload Process Failed: ${error.message}`);
       throw new BadRequestException(`Upload failed: ${error.message}`);
@@ -73,6 +50,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); 
     }
 
+    // 2. Save directly to DB and return immediately! No waiting for AI!
     const doc = await (prisma as any).document.create({
       data: {
         filename: file.originalname,
@@ -89,12 +67,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     });
 
     this.companyCache.delete(company);
-    
-    // 4. Return document + extracted date directly to frontend
-    return {
-      ...doc,
-      expiryDate: autoExpiryDate
-    };
+    return doc;
   }
 
   async analyzeExpiryDates(fileIds: any[], company: string) {
@@ -108,14 +81,15 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       }
     });
 
-    for (const doc of docs) {
+    // 3. Process ALL documents concurrently instead of one by one
+    await Promise.all(docs.map(async (doc) => {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
           
           while (status === 'PROCESSING' && retries < 15) {
-             await new Promise(resolve => setTimeout(resolve, 2000));
+             await new Promise(resolve => setTimeout(resolve, 1000)); // Fast poll every 1s
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
@@ -130,7 +104,8 @@ async processNewDocument(file: any, company: string, username: string, targetFol
           this.logger.warn(`Gemini check failed for ${doc.geminiFileId}`);
         }
       }
-    }
+    }));
+    
     return results;
   }
 
