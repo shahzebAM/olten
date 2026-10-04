@@ -27,25 +27,45 @@ export class DocumentService {
     return this.driveService.createSubFolder(company, folderName);
   }
 
-  async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
+async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
     let driveLink;
     let geminiData;
-    let autoExpiryDate = ''; // Holds the instantly extracted date
+    let autoExpiryDate = ''; 
 
     try {
-      // NEW: Promise.all runs extraction instantly alongside uploads
-      const [driveResponse, geminiResponse, expiryResult] = await Promise.all([
+      // 1. Upload to Drive and Gemini simultaneously
+      const [driveResponse, geminiResponse] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname),
-        this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype)
+        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname)
       ]);
       
       driveLink = driveResponse;
       geminiData = geminiResponse;
-      autoExpiryDate = expiryResult; // Capture the date
+
+      // 2. ATTEMPT A: Instant Buffer Extraction (Fastest)
+      // Pass file.originalname so the mimeType sanitizer works
+      autoExpiryDate = await this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype, file.originalname);
+
+      // 3. ATTEMPT B: Fallback if file is too large for memory/inline extraction
+      if (!autoExpiryDate && geminiData.fileId) {
+         let status = await this.geminiService.checkFileStatus(geminiData.fileId);
+         let retries = 0;
+         
+         // Wait a few seconds for Google's servers to finish indexing large PDFs
+         while (status === 'PROCESSING' && retries < 15) {
+             await new Promise(resolve => setTimeout(resolve, 1500));
+             status = await this.geminiService.checkFileStatus(geminiData.fileId);
+             retries++;
+         }
+         
+         if (status === 'ACTIVE') {
+             autoExpiryDate = await this.geminiService.extractExpiryDate(geminiData.fileUri, file.mimetype);
+         }
+      }
+
     } catch (error: any) {
       this.logger.error(`Upload Process Failed: ${error.message}`);
       throw new BadRequestException(`Upload failed: ${error.message}`);
@@ -70,7 +90,7 @@ export class DocumentService {
 
     this.companyCache.delete(company);
     
-    // NEW: Return the document WITH the expiry date back to the frontend
+    // 4. Return document + extracted date directly to frontend
     return {
       ...doc,
       expiryDate: autoExpiryDate
