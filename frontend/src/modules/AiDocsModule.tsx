@@ -281,12 +281,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setUploadProgress(null);
     setIsUploading(false);
 
-   if (uploadedDocs.length === 0) {
+ if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Instantly open modal with a loading state (Allows the upload bar to vanish instantly!)
+    // 1. Instantly open modal with a loading state (Upload bar vanishes immediately)
     const initialReviewFiles = uploadedDocs.map((doc: any) => ({
       id: doc.id,
       name: doc.originalName || doc.filename || 'Document',
@@ -298,7 +298,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsProcessing(false);
     fetchDirectory(true);
 
-    // 2. Call analyze-expiry in the background so the UI doesn't freeze
+    // 2. Safely call the AI in the background so the UI doesn't freeze!
     try {
        const dbFileIds = uploadedDocs.map((d: any) => d.id);
        
@@ -310,11 +310,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        
        const expiryData = await analysisRes.json();
 
-       // 3. Inject the safely formatted AI dates directly into the modal
+       // 3. Inject dates once AI finishes
        const finalReviewFiles = initialReviewFiles.map((file: any) => {
           const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
-          
-          // Triple-check formatting to ensure the HTML5 Date Input accepts it
           const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
           
           return { 
@@ -328,7 +326,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        showToast("Failed to auto-analyze dates.", "error");
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
     }
-  }; // <-- End of handleFileUpload // <-- FIX: This closing brace was missing!
+  }; // <-- Closes handleFileUpload <-- End of handleFileUpload // <-- FIX: This closing brace was missing!
 
   // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
