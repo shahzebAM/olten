@@ -281,12 +281,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setUploadProgress(null);
     setIsUploading(false);
 
- if (uploadedDocs.length === 0) {
+if (uploadedDocs.length === 0) {
        setIsProcessing(false);
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Instantly open modal with a loading state (Upload bar vanishes immediately)
+    // 1. Instantly open modal with the SPINNER (Upload bar vanishes immediately)
     const initialReviewFiles = uploadedDocs.map((doc: any) => ({
       id: doc.id,
       name: doc.originalName || doc.filename || 'Document',
@@ -308,9 +308,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           body: JSON.stringify({ fileIds: dbFileIds })
        });
        
+       if (!analysisRes.ok) throw new Error("API failed");
+       
        const expiryData = await analysisRes.json();
 
-       // 3. Inject dates once AI finishes
+       // 3. Inject dates into the Date Picker once AI finishes
        const finalReviewFiles = initialReviewFiles.map((file: any) => {
           const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
           const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
@@ -326,7 +328,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        showToast("Failed to auto-analyze dates.", "error");
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
     }
-  }; // <-- Closes handleFileUpload <-- End of handleFileUpload // <-- FIX: This closing brace was missing!
+  }; // <-- Closes handleFileUpload missing!
 
   // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
