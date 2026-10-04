@@ -31,17 +31,21 @@ export class DocumentService {
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
-    let driveLink;
+let driveLink;
     let geminiData;
+    let autoExpiryDate = ''; // Add this variable
 
     try {
-      const [driveResponse, geminiResponse] = await Promise.all([
+      // Update Promise.all to include the new buffer extraction
+      const [driveResponse, geminiResponse, expiryResult] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, file.mimetype, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname)
+        this.geminiService.uploadFileToGemini(tempFilePath, file.mimetype, file.originalname),
+        this.geminiService.extractExpiryFromBuffer(file.buffer, file.mimetype) 
       ]);
       
       driveLink = driveResponse;
       geminiData = geminiResponse;
+      autoExpiryDate = expiryResult; // Capture the date
     } catch (error: any) {
       this.logger.error(`Upload Process Failed: ${error.message}`);
       throw new BadRequestException(`Upload failed: ${error.message}`);

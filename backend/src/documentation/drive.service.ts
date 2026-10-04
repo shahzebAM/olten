@@ -113,6 +113,8 @@ export class DriveService {
     return { companyFolderId, folders, files };
   }
 
+  
+
   // UPDATED: Now accepts an optional parentFolderId to allow nesting
   async createSubFolder(companyName: string, folderName: string, parentFolderId?: string) {
     // If a specific parent folder is passed, use it. Otherwise, default to the company's root folder.
@@ -188,6 +190,8 @@ export class DriveService {
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
     }
   }
+
+  
 
   // --- NEW: Fetch exact storage quota from Google Drive ---
   async getStorageQuota() {

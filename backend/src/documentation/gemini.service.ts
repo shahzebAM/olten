@@ -21,6 +21,34 @@ CRITICAL RULES:
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); 
   }
 
+  async extractExpiryFromBuffer(buffer: Buffer, mimeType: string): Promise<string> {
+    try {
+      const base64Data = buffer.toString('base64');
+      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline.
+      You MUST return the date strictly in YYYY-MM-DD format (e.g., 2028-01-28).
+      If no expiry date is found, return exactly: null`;
+
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-3.6-flash', 
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { data: base64Data, mimeType } },
+            { text: prompt }
+          ]
+        }],
+        config: { temperature: 0.0 }
+      });
+
+      const text = response.text?.trim() || '';
+      const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
+      return dateMatch ? dateMatch[0] : '';
+    } catch (error: any) {
+      this.logger.warn(`Inline Expiry Extraction Failed: ${error.message}`);
+      return '';
+    }
+  }
+
   async uploadFileToGemini(filePath: string, mimeType: string, displayName: string) {
     try {
       const uploadResult = await this.ai.files.upload({

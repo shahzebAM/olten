@@ -64,12 +64,7 @@ export class DocumentController {
   // --- NEW: ANALYZE EXPIRY DATES ---
 // --- NEW: ANALYZE EXPIRY DATES ---
 // --- NEW: ANALYZE EXPIRY DATES ---
-@Post('analyze-expiry')
-  async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
-    if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
-    // Pass raw IDs directly to the service without forcing them to Numbers
-    return this.documentService.analyzeExpiryDates(body.fileIds, company);
-  }
+
   // --- NEW: SAVE REMINDERS ---
   @Post('save-reminders')
   async saveReminders(@Body() body: { reminders: any[] }, @Headers('x-company') company: string) {
