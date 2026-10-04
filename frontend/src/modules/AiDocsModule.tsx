@@ -995,7 +995,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                  <div className="p-16 flex flex-col items-center justify-center space-y-6 bg-slate-50">
                     <div className="animate-spin rounded-full h-14 w-14 border-4 border-indigo-200 border-t-indigo-600"></div>
                     <div>
-                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">Gemini AI is analyzing your documents...</div>
+                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">AI is analyzing your documents...</div>
                       <div className="text-[10px] font-bold text-slate-400 text-center uppercase tracking-widest mt-2">Extracting expiry and validity dates. Please wait.</div>
                     </div>
                  </div>
