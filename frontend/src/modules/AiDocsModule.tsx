@@ -286,41 +286,34 @@ setUploadProgress(null);
        return showToast("Failed to upload files.", "error");
     }
 
-   // 1. Process dates instantly from the uploadedDocs response
-    const finalReviewFiles = uploadedDocs.map((doc: any) => {
-       const foundExpiry = doc.expiryDate || '';
-       
-       // Ensure strictly formatted YYYY-MM-DD for the HTML5 Date Picker
-       const safeDateMatch = typeof foundExpiry === 'string' ? foundExpiry.match(/\d{4}-\d{2}-\d{2}/) : null;
-       
-       return {
-         id: doc.id, 
-         name: doc.originalName || doc.filename || 'Document',
-         expiryDate: safeDateMatch ? safeDateMatch[0] : '', 
-         reminderDays: 30 
-       };
-    });
-
-    // 2. Open modal instantly with fully populated dates! No spinners needed!
-    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: finalReviewFiles });
+    // 1. Instantly open modal with a default of 30 days (No AI scanning needed!)
+// 1. Instantly open modal with a default of 30 days
+    const instantReviewFiles = uploadedDocs.map((doc: any) => ({
+      id: doc.id,
+      name: doc.originalName || doc.filename || 'Document',
+      expiryDate: '', // <-- THIS FIXES THE RED LINE!
+      reminderDays: 30
+    }));
+    
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: instantReviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
-  }; // // <-- Closes handleFileUpload
-    // --- API: SAVE REMINDERS ---
+  }; // <-- Closes handleFileUpload // // <-- Closes handleFileUpload
+ // --- API: SAVE REMINDERS ---
+// --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
-         // TRANSLATE TEXT DATES TO DATABASE-SAFE FORMAT BEFORE SENDING
+         // Auto-calculate the future date based on the number of days you type
          const safeReminders = expiryReviewModal.files.map(file => {
-             let dbSafeDate = file.expiryDate;
-             const parsedDate = new Date(file.expiryDate);
+             const futureDate = new Date();
+             futureDate.setDate(futureDate.getDate() + (file.reminderDays || 30));
              
-             // If JS successfully parses "January 28, 2028", turn it into an ISO string
-             if (!isNaN(parsedDate.getTime())) {
-                 dbSafeDate = parsedDate.toISOString(); 
-             }
-             
-             return { ...file, expiryDate: dbSafeDate };
+             return { 
+               ...file, 
+               expiryDate: futureDate.toISOString(), // Silently send exact date to database
+               reminderDays: file.reminderDays 
+             };
          });
 
          const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
@@ -988,23 +981,9 @@ setUploadProgress(null);
                          <div className="flex-1 min-w-0 pr-4">
                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
                          </div>
-                         <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                            <div className="flex flex-col gap-1.5 w-48 shrink-0">
-                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry Date</label>
-    <input 
-  type="date" 
-  value={file.expiryDate ? file.expiryDate.split('T')[0] : ''} 
-  onChange={(e) => {
-     const newFiles = [...expiryReviewModal.files];
-     newFiles[index].expiryDate = e.target.value;
-     setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-  }} 
-  className="px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-/>
-                               
-                            </div>
+                    <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
                             <div className="flex flex-col gap-1.5 w-32">
-                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Notify Days Before</label>
+                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expires in</label>
                                <div className="relative">
                                  <input 
                                    type="number" 
