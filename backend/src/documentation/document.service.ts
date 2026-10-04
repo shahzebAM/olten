@@ -84,13 +84,16 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
       }
     });
 
+   // document.service.ts
+// Inside analyzeExpiryDates()
     for (const doc of docs) {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
           
-          while (status === 'PROCESSING' && retries < 15) {
+          // FIX: Increased retries from 15 to 30 (gives Gemini up to 60 seconds to process large PDFs)
+          while (status === 'PROCESSING' && retries < 30) {
              await new Promise(resolve => setTimeout(resolve, 2000));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;

@@ -105,6 +105,7 @@ CRITICAL RULES:
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- NEW EXPIRY DATE EXTRACTION ---
 // --- BULLETPROOF EXPIRY DATE EXTRACTION ---
+// gemini.service.ts
   async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
     try {
       const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. 
@@ -118,7 +119,7 @@ CRITICAL RULES:
       2. If you absolutely cannot find a date, return exactly the word: null`;
       
       const response = await this.ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.6-flash', // FIX: Updated to match your environment's active model
         contents: [{
           role: 'user',
           parts: [
@@ -132,7 +133,6 @@ CRITICAL RULES:
       const text = response.text?.trim() || '';
       
       // CRITICAL FIX: Extract EXACTLY the YYYY-MM-DD format using Regex
-      // This instantly strips out periods, spaces, or markdown backticks Gemini might add
       const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
       
       return dateMatch ? dateMatch[0] : ''; 
