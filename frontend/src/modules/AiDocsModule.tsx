@@ -165,9 +165,22 @@ interface AiDocsModuleProps {
 
 export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: AiDocsModuleProps) {
   const mountedRef = useRef(true);
+  const workspaceKey = `${API_BASE_URL}\n${selectedCompany}\n${loginUsername}`;
+  const workspaceRef = useRef({ key: workspaceKey, generation: 0 });
+  if (workspaceRef.current.key !== workspaceKey) {
+    workspaceRef.current = { key: workspaceKey, generation: workspaceRef.current.generation + 1 };
+  }
+  const sourceRevisionRef = useRef(0);
+  const mutationRevisionRef = useRef(0);
+  const sourceFingerprintRef = useRef<string | null>(null);
+  const directoryRequestRef = useRef(0);
+  const directoryAppliedRequestRef = useRef(0);
+  const notificationRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); };
   }, []);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -229,30 +242,27 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [openNotificationCompany, setOpenNotificationCompany] = useState<string | null>(null);
   const isNotifOpen = openNotificationCompany === selectedCompany;
   const setIsNotifOpen = (open: boolean) => setOpenNotificationCompany(open ? selectedCompany : null);
-  const seenTriggeredReminders = useRef(new Set<string>());
-  const notificationCompanyRef = useRef(selectedCompany);
 
   const fetchNotifications = useCallback(async () => {
+    const workspaceGeneration = workspaceRef.current.generation;
+    const mutationRevision = mutationRevisionRef.current;
+    const requestId = ++notificationRequestRef.current;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration && mutationRevisionRef.current === mutationRevision && notificationRequestRef.current === requestId;
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/notifications`, {
         headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
       });
       if (!res.ok) throw new Error('Could not refresh expiry reminders.');
       const data: DocumentReminder[] = await res.json();
-      if (notificationCompanyRef.current !== selectedCompany) return;
+      if (!isCurrent()) return;
       setNotificationState({ company: selectedCompany, items: data, error: '' });
-      const active = data.filter(n => n.isTriggered && n.status !== 'FULFILLED');
-      if (active.some(n => !seenTriggeredReminders.current.has(`${selectedCompany}:${n.id}:${n.triggerDate}`))) {
-        setOpenNotificationCompany(selectedCompany);
-      }
-      active.forEach(n => seenTriggeredReminders.current.add(`${selectedCompany}:${n.id}:${n.triggerDate}`));
     } catch {
-      if (notificationCompanyRef.current === selectedCompany) setNotificationState(prev => ({ company: selectedCompany, items: prev.company === selectedCompany ? prev.items : [], error: 'Reminders could not be refreshed. Check your connection and retry.' }));
+      if (isCurrent()) setNotificationState(prev => ({ company: selectedCompany, items: prev.company === selectedCompany ? prev.items : [], error: 'Reminders could not be refreshed. Check your connection and retry.' }));
     }
-  }, [API_BASE_URL, selectedCompany, loginUsername]);
+  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey]);
 
   useEffect(() => {
-    notificationCompanyRef.current = selectedCompany;
+    setOpenNotificationCompany(null);
     const initialRefresh = setTimeout(fetchNotifications, 0);
     const interval = setInterval(fetchNotifications, 30000); 
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') fetchNotifications(); };
@@ -286,6 +296,39 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearchingAi, setIsSearchingAi] = useState(false);
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+
+  const invalidateAiSearch = useCallback(() => {
+    sourceRevisionRef.current += 1;
+    searchRequestRef.current += 1;
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+    setAiAnswer(null);
+    setIsSearchingAi(false);
+  }, []);
+
+  useEffect(() => {
+    mutationRevisionRef.current += 1;
+    sourceFingerprintRef.current = null;
+    invalidateAiSearch();
+    setFiles([]);
+    setFolders([]);
+    setRootFolderId(null);
+    setActiveFolderId(null);
+    setSelectedFile(null);
+    setSelectedItems(new Set());
+    setExpandedFolders(new Set());
+    setSourcePreview(null);
+    setExpiryReviewModal({ isOpen: false, isAnalyzing: false, files: [] });
+    setIsEditingReminder(false);
+    setIsDeletingSource(false);
+    setIsUploading(false);
+    setIsProcessing(false);
+    setIsSavingReminder(false);
+    setIsReanalyzing(false);
+    setUploadProgress([]);
+    setUploadBatch(null);
+    setNotificationState({ company: selectedCompany, items: [], error: '' });
+  }, [workspaceKey, selectedCompany, invalidateAiSearch]);
 
   const [aiPanelHeight, setAiPanelHeight] = useState(300);
   const [isDraggingResizer, setIsDraggingResizer] = useState(false);
@@ -370,6 +413,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [isDraggingResizer, resize, stopResizing]);
 
   const fetchDirectory = useCallback(async (isSilent = false) => {
+    const workspaceGeneration = workspaceRef.current.generation;
+    const mutationRevision = mutationRevisionRef.current;
+    const requestId = ++directoryRequestRef.current;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration && mutationRevisionRef.current === mutationRevision && directoryAppliedRequestRef.current <= requestId;
     if (!isSilent) setIsLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/directory`, {
@@ -380,6 +427,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       
       const nextFolders: DriveFolder[] = data.folders || [];
       const nextFiles: DriveFile[] = data.files || [];
+      if (!isCurrent()) return;
+      directoryAppliedRequestRef.current = requestId;
+      const fingerprint = JSON.stringify({
+        root: data.companyFolderId,
+        folders: nextFolders.map(folder => [folder.id, folder.name, [...(folder.parents || [])].sort()]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        files: nextFiles.map(file => [file.id, file.documentId ?? null, file.name, [...(file.parents || [])].sort(), file.expiryDate ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      });
+      if (sourceFingerprintRef.current !== fingerprint) {
+        sourceFingerprintRef.current = fingerprint;
+        invalidateAiSearch();
+      }
 
       setRootFolderId(data.companyFolderId);
       setFolders(nextFolders);
@@ -402,11 +460,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         return exists ? prev : data.companyFolderId;
       });
     } catch (err: any) {
-      if (!isSilent) showToast(err.message || 'Error loading workspace', 'error');
+      if (!isSilent && isCurrent()) showToast(err.message || 'Error loading workspace', 'error');
     } finally {
-      if (!isSilent) setIsLoading(false);
+      if (!isSilent && mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration) setIsLoading(false);
     }
-  }, [API_BASE_URL, selectedCompany, loginUsername]);
+  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey, invalidateAiSearch]);
 
   useEffect(() => {
     fetchDirectory(); 
@@ -426,21 +484,32 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const handleGeminiSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiQuery.trim()) return;
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    const requestId = ++searchRequestRef.current;
+    const sourceRevision = sourceRevisionRef.current;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && !controller.signal.aborted && searchRequestRef.current === requestId && sourceRevisionRef.current === sourceRevision && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsSearchingAi(true);
     setAiAnswer(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/search`, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ query: aiQuery, model: selectedModel })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'AI Search failed');
-      setAiAnswer(data.answer);
+      if (isCurrent()) setAiAnswer(data.answer);
     } catch (err: any) {
-      setAiAnswer(`Error: ${err.message}`);
+      if (isCurrent()) setAiAnswer(`Error: ${err.message}`);
     } finally {
-      setIsSearchingAi(false);
+      if (isCurrent()) {
+        setIsSearchingAi(false);
+        searchAbortRef.current = null;
+      }
     }
   };
 
@@ -455,7 +524,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     const uploadedDocs: (UploadedDocument | undefined)[] = new Array(filesArray.length);
     const failedFiles: (string | undefined)[] = new Array(filesArray.length);
 
-    const uploadContextActive = () => mountedRef.current && notificationCompanyRef.current === selectedCompany;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const uploadContextActive = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     const uploadOneFile = async (i: number) => {
        const file = filesArray[i];
        const uploadStart = Date.now();
@@ -509,6 +579,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
              xhr.send(formData);
          });
          uploadedDocs[i] = uploadedDoc;
+         if (uploadContextActive()) {
+           mutationRevisionRef.current += 1;
+           invalidateAiSearch();
+         }
        } catch (err) {
          failedFiles[i] = `${file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`;
        } finally {
@@ -637,6 +711,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   const removeDocumentsFromView = (driveIds: Set<string>, documentIds: Set<number>) => {
+    if (driveIds.size === 0 && documentIds.size === 0) return;
+    mutationRevisionRef.current += 1;
+    invalidateAiSearch();
     const matches = (source: DocumentSource) => source.documentId !== undefined && documentIds.has(source.documentId) || !!source.driveFileId && driveIds.has(source.driveFileId);
     setFiles(prev => prev.filter(file => !driveIds.has(file.id) && !(file.documentId !== undefined && documentIds.has(file.documentId))));
     setSelectedFile(prev => prev && (driveIds.has(prev.id) || prev.documentId !== undefined && documentIds.has(prev.documentId)) ? null : prev);
@@ -659,6 +736,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       return;
     }
     if (!window.confirm(`Permanently delete "${target.name}" and its expiry reminders? The source file will be removed from Google Drive.`)) return;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsDeletingSource(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(id))}`, { method: 'DELETE', headers: { 'x-company': selectedCompany, 'x-username': loginUsername } });
@@ -666,21 +745,24 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || 'The document could not be deleted.');
       }
+      if (!isCurrent()) return;
       removeDocumentsFromView(new Set(target.driveFileId ? [target.driveFileId] : []), new Set(target.documentId !== undefined ? [target.documentId] : []));
       setIsEditingReminder(false);
       setSourcePreview(null);
       showToast('Document and reminders deleted.', 'success');
       await Promise.all([fetchDirectory(true), fetchNotifications()]);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'The document could not be deleted.', 'error');
+      if (isCurrent()) showToast(err instanceof Error ? err.message : 'The document could not be deleted.', 'error');
     } finally {
-      setIsDeletingSource(false);
+      if (isCurrent()) setIsDeletingSource(false);
     }
   };
 
   const handleBulkDelete = async () => {
     if (selectedItems.size === 0 || isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource) return;
     if (!window.confirm(`Permanently delete ${selectedItems.size} selected item(s)?`)) return;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsLoading(true); 
     try {
       const nestedIds = new Set<string>();
@@ -691,6 +773,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         if (!res.ok) throw new Error('Delete failed');
         return id;
       }));
+      if (!isCurrent()) return;
       const deletedIds = new Set<string>();
       results.forEach(result => { if (result.status === 'fulfilled') { deletedIds.add(result.value); getAllDescendants(result.value).forEach(id => deletedIds.add(id)); } });
       const documentIds = new Set(files.flatMap(file => deletedIds.has(file.id) && file.documentId !== undefined ? [file.documentId] : []));
@@ -699,10 +782,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       showToast(failures ? `${failures} selected item(s) could not be deleted. Try again.` : `Deleted ${selectedItems.size} item(s)`, failures ? 'error' : 'success');
       await Promise.all([fetchDirectory(true), fetchNotifications()]);
     } catch {
-      showToast('Failed to delete some items', 'error');
-      await fetchDirectory(true);
+      if (isCurrent()) {
+        showToast('Failed to delete some items', 'error');
+        await fetchDirectory(true);
+      }
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
     }
   };
 
