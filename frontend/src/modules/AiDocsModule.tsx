@@ -314,7 +314,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        await new Promise(resolve => setTimeout(resolve, 400));
     }
 
-setUploadProgress(null);
+    setUploadProgress(null);
     setIsUploading(false);
 
     if (uploadedDocs.length === 0) {
@@ -322,21 +322,20 @@ setUploadProgress(null);
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Instantly open modal with a default of 30 days (No AI scanning needed!)
-// 1. Instantly open modal with a default of 30 days
+    // 1. Instantly open modal with a default of 30 days
     const instantReviewFiles = uploadedDocs.map((doc: any) => ({
       id: doc.id,
       name: doc.originalName || doc.filename || 'Document',
-      expiryDate: '', // <-- THIS FIXES THE RED LINE!
+      expiryDate: '', // Prevent TypeScript error
       reminderDays: 30
     }));
     
     setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: instantReviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
-  }; // <-- Closes handleFileUpload // // <-- Closes handleFileUpload
- // --- API: SAVE REMINDERS ---
-// --- API: SAVE REMINDERS ---
+  };
+
+  // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
@@ -983,7 +982,36 @@ setUploadProgress(null);
       )}
 
       {/* AI EXPIRY & REMINDER REVIEW MODAL */}
-  {expiryReviewModal.files.map((file, index) => (
+      {expiryReviewModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
+           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
+                 <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight">Document Validity Review</h3>
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Set Reminders for Uploaded Files</p>
+                 </div>
+                 {!expiryReviewModal.isAnalyzing && (
+                   <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                   </button>
+                 )}
+              </div>
+
+              {expiryReviewModal.isAnalyzing ? (
+                 <div className="p-16 flex flex-col items-center justify-center space-y-6 bg-slate-50">
+                    <div className="animate-spin rounded-full h-14 w-14 border-4 border-indigo-200 border-t-indigo-600"></div>
+                    <div>
+                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">AI is analyzing your documents...</div>
+                      <div className="text-[10px] font-bold text-slate-400 text-center uppercase tracking-widest mt-2">Extracting expiry and validity dates. Please wait.</div>
+                    </div>
+                 </div>
+              ) : (
+                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
+                   <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
+                      Review the auto-detected dates below. If a document does not expire, simply leave the date blank.
+                   </div>
+                   
+                   {expiryReviewModal.files.map((file, index) => (
                       <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                          <div className="flex-1 min-w-0 pr-4">
                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
@@ -1016,6 +1044,16 @@ setUploadProgress(null);
                          </div>
                       </div>
                    ))}
+                   
+                   <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
+                      <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Reminders</button>
+                      <button onClick={handleSaveReminders} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
+                   </div>
+                 </div>
+              )}
+           </div>
+        </div>
+      )}
 
       {/* Rename Modal */}
       {renameTarget && (
@@ -1034,6 +1072,7 @@ setUploadProgress(null);
       )}
 
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+
       {/* FLOATING NOTIFICATION WIDGET */}
       <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
         {/* The Open Panel */}
