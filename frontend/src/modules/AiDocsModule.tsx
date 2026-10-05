@@ -1111,6 +1111,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
       {/* FLOATING NOTIFICATION WIDGET */}
+     {/* FLOATING NOTIFICATION WIDGET */}
       <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
         {/* The Open Panel */}
         {isNotifOpen && (
@@ -1121,18 +1122,33 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </div>
             <div className="max-h-80 overflow-y-auto p-2 bg-slate-50">
               {notifications.length === 0 ? (
-                <div className="p-4 text-center text-xs font-bold text-slate-400">No active reminders.</div>
+                <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders scheduled.</div>
               ) : (
                 notifications.map(n => (
-                  <div key={n.id} className="bg-white p-3 mb-2 rounded-xl border border-slate-200 shadow-sm">
-                    <div className="text-xs font-black text-slate-800 truncate mb-1">{n.fileName}</div>
-                    <div className="text-[10px] font-bold text-rose-500 uppercase">Expires: {new Date(n.expiryDate).toLocaleDateString()}</div>
-                    <div className="flex gap-2 mt-3">
-                      {n.status === 'PENDING' && (
-                        <button onClick={() => handleUpdateNotif(n.id, 'PROCESSING')} className="flex-1 bg-amber-100 text-amber-700 hover:bg-amber-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Process</button>
-                      )}
-                      <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Fulfill</button>
+                  <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
+                    <div className="flex justify-between items-start mb-1.5">
+                       <div className="text-xs font-black text-slate-800 truncate pr-2">{n.fileName}</div>
+                       {!n.isTriggered ? (
+                          <span className="text-[9px] font-bold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Waiting</span>
+                       ) : (
+                          <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
+                       )}
                     </div>
+                    
+                    <div className="text-[10px] font-bold text-slate-500 uppercase">AI Expiry: {new Date(n.expiryDate).toLocaleDateString()}</div>
+                    
+                    {!n.isTriggered ? (
+                        <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
+                          Reminds on: {new Date(n.triggerDate).toLocaleDateString()}
+                        </div>
+                    ) : (
+                        <div className="flex gap-2 mt-3">
+                          {n.status === 'PENDING' && (
+                            <button onClick={() => handleUpdateNotif(n.id, 'PROCESSING')} className="flex-1 bg-amber-100 text-amber-700 hover:bg-amber-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Process</button>
+                          )}
+                          <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Fulfill</button>
+                        </div>
+                    )}
                   </div>
                 ))
               )}
@@ -1146,9 +1162,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           className="relative w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-          {notifications.length > 0 && (
+          {notifications.filter(n => n.isTriggered).length > 0 && (
             <span className="absolute top-0 right-0 w-5 h-5 bg-rose-500 border-2 border-white text-[10px] font-black flex items-center justify-center rounded-full animate-bounce">
-              {notifications.length}
+              {notifications.filter(n => n.isTriggered).length}
             </span>
           )}
         </button>
