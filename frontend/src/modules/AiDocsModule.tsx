@@ -324,18 +324,15 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
        const expiryData = await analysisRes.json();
 
+       // CLEAN, DETERMINISTIC LOGIC - NO REGEX NEEDED!
        const finalReviewFiles = initialReviewFiles.map((file: any) => {
-          const rawAiText = expiryData[file.id] || expiryData[String(file.id)] || '';
-          let finalDateStr = '';
+          // The backend gives us a strict YYYY-MM-DD string, or a blank string if it failed.
+          const cleanDate = expiryData[file.id] || expiryData[String(file.id)] || '';
           
-          if (rawAiText) {
-             const strictMatch = rawAiText.match(/\d{4}-\d{2}-\d{2}/);
-             if (strictMatch) {
-                 finalDateStr = strictMatch[0];
-             } else {
-                 const pd = new Date(rawAiText);
-                 if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
-             }
+          let finalDateStr = '';
+          if (cleanDate) {
+             const pd = new Date(cleanDate);
+             if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
           }
           
           return { ...file, expiryDate: finalDateStr };
@@ -655,7 +652,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               onChange={e => setAiQuery(e.target.value)}
               className="w-full bg-transparent text-sm px-3 py-2.5 outline-none placeholder:text-slate-400 font-medium"
             />
-            {/* DESKTOP MODEL SELECTOR */}
             <select 
               value={selectedModel} 
               onChange={(e) => setSelectedModel(e.target.value)}
