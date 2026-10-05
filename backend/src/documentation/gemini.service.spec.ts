@@ -128,7 +128,7 @@ describe('GeminiService expiry analysis', () => {
   });
 
   it('indexes DOCX as readable text while keeping a usable MIME type for document search', async () => {
-    jest.mocked(readFile).mockResolvedValue(await docxBuffer());
+    jest.mocked(readFile).mockResolvedValue(Buffer.from(await docxBuffer()));
     client.files.upload.mockResolvedValue({ name: 'files/word', uri: 'uri/word', state: 'ACTIVE' });
     const result = await service.uploadFileToGemini('permit.docx', 'application/octet-stream', 'permit.docx');
     const request = client.files.upload.mock.calls[0][0];
