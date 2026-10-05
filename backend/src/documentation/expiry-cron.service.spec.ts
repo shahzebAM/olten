@@ -98,6 +98,19 @@ describe('ExpiryCronService', () => {
     expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
+  it.each(['AWAITING_REMINDER', 'AWAITING_REMINDER_REVIEW'])
+    ('preserves %s after expiry and server restart until reminder review is saved', async expiryStatus => {
+      prisma.document.findMany.mockResolvedValue([document({
+        expiryStatus, expiryDate: date('2026-10-03'),
+        reminders: [{ reminderType: 'AUTO_DEFAULT_30', status: 'PENDING' }],
+      })]);
+      await service.onModuleInit();
+      await service.checkExpirations();
+      expect(prisma.document.updateMany).not.toHaveBeenCalled();
+      expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+      expect(prisma.documentReminder.updateMany).not.toHaveBeenCalled();
+    });
+
   it('checks previously expired documents so a renewed date can become active again', async () => {
     prisma.document.findMany.mockResolvedValue([document({ expiryStatus: 'EXPIRED', expiryDate: date('2027-01-01') })]);
     await service.checkExpirations();

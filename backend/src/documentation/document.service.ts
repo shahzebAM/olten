@@ -4,7 +4,7 @@ import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
 import { ExpiryExtractorService } from './expiry-extractor.service';
 import type { ExtractedExpiry } from './expiry-extractor.service';
-import { choiceFromReminder, companyToday, expiryStatus, parseIsoDate, readReminderChoice, reminderMessage, reminderSchedule } from './expiry-date.utils';
+import { choiceFromReminder, companyToday, daysBetween, expiryStatus, parseIsoDate, readReminderChoice, reminderMessage, reminderSchedule } from './expiry-date.utils';
 import type { ReminderChoice, ReminderOptions } from './expiry-date.utils';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -61,8 +61,19 @@ export class DocumentService {
   }
 
   private needsExpiryReview(doc: any) {
-    return doc.expiryStatus === 'NEEDS_REVIEW'
+    return doc.expiryStatus === 'NEEDS_REVIEW' || doc.expiryStatus === 'AWAITING_REMINDER_REVIEW'
       || doc.expiryDetectionMethod !== 'MANUAL' && typeof doc.expiryConfidence === 'number' && doc.expiryConfidence < 0.85;
+  }
+
+  private isReminderSetupPending(doc: any) {
+    return typeof doc.expiryStatus === 'string' && doc.expiryStatus.startsWith('AWAITING_REMINDER');
+  }
+
+  private expiryPayload(doc: any) {
+    const expiry = parseIsoDate(doc.expiryDate);
+    return { ...doc, expiryStatus: expiryStatus(expiry, this.needsExpiryReview(doc)),
+      reminderSetupPending: this.isReminderSetupPending(doc),
+      daysRemaining: expiry ? daysBetween(expiry, companyToday()) : null };
   }
 
   private serializeReminder(rem: any, today = companyToday()) {
@@ -70,6 +81,7 @@ export class DocumentService {
     const choice = choiceFromReminder(rem);
     const trigger = parseIsoDate(rem.triggerDate) || reminderSchedule(expiry, choice).triggerDate;
     return { ...rem, triggerDate: trigger, reminderValue: choice.value, reminderUnit: choice.unit,
+      daysRemaining: daysBetween(expiry, today),
       message: reminderMessage(rem.fileName, expiry, today),
       isTriggered: today >= trigger && ['PENDING', 'PROCESSING'].includes(rem.status) };
   }
@@ -77,6 +89,7 @@ export class DocumentService {
   private reminderWarning(doc: any) {
     if (this.needsExpiryReview(doc)) return 'Confirm the expiry date to activate your reminder.';
     if (!doc.expiryDate) return 'No expiry date was detected. Enter a date to activate your reminder.';
+    if (this.isReminderSetupPending(doc)) return 'Choose and save your reminder after upload.';
     return undefined;
   }
 
@@ -112,9 +125,11 @@ export class DocumentService {
     return { ...directory, files: directory.files.map((file: any) => {
       const doc = byDriveId.get(file.id);
       if (!doc) return file;
-      const reminder = this.configuredReminder(doc.reminders) || doc.reminders[0];
+      const reminder = this.isReminderSetupPending(doc) ? undefined : this.configuredReminder(doc.reminders) || doc.reminders[0];
+      const payload = this.expiryPayload(doc);
       return { ...file, documentId: doc.id, documentType: doc.documentType, documentNumber: doc.documentNumber,
-        expiryDate: doc.expiryDate, expiryStatus: expiryStatus(parseIsoDate(doc.expiryDate), this.needsExpiryReview(doc)),
+        expiryDate: doc.expiryDate, expiryStatus: payload.expiryStatus, expiryDateText: doc.expiryDateText,
+        daysRemaining: payload.daysRemaining, reminderSetupPending: payload.reminderSetupPending,
         expiryDetectionMethod: doc.expiryDetectionMethod, expiryConfidence: doc.expiryConfidence,
         reminder: reminder ? this.serializeReminder(reminder) : null, reminderWarning: this.reminderWarning(doc) };
     }) };
@@ -129,6 +144,8 @@ export class DocumentService {
     this.requireCompany(company);
     if (!Buffer.isBuffer(file?.buffer) || !file.buffer.length) throw new BadRequestException('An empty file cannot be uploaded');
     const choice = readReminderChoice(options);
+    if (options.reminderSetup !== undefined && options.reminderSetup !== 'after-upload') throw new BadRequestException('Invalid reminder setup mode');
+    const setupAfterUpload = options.reminderSetup === 'after-upload';
     const safeMimeType = this.geminiService.normalizeMimeType(file.mimetype, file.originalname);
     const tempDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'olten-doc-'));
     const tempFilePath = path.join(tempDirectory, `upload${path.extname(file.originalname)}`);
@@ -170,12 +187,14 @@ export class DocumentService {
           renewalDate: finalExpiryData?.renewalDate, renewalDaysBeforeExpiry: finalExpiryData?.renewalDaysBeforeExpiry,
           expiryDateText: finalExpiryData?.expiryDateText, expiryConfidence: finalExpiryData?.confidence,
           expiryDetectionMethod: finalExpiryData?.method,
-          expiryStatus: expiryStatus(finalExpiryData?.expiryDate || null, !!detectionWarning || !!finalExpiryData?.expiryDate && finalExpiryData.confidence < 0.85),
+          expiryStatus: setupAfterUpload
+            ? (!!detectionWarning || !!finalExpiryData?.expiryDate && finalExpiryData.confidence < 0.85 ? 'AWAITING_REMINDER_REVIEW' : 'AWAITING_REMINDER')
+            : expiryStatus(finalExpiryData?.expiryDate || null, !!detectionWarning || !!finalExpiryData?.expiryDate && finalExpiryData.confidence < 0.85),
           lastExpiryCheck: new Date(),
         } });
-        const reminder = doc.expiryDate && doc.expiryStatus !== 'NEEDS_REVIEW' ? await this.persistReminder(client, doc, choice) : null;
+        const reminder = !setupAfterUpload && doc.expiryDate && !this.needsExpiryReview(doc) ? await this.persistReminder(client, doc, choice) : null;
         this.companyCache.delete(company);
-        return { ...doc, reminder, reminderWarning: this.reminderWarning(doc), detectionWarning, indexingWarning };
+        return { ...this.expiryPayload(doc), reminder, reminderWarning: this.reminderWarning(doc), detectionWarning, indexingWarning };
       }, { timeout: 15000 });
     } catch (error: any) {
       // Roll back remote copies if saving the document/reminder transaction fails.
@@ -205,7 +224,7 @@ export class DocumentService {
       const existing = this.configuredReminder(reminders) || reminders[0];
       const choice = readReminderChoice(options, existing ? choiceFromReminder(existing) : undefined);
       const reminder = await this.persistReminder(client, updated, choice, this.needsExpiryReview(doc) || !doc.expiryDate);
-      return { ...updated, reminder };
+      return { ...this.expiryPayload(updated), reminder };
     }, { timeout: 15000 });
   }
 
@@ -225,25 +244,30 @@ export class DocumentService {
       // timestamps, but require the original expiry and trust values to match.
       const updated = await client.document.update({ where: { id: doc.id, company: doc.company,
         status: doc.status, expiryDate: doc.expiryDate, expiryDetectionMethod: doc.expiryDetectionMethod,
-        expiryConfidence: doc.expiryConfidence }, data: {
+        expiryConfidence: doc.expiryConfidence,
+        // Saving a reliable detected date can keep its date and confidence while
+        // clearing setup. That confirmation must also beat a pending analysis.
+        ...(this.isReminderSetupPending(doc) ? { expiryStatus: doc.expiryStatus } : {}) }, data: {
         expiryDate: data?.expiryDate || null, documentType: data?.documentType || null,
         documentNumber: data?.documentNumber || null, issueDate: data?.issueDate || null,
         renewalDate: data?.renewalDate || null, renewalDaysBeforeExpiry: data?.renewalDaysBeforeExpiry ?? null,
         expiryDateText: data?.expiryDateText || null, expiryConfidence: data?.confidence ?? null,
         expiryDetectionMethod: data?.method || 'GEMINI',
-        expiryStatus: expiryStatus(data?.expiryDate || null, !!data?.expiryDate && data.confidence < 0.85),
+        expiryStatus: this.isReminderSetupPending(doc)
+          ? (!!data?.expiryDate && data.confidence < 0.85 ? 'AWAITING_REMINDER_REVIEW' : 'AWAITING_REMINDER')
+          : expiryStatus(data?.expiryDate || null, !!data?.expiryDate && data.confidence < 0.85),
         lastExpiryCheck: new Date(),
       } });
       const reminders = await client.documentReminder.findMany({ where: { documentId: doc.id } });
       const previous = this.configuredReminder(reminders) || reminders[0];
       let reminder: any = null;
-      if (updated.expiryDate && updated.expiryStatus !== 'NEEDS_REVIEW') {
+      if (!this.isReminderSetupPending(updated) && updated.expiryDate && !this.needsExpiryReview(updated)) {
         reminder = await this.persistReminder(client, updated, previous ? choiceFromReminder(previous) : readReminderChoice(), this.needsExpiryReview(doc) || !doc.expiryDate);
       } else {
         // Keep the user's chosen lead time for a later corrected date, but stop stale alerts.
         await client.documentReminder.updateMany({ where: { documentId: doc.id }, data: { status: 'FULFILLED' } });
       }
-      return { ...updated, reminder, reminderWarning: this.reminderWarning(updated) };
+      return { ...this.expiryPayload(updated), reminder, reminderWarning: this.reminderWarning(updated) };
     }, { timeout: 15000 });
   }
 
@@ -308,12 +332,14 @@ export class DocumentService {
     const today = companyToday();
     const docs = await prisma.document.findMany({ where: { company, status: 'ACTIVE' }, include: { reminders: true } });
     return docs.flatMap(doc => {
-      if (this.needsExpiryReview(doc) || !doc.expiryDate) return [];
+      if (this.isReminderSetupPending(doc) || this.needsExpiryReview(doc) || !doc.expiryDate) return [];
       const configured = this.configuredReminder(doc.reminders);
       return doc.reminders.filter(rem => ['PENDING', 'PROCESSING'].includes(rem.status)
         && parseIsoDate(rem.expiryDate)?.getTime() === parseIsoDate(doc.expiryDate)?.getTime()
         && (!configured || !this.isAutomaticReminder(rem.reminderType)))
-        .map(rem => this.serializeReminder(rem, today));
+        .map(rem => ({ ...this.serializeReminder(rem, today), documentId: doc.id,
+          driveFileId: this.driveId(doc.googleDriveLink), sourceUrl: doc.googleDriveLink,
+          expiryDateText: doc.expiryDateText }));
     }).sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
   }
 

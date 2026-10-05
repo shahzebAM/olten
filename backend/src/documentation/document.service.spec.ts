@@ -56,6 +56,37 @@ describe('document expiry and user reminders', () => {
     expect(result.reminder).toMatchObject({ reminderDays: 2, triggerDate: date('2026-10-04'), isTriggered: true });
   });
 
+  it('waits for the post-upload review without creating a default reminder', async () => {
+    const result = await service.processNewDocument({ originalname: 'permit.pdf', mimetype: 'application/pdf',
+      buffer: Buffer.from('PDF') }, 'Olten', 'admin', undefined, { reminderSetup: 'after-upload' });
+    expect(result).toMatchObject({ reminder: null, reminderSetupPending: true, expiryStatus: 'EXPIRING_SOON', daysRemaining: 1 });
+    expect(prisma.document.create.mock.calls[0][0].data.expiryStatus).toBe('AWAITING_REMINDER');
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it('keeps missing-date uploads pending so later reanalysis does not activate a default', async () => {
+    gemini.extractStructuredExpiry.mockResolvedValue(null);
+    const result = await service.processNewDocument({ originalname: 'permit.pdf', mimetype: 'application/pdf',
+      buffer: Buffer.from('PDF') }, 'Olten', 'admin', undefined, { reminderSetup: 'after-upload' });
+    expect(result).toMatchObject({ expiryStatus: 'NO_EXPIRY', reminderSetupPending: true, reminder: null });
+    expect(prisma.document.create.mock.calls[0][0].data.expiryStatus).toBe('AWAITING_REMINDER');
+  });
+
+  it('keeps an after-upload date pending when reanalysis finds a valid expiry', async () => {
+    prisma.document.findFirst.mockResolvedValue({ ...doc(), expiryDate: null, expiryStatus: 'AWAITING_REMINDER' });
+    const result = await service.reanalyzeDocument(1, 'Olten');
+    expect(result).toMatchObject({ expiryDate: date('2026-10-06'), reminderSetupPending: true, reminder: null });
+    expect(prisma.document.update.mock.calls[0][0].data.expiryStatus).toBe('AWAITING_REMINDER');
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it('activates a post-upload reminder only when the user saves their choice', async () => {
+    prisma.document.findFirst.mockResolvedValue({ ...doc(), expiryStatus: 'AWAITING_REMINDER' });
+    const result = await service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 3 }], 'Olten');
+    expect(prisma.document.update.mock.calls[0][0].data.expiryStatus).toBe('EXPIRING_SOON');
+    expect(result.reminders[0]).toMatchObject({ reminderDays: 3, isTriggered: true });
+  });
+
   it('saves the selected calendar months and triggers immediately inside that window', async () => {
     const result = await service.processNewDocument({ originalname: 'permit.pdf', mimetype: 'application/pdf',
       buffer: Buffer.from('PDF') }, 'Olten', 'admin', undefined, { reminderValue: '2', reminderUnit: 'months' });
@@ -172,11 +203,53 @@ describe('document expiry and user reminders', () => {
     expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
+  it('preserves a same-date reminder confirmed while pending-upload reanalysis is running', async () => {
+    let current = { ...doc(), expiryStatus: 'AWAITING_REMINDER' };
+    prisma.document.findFirst.mockImplementation(async () => ({ ...current }));
+    prisma.document.update.mockImplementation(async ({ where, data }) => {
+      if (where.expiryStatus !== undefined && where.expiryStatus !== current.expiryStatus) {
+        throw Object.assign(new Error('Reminder setup was confirmed'), { code: 'P2025' });
+      }
+      current = { ...current, ...data };
+      return { ...current };
+    });
+    gemini.extractStructuredExpiry.mockImplementation(async () => {
+      await service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 2 }], 'Olten');
+      return { expiryDate: date('2026-10-06'), confidence: 0.95, method: 'GEMINI' };
+    });
+
+    await expect(service.reanalyzeDocument(1, 'Olten')).rejects.toThrow('current expiry and reminder were preserved');
+    expect(prisma.document.update.mock.calls[1][0].where.expiryStatus).toBe('AWAITING_REMINDER');
+    expect(current.expiryStatus).toBe('EXPIRING_SOON');
+    expect(prisma.documentReminder.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.documentReminder.upsert.mock.calls[0][0].create).toMatchObject({ reminderDays: 2, status: 'PENDING' });
+    expect(prisma.documentReminder.updateMany).not.toHaveBeenCalled();
+  });
+
   it('suppresses automatic rows when a fulfilled user schedule exists', async () => {
     prisma.document.findMany.mockResolvedValue([{ ...doc(), reminders: [
       { id: 11, reminderType: 'MANUAL', reminderDays: 2, status: 'FULFILLED' },
       { id: 12, reminderType: 'AUTO_DEFAULT_30', status: 'PENDING' },
     ] }]);
     expect(await service.getActiveNotifications('Olten')).toEqual([]);
+  });
+
+  it('does not expose even a stale automatic reminder while post-upload setup is pending', async () => {
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), expiryStatus: 'AWAITING_REMINDER', reminders: [
+      { id: 12, reminderType: 'AUTO_DEFAULT_30', status: 'PENDING', expiryDate: date('2026-10-06') },
+    ] }]);
+    expect(await service.getActiveNotifications('Olten')).toEqual([]);
+  });
+
+  it('returns exact document and Drive IDs with source links for duplicate filenames', async () => {
+    const reminder = { id: 10, fileName: 'permit.pdf', expiryDate: date('2026-10-06'),
+      triggerDate: date('2026-10-03'), reminderDays: 3, reminderType: 'MANUAL', status: 'PENDING' };
+    prisma.document.findMany.mockResolvedValue([
+      { ...doc(), reminders: [reminder] },
+      { ...doc(), id: 2, googleDriveLink: 'https://drive.google.com/file/d/other-permit/view', reminders: [{ ...reminder, id: 11, documentId: 2 }] },
+    ]);
+    const result = await service.getActiveNotifications('Olten');
+    expect(result[0]).toMatchObject({ documentId: 1, driveFileId: 'drive-permit', sourceUrl: doc().googleDriveLink, daysRemaining: 1 });
+    expect(result[1]).toMatchObject({ documentId: 2, driveFileId: 'other-permit', sourceUrl: 'https://drive.google.com/file/d/other-permit/view' });
   });
 });

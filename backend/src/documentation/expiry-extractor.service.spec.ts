@@ -19,13 +19,20 @@ describe('ExpiryExtractorService', () => {
     ['Expiry Date: 13/06/2026', '2026-06-13'],
     ['Expiry Date: 06/13/2026', '2026-06-13'],
     ['Expiry Date: 05/05/2026', '2026-05-05'],
+    ['Validity of License:06October2026', '2026-10-06'],
   ])('accepts unambiguous readable date %s', (text, expected) => {
     expect(service.extractViaRegex(text)?.expiryDate?.toISOString().slice(0, 10)).toBe(expected);
   });
 
-  it('chooses the earliest explicitly labelled expiry', () => {
+  it('does not guess between different generic expiry labels', () => {
     const result = service.extractViaRegex('Expiry Date: 2027-01-10\nValid Until: 2026-12-31');
-    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-12-31');
+    expect(result).toBeNull();
+  });
+
+  it('prefers the primary license validity over an expired personnel government ID', () => {
+    const text = 'License Number: CDRRHR-RVII-MDI/W-207349\nValidity of License:06October2026\nQualified Personnel\nGovernment ID: Professional Regulation Commission ID0083800\nExpiry Date16June2025';
+    expect(service.extractPrimaryValidity(text)?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(service.extractViaRegex(text)?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
   });
 
   it('reads advance renewal notice without treating a period after expiry as notice', () => {

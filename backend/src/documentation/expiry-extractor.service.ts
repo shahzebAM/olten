@@ -16,18 +16,38 @@ export interface ExtractedExpiry {
 
 @Injectable()
 export class ExpiryExtractorService {
+  // Generic date labels can belong to staff identity cards or attachments. A
+  // label naming the license/permit itself identifies the primary document.
+  public extractPrimaryValidity(text: string): ExtractedExpiry | null {
+    const candidates = this.findCandidates(text).filter(candidate => candidate.primary);
+    const dates = new Set(candidates.map(candidate => candidate.date.toISOString()));
+    return dates.size === 1 ? this.toResult(candidates[0], text) : null;
+  }
+
   public extractViaRegex(text: string): ExtractedExpiry | null {
     // This helper accepts extracted text only; PDF/image/Office binary bytes
     // must go through Gemini, never buffer.toString() and a date guess.
     if (!text || text.includes('\0')) return null;
-    const datePattern = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|\\d{1,2}(?:st|nd|rd|th)?[ \\t]+[A-Za-z]+[ \\t]+\\d{4}|[A-Za-z]+[ \\t]+\\d{1,2}(?:st|nd|rd|th)?[,]?[ \\t]+\\d{4})';
-    const expiryRegex = new RegExp(`\\b(?:Expiry Date|Expiration Date|Date of Expiry|Valid Until|Valid Through|Validity of License|License Valid Until|Permit Expiry)\\s*[:\\-]?\\s*(${datePattern})(?![\\d/-])`, 'gi');
-    const candidates = Array.from(text.matchAll(expiryRegex))
-      .map(match => ({ date: this.parseDateString(match[1].trim()), evidence: match[0] }))
-      .filter((candidate): candidate is { date: Date; evidence: string } => candidate.date !== null)
-      .sort((left, right) => left.date.getTime() - right.date.getTime());
+    const candidates = this.findCandidates(text);
     if (!candidates.length) return null;
-    const candidate = candidates[0];
+    const primary = candidates.filter(candidate => candidate.primary);
+    const relevant = primary.length ? primary : candidates;
+    // Different dates require document context; never pick an expired staff ID
+    // merely because it is the earliest date in a primary license's appendix.
+    if (new Set(relevant.map(candidate => candidate.date.toISOString())).size > 1) return null;
+    return this.toResult(relevant[0], text);
+  }
+
+  private findCandidates(text: string): { date: Date; evidence: string; primary: boolean }[] {
+    if (!text || text.includes('\0')) return [];
+    const datePattern = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|\\d{1,2}(?:st|nd|rd|th)?\\s*[A-Za-z]+\\s*\\d{4}|[A-Za-z]+\\s*\\d{1,2}(?:st|nd|rd|th)?[,]?\\s*\\d{4})';
+    const expiryRegex = new RegExp(`\\b(Expiry\\s*Date|Expiration\\s*Date|Date\\s*of\\s*Expiry|Valid\\s*Until|Valid\\s*Through|Validity\\s*of\\s*(?:the\\s*)?(?:License|Licence|Permit)|(?:License|Licence|Permit)\\s*(?:Valid\\s*Until|Expiry(?:\\s*Date)?|Expiration(?:\\s*Date)?))\\s*[:\\-]?\\s*(${datePattern})(?![\\d/-])`, 'gi');
+    return Array.from(text.matchAll(expiryRegex))
+      .map(match => ({ date: this.parseDateString(match[2].trim()), evidence: match[0], primary: /license|licence|permit/i.test(match[1]) }))
+      .filter((candidate): candidate is { date: Date; evidence: string; primary: boolean } => candidate.date !== null);
+  }
+
+  private toResult(candidate: { date: Date; evidence: string }, text: string): ExtractedExpiry {
     return {
         documentType: null,
         documentNumber: null,
@@ -37,7 +57,7 @@ export class ExpiryExtractorService {
         renewalDaysBeforeExpiry: this.extractRenewalDays(text),
         expiryDateText: candidate.evidence,
         confidence: 0.95,
-        reason: 'Explicit expiry label with an unambiguous calendar date in readable text.',
+        reason: 'Explicit document validity label with an unambiguous calendar date in readable text.',
         method: 'REGEX'
     };
   }
@@ -54,7 +74,7 @@ export class ExpiryExtractorService {
       return parseIsoDate(`${numeric[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     }
 
-    const named = dateStr.replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1').match(/^(?:(\d{1,2})\s+([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2}),?)\s+(\d{4})$/);
+    const named = dateStr.replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1').match(/^(?:(\d{1,2})\s*([A-Za-z]+)|([A-Za-z]+)\s*(\d{1,2}),?)\s*(\d{4})$/);
     if (!named) return null;
     const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
     const monthText = (named[2] || named[3]).toLowerCase();

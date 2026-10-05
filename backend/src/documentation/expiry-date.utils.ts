@@ -10,6 +10,7 @@ export interface ReminderOptions {
   reminderDays?: unknown;
   reminderValue?: unknown;
   reminderUnit?: unknown;
+  reminderSetup?: unknown;
 }
 
 // Expiry dates are calendar dates, stored at UTC midnight, never parsed heuristically.

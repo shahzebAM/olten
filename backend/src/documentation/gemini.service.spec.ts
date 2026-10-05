@@ -2,12 +2,22 @@ import { GoogleGenAI } from '@google/genai';
 import JSZip from 'jszip';
 import { readFile } from 'node:fs/promises';
 import { GeminiService } from './gemini.service';
+import { readPdfExpiryText } from './pdf-expiry-text';
 
 jest.mock('@google/genai', () => ({
   GoogleGenAI: jest.fn(),
-  Type: { OBJECT: 'OBJECT', STRING: 'STRING', INTEGER: 'INTEGER', NUMBER: 'NUMBER' },
+  Type: { OBJECT: 'OBJECT', STRING: 'STRING', INTEGER: 'INTEGER', NUMBER: 'NUMBER', BOOLEAN: 'BOOLEAN' },
+  MediaResolution: { MEDIA_RESOLUTION_HIGH: 'MEDIA_RESOLUTION_HIGH' },
 }));
 jest.mock('node:fs/promises', () => ({ readFile: jest.fn() }));
+jest.mock('./pdf-expiry-text', () => ({ readPdfExpiryText: jest.fn() }));
+
+function verificationResponse(overrides: Record<string, unknown> = {}) {
+  return { text: JSON.stringify({ hasPrimaryExpiry: true, uncertain: false,
+    documentType: 'Permit', documentNumber: 'P-123', expiryDateText: 'Expiry Date: 6 October 2026',
+    confidence: 0.98, reason: 'The primary document explicitly states its expiry.', ...overrides,
+  }) };
+}
 
 function expiryResponse(overrides: Record<string, unknown> = {}) {
   return { text: JSON.stringify({
@@ -41,12 +51,15 @@ describe('GeminiService expiry analysis', () => {
 
   beforeEach(() => {
     client = {
-      models: { generateContent: jest.fn().mockResolvedValue(expiryResponse()) },
+      models: { generateContent: jest.fn().mockImplementation(request => Promise.resolve(
+        request.config.responseSchema.properties.hasPrimaryExpiry ? verificationResponse() : expiryResponse(),
+      )) },
       files: { upload: jest.fn(), get: jest.fn(), delete: jest.fn().mockResolvedValue({}) },
     };
     jest.mocked(GoogleGenAI).mockImplementation(() => client as unknown as GoogleGenAI);
     process.env.GEMINI_EXPIRY_MODEL = 'configured-expiry-model';
     service = new GeminiService();
+    jest.mocked(readPdfExpiryText).mockResolvedValue('');
   });
 
   afterEach(() => {
@@ -66,8 +79,50 @@ describe('GeminiService expiry analysis', () => {
     expect(request.config.systemInstruction).toContain('birth date');
   });
 
+  it('corrects an expired personnel ID to the primary license validity from the real incident', async () => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue('[Document page 1]\nLicense Number CDRRHR-RVII-MDI/W-207349\nValidity of License:\n06October2026\n[Document page 2]\nQualified Personnel\nProfessional Regulation Commission ID0083800\nExpiry Date16June2025');
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ issueDate: '2024-01-01', expiryDate: '2025-06-16', expiryDateText: '16June2025', confidence: 0.95 }))
+      .mockResolvedValueOnce(verificationResponse({ documentType: 'License', documentNumber: 'CDRRHR-RVII-MDI/W-207349', expiryDateText: 'Validity of License:06October2026', confidence: 0.99 }));
+    const result = await service.extractStructuredExpiry(Buffer.from('license PDF'), 'application/pdf', 'dream.pdf');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(result?.expiryDateText).toBe('Validity of License:06October2026');
+    expect(result?.documentNumber).toBe('CDRRHR-RVII-MDI/W-207349');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+    const recheck = client.models.generateContent.mock.calls[1][0];
+    expect(recheck.contents[0].parts.at(-1).text).toContain('primary document');
+    expect(recheck.contents[0].parts.at(-1).text).not.toContain('2025-06-16');
+  });
+
+  it('checks that the parsed ISO date agrees with the exact primary validity quote', async () => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue('Validity of License:06October2026');
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ issueDate: '2024-01-01', expiryDate: '2025-06-16', expiryDateText: 'Validity of License:06October2026' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Validity of License:06October2026' }));
+    await expect(service.extractStructuredExpiry(Buffer.from('license PDF'), 'application/pdf', 'dream.pdf')).resolves.toEqual(expect.objectContaining({ expiryDate: new Date('2026-10-06T00:00:00Z') }));
+  });
+
+  it('accepts a primary date corroborated by its source label without an unnecessary second call', async () => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue('Validity of License:06October2026\nQualified Personnel\nExpiry Date16June2025');
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Validity of License:06October2026' }));
+    expect((await service.extractStructuredExpiry(Buffer.from('license PDF'), 'application/pdf', 'dream.pdf'))?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires review if independent evidence still conflicts with the primary validity label', async () => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue('Validity of License:06October2026\nQualified Personnel\nExpiry Date16June2025');
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ issueDate: '2024-01-01', expiryDate: '2025-06-16', expiryDateText: '16June2025', confidence: 0.99 }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Expiry Date16June2025', confidence: 0.99 }));
+    await expect(service.extractStructuredExpiry(Buffer.from('license PDF'), 'application/pdf', 'dream.pdf')).rejects.toThrow('primary validity label conflicts');
+  });
+
+  it.each(['Date of Issue:16June2025', 'Renewal Deadline:16June2025', 'Expiry Date:06/10/2026', '16June2025'])('does not accept unverified or ambiguous primary evidence %s', async evidence => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ issueDate: '2024-01-01', expiryDate: '2025-06-16', expiryDateText: '16June2025' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: evidence, confidence: 0.99 }));
+    await expect(service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png')).rejects.toThrow('quoted primary expiry label/date');
+  });
+
   it('keeps issue-only documents distinct from extraction failures', async () => {
-    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDate: null, expiryDateText: '' }));
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDate: null, expiryDateText: '' }))
+      .mockResolvedValueOnce(verificationResponse({ hasPrimaryExpiry: false, expiryDateText: null }));
     await expect(service.extractStructuredExpiry(Buffer.from('issue only'), 'image/jpeg', 'permit.jpg')).resolves.toBeNull();
     client.models.generateContent.mockRejectedValue(new Error('API quota unavailable'));
     await expect(service.extractExpiryFromBuffer(Buffer.from('image'), 'image/jpeg', 'permit.jpg')).rejects.toThrow('API quota unavailable');
@@ -88,7 +143,9 @@ describe('GeminiService expiry analysis', () => {
   });
 
   it('preserves an explicit zero-day notice and shares validation with legacy URI calls', async () => {
-    client.models.generateContent.mockResolvedValue(expiryResponse({ renewalDaysBeforeExpiry: 0 }));
+    client.models.generateContent.mockImplementation(request => Promise.resolve(
+      request.config.responseSchema.properties.hasPrimaryExpiry ? verificationResponse() : expiryResponse({ renewalDaysBeforeExpiry: 0 }),
+    ));
     const result = await service.extractStructuredExpiryFromUri('files/permit', 'application/pdf');
     expect(result?.renewalDaysBeforeExpiry).toBe(0);
     await expect(service.extractExpiryDate('files/permit', 'application/pdf')).resolves.toBe('2026-10-06');
@@ -104,7 +161,7 @@ describe('GeminiService expiry analysis', () => {
     await service.extractStructuredExpiry(Buffer.from('Expiry Date: 2026-10-06'), 'text/plain', 'permit.txt');
     expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text).toContain('Expiry Date: 2026-10-06');
     await expect(service.extractStructuredExpiry(Buffer.from('legacy Office binary'), 'application/msword', 'permit.doc')).rejects.toThrow('Export this file as PDF');
-    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
   });
 
   it('reads real DOCX body/header text and sends embedded scans as image parts', async () => {
