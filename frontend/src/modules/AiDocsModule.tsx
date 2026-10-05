@@ -322,21 +322,53 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Instantly open modal capturing the AI Expiry Date from the backend!
-    const instantReviewFiles = uploadedDocs.map((doc: any) => ({
+    // 1. Instantly open modal with the SPINNER ON!
+    const initialReviewFiles = uploadedDocs.map((doc: any) => ({
       id: doc.id,
       name: doc.originalName || doc.filename || 'Document',
-      expiryDate: doc.expiryDate || '', // GRAB THE TRUE AI DATE HERE
+      expiryDate: '',
       reminderDays: 30
     }));
     
-    setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: instantReviewFiles });
+    setExpiryReviewModal({ isOpen: true, isAnalyzing: true, files: initialReviewFiles });
     setIsProcessing(false);
     fetchDirectory(true);
+
+    // 2. Wait for the AI to securely extract the date in the background
+    try {
+       const dbFileIds = uploadedDocs.map((d: any) => d.id);
+       
+       const analysisRes = await fetch(`${API_BASE_URL}/api/docs/analyze-expiry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+          body: JSON.stringify({ fileIds: dbFileIds })
+       });
+       
+       if (!analysisRes.ok) throw new Error("Backend API failed");
+
+       const expiryData = await analysisRes.json();
+
+       // 3. Silently inject the dates and turn off the spinner
+       const finalReviewFiles = initialReviewFiles.map((file: any) => {
+          const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
+          
+          let finalDateStr = '';
+          if (foundExpiry) {
+             const pd = new Date(foundExpiry);
+             if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
+          }
+          
+          return { ...file, expiryDate: finalDateStr };
+       });
+
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: finalReviewFiles });
+    } catch (err) {
+       showToast("Failed to auto-analyze dates.", "error");
+       setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
+    }
   };
 
   // --- API: SAVE REMINDERS ---
-// --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
@@ -1008,44 +1040,54 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                  )}
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
-                 <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-                    Set how many days before the AI-detected expiry date you want to be reminded.
+              {expiryReviewModal.isAnalyzing ? (
+                 <div className="p-16 flex flex-col items-center justify-center space-y-6 bg-slate-50">
+                    <div className="animate-spin rounded-full h-14 w-14 border-4 border-indigo-200 border-t-indigo-600"></div>
+                    <div>
+                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">AI is analyzing your documents...</div>
+                      <div className="text-[10px] font-bold text-slate-400 text-center uppercase tracking-widest mt-2">Silently extracting expiry dates. Please wait.</div>
+                    </div>
                  </div>
-                 
-     {expiryReviewModal.files.map((file, index) => (
-                    <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                       <div className="flex-1 min-w-0 pr-4">
-                          <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
-                       </div>
-                       
-                       <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                          <div className="flex flex-col gap-1.5 w-36">
-                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
-                             <div className="relative">
-                               <input 
-                                 type="number" 
-                                 min="1"
-                                 value={file.reminderDays} 
-                                 onChange={(e) => {
-                                    const newFiles = [...expiryReviewModal.files];
-                                    newFiles[index].reminderDays = Number(e.target.value);
-                                    setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                 }} 
-                                 className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                               />
-                               <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+              ) : (
+                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
+                    <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
+                       Set how many days before the AI-detected expiry date you want to be reminded.
+                    </div>
+                    
+                    {expiryReviewModal.files.map((file, index) => (
+                       <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0 pr-4">
+                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+                             <div className="flex flex-col gap-1.5 w-36">
+                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
+                                <div className="relative">
+                                  <input 
+                                    type="number" 
+                                    min="1"
+                                    value={file.reminderDays} 
+                                    onChange={(e) => {
+                                       const newFiles = [...expiryReviewModal.files];
+                                       newFiles[index].reminderDays = Number(e.target.value);
+                                       setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                    }} 
+                                    className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                                  />
+                                  <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                                </div>
                              </div>
                           </div>
                        </div>
+                    ))}
+                    
+                    <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
+                       <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Reminders</button>
+                       <button onClick={handleSaveReminders} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
                     </div>
-                 ))}
-                 
-                 <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
-                    <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Reminders</button>
-                    <button onClick={handleSaveReminders} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
                  </div>
-              </div>
+              )}
            </div>
         </div>
       )}
