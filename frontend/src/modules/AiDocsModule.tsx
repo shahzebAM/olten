@@ -999,38 +999,31 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     Set how many days before the AI-detected expiry date you want to be reminded.
                  </div>
                  
-                 {expiryReviewModal.files.map((file, index) => (
+          {expiryReviewModal.files.map((file, index) => (
                     <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                        <div className="flex-1 min-w-0 pr-4">
                           <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
-                          {file.expiryDate ? (
-                             <div className="text-xs font-bold text-emerald-600 mt-1">
-                               AI Detected Expiry: {new Date(file.expiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-                             </div>
-                          ) : (
-                             <div className="text-xs font-bold text-rose-500 mt-1">AI could not detect an expiry date.</div>
-                          )}
                        </div>
+                       
                        <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                          {file.expiryDate && (
-                            <div className="flex flex-col gap-1.5 w-36">
-                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
-                               <div className="relative">
-                                 <input 
-                                   type="number" 
-                                   min="1"
-                                   value={file.reminderDays} 
-                                   onChange={(e) => {
-                                      const newFiles = [...expiryReviewModal.files];
-                                      newFiles[index].reminderDays = Number(e.target.value);
-                                      setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                   }} 
-                                   className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                                 />
-                                 <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
-                               </div>
-                            </div>
-                          )}
+                          {/* The input box is now permanently visible for every document! */}
+                          <div className="flex flex-col gap-1.5 w-36">
+                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
+                             <div className="relative">
+                               <input 
+                                 type="number" 
+                                 min="1"
+                                 value={file.reminderDays} 
+                                 onChange={(e) => {
+                                    const newFiles = [...expiryReviewModal.files];
+                                    newFiles[index].reminderDays = Number(e.target.value);
+                                    setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                 }} 
+                                 className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                               />
+                               <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                             </div>
+                          </div>
                        </div>
                     </div>
                  ))}
