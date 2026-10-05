@@ -125,7 +125,7 @@ model Document {
   renewalDaysBeforeExpiry Int?      // E.g. 90 if the doc requires 90 days prior renewal
   lastExpiryCheck         DateTime? // Tracks when the cron job last evaluated this document
 
-  updatedAt           DateTime  @updatedAt
+  updatedAt           DateTime @default(now()) @updatedAt
 
   notifications       ExpiryNotification[]
 }
