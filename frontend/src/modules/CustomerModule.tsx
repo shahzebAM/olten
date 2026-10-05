@@ -50,10 +50,10 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
   const [newCategoryName, setNewCategoryName] = useState('');
   
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
-  const [pricingCategory, setPricingCategory] = useState('');
+  const [pricingCategory] = useState('');
   const [categoryPrices, setCategoryPrices] = useState<Record<number, string>>({});
   const [bulkPercentage, setBulkPercentage] = useState('');
-  const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [allProducts] = useState<any[]>([]);
   const [pricingSearch, setPricingSearch] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => {
@@ -201,39 +201,6 @@ useEffect(() => {
   };
 
   // --- PRICING ACTIONS ---
-  const openPricingEditor = async (catName: string) => {
-    setPricingCategory(catName);
-    setIsLoading(true);
-    try {
-      const [prodRes, priceRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(catName)}`)
-      ]);
-      
-      const prods = await prodRes.json();
-      const prices = await priceRes.json();
-      
-      setAllProducts(prods);
-      
-      const priceMap: Record<number, string> = {};
-      prices.forEach((p: any) => { priceMap[p.productId] = String(p.price) });
-      
-      prods.forEach((p: any) => {
-          if (!priceMap[p.id]) {
-              priceMap[p.id] = String(p.sellingPrice || 0);
-          }
-      });
-
-      setCategoryPrices(priceMap);
-      setIsPricingModalOpen(true);
-      setIsCategoryModalOpen(false); 
-    } catch (e) {
-        showToast("Failed to load pricing data.", "error");
-    } finally {
-        setIsLoading(false);
-    }
-  };
-
   const applyBulkPercentage = () => {
     const pct = parseFloat(bulkPercentage);
     if (isNaN(pct)) return;

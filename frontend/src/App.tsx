@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import AuthModule from './modules/AuthModule';
 import CompanyModule from './modules/CompanyModule';
 import UserControlModule from './modules/UserControlModule';

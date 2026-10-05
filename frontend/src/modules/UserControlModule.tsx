@@ -15,12 +15,10 @@ interface UserControlModuleProps {
 
 export default function UserControlModule({
   adminUsers,
-  setAdminUsers,
   fetchAdmins,
   loginUsername,
   isCurrentUserSuperAdmin,
   API_BASE_URL,
-  globalModules,
   companiesList,
   onBack,
   onLogout
