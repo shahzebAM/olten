@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import * as dotenv from 'dotenv';
+import { ExtractedExpiry } from './expiry-extractor.service';
 
 dotenv.config();
 
@@ -9,7 +10,6 @@ export class GeminiService {
   private ai: GoogleGenAI;
   private readonly logger = new Logger(GeminiService.name);
 
-  // STRICT ERP INSTRUCTIONS
   private readonly systemInstruction = `You are an elite corporate ERP AI Document Search Assistant.
 CRITICAL RULES:
 1. Base your answer STRICTLY and EXCLUSIVELY on the provided documents. Do NOT invent or guess information.
@@ -46,7 +46,6 @@ CRITICAL RULES:
   async createDocumentCache(filesData: { uri: string, mimeType: string, name: string, driveLink: string }[], modelName: string = 'gemini-3.6-flash'): Promise<string | null> {
     try {
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
-      
       const cache = await this.ai.caches.create({
         model: modelName,
         config: {
@@ -65,7 +64,6 @@ CRITICAL RULES:
           ttl: '3600s', 
         }
       });
-      
       return cache.name || null;
     } catch (error: any) {
       this.logger.warn(`Context Cache skipped: ${error.message}`);
@@ -83,12 +81,9 @@ CRITICAL RULES:
     } else {
       config.systemInstruction = this.systemInstruction;
       const directoryText = "Reference Directory:\n" + filesData.map(f => `- ${f.name}: ${f.driveLink}`).join('\n');
-      
       parts = [
         { text: directoryText },
-        ...filesData.map(file => ({
-          fileData: { fileUri: file.uri, mimeType: file.mimeType }
-        })),
+        ...filesData.map(file => ({ fileData: { fileUri: file.uri, mimeType: file.mimeType } })),
         { text: query }
       ];
     }
@@ -102,20 +97,21 @@ CRITICAL RULES:
     return { text: response.text, usage: response.usageMetadata };
   }
 
-  // --- NEW FAST INSTANT BUFFER EXTRACTION ---
-// --- NEW FAST INSTANT BUFFER EXTRACTION ---
-// --- NEW FAST INSTANT BUFFER EXTRACTION ---
-  async extractExpiryFromBuffer(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
+  // Phase 3: Structured JSON Fallback Extraction
+  async extractStructuredExpiry(buffer: Buffer, mimeType: string, filename: string): Promise<ExtractedExpiry | null> {
     try {
       const base64Data = buffer.toString('base64');
-      
-      let safeMimeType = mimeType;
-      if (filename.toLowerCase().endsWith('.pdf')) safeMimeType = 'application/pdf';
+      const safeMimeType = filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : mimeType;
 
-      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. Return ONLY the date.`;
+      const prompt = `Analyze this document. Extract the expiry date, issue date, document type, document number, and any explicitly stated renewal notice periods.
+CRITICAL RULES:
+- Never invent dates. If there is no expiry date, return null.
+- Never assume the latest date is the expiry date. Distinguish between Issue Date, Birth Date, and Expiry Date.
+- Preserve the exact source text in expiryDateText.
+- Use ISO dates (YYYY-MM-DD).`;
 
       const response = await this.ai.models.generateContent({
-        model: 'gemini-1.5-flash', 
+        model: 'gemini-1.5-flash',
         contents: [{
           role: 'user',
           parts: [
@@ -123,43 +119,90 @@ CRITICAL RULES:
             { text: prompt }
           ]
         }],
+        config: {
+          temperature: 0.0,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              documentType: { type: Type.STRING },
+              documentNumber: { type: Type.STRING },
+              issueDate: { type: Type.STRING, nullable: true },
+              expiryDate: { type: Type.STRING, nullable: true },
+              renewalDate: { type: Type.STRING, nullable: true },
+              renewalDaysBeforeExpiry: { type: Type.INTEGER, nullable: true },
+              expiryDateText: { type: Type.STRING },
+              confidence: { type: Type.NUMBER },
+              reason: { type: Type.STRING }
+            }
+          }
+        }
+      });
+
+      const textResult = response.text?.trim();
+      if (!textResult) return null;
+
+      const parsed = JSON.parse(textResult);
+      
+      // Prevent returning empty object states as valid expirations
+      if (!parsed.expiryDate) return null;
+
+      return {
+        documentType: parsed.documentType || null,
+        documentNumber: parsed.documentNumber || null,
+        issueDate: parsed.issueDate ? new Date(parsed.issueDate) : null,
+        expiryDate: parsed.expiryDate ? new Date(parsed.expiryDate) : null,
+        renewalDate: parsed.renewalDate ? new Date(parsed.renewalDate) : null,
+        renewalDaysBeforeExpiry: parsed.renewalDaysBeforeExpiry || null,
+        expiryDateText: parsed.expiryDateText || '',
+        confidence: parsed.confidence || 0,
+        reason: parsed.reason || '',
+        method: 'GEMINI'
+      };
+    } catch (error: any) {
+      this.logger.warn(`Structured Expiry Extraction Failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  // Preserved old fast buffer extraction to avoid breaking legacy code paths if any
+  async extractExpiryFromBuffer(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
+    try {
+      const base64Data = buffer.toString('base64');
+      const safeMimeType = filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : mimeType;
+      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. Return ONLY the date.`;
+
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-1.5-flash', 
+        contents: [{
+          role: 'user',
+          parts: [{ inlineData: { data: base64Data, mimeType: safeMimeType } }, { text: prompt }]
+        }],
         config: { temperature: 0.0 }
       });
 
       const text = response.text?.trim() || '';
-      
-      // 1. Let Javascript powerfully parse natural text like "January 28, 2028" into YYYY-MM-DD
       const parsedDate = new Date(text);
-      if (!isNaN(parsedDate.getTime())) {
-          return parsedDate.toISOString().split('T')[0]; 
-      }
+      if (!isNaN(parsedDate.getTime())) return parsedDate.toISOString().split('T')[0]; 
       
-      // 2. Fallback if it's hidden in weird text
       const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
       return dateMatch ? dateMatch[0] : '';
     } catch (error: any) {
-      this.logger.warn(`Inline Expiry Extraction Failed: ${error.message}`);
       return '';
     }
   }
 
-  // --- OLD SLOW EXTRACTION (Kept as fallback) ---
-async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
+  // Preserved old background URI extraction
+  async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
     try {
-      // The prompt explicitly forbids conversational text
       const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. You must reply ONLY with the exact date in strict YYYY-MM-DD format (e.g., 2026-10-06). If no date is found, reply exactly with "NULL". Do not include any other text, sentences, or punctuation.`;
-      
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
         contents: [{ role: 'user', parts: [{ fileData: { fileUri, mimeType } }, { text: prompt }] }],
-        config: { temperature: 0.0 } // 0.0 forces the most deterministic, non-creative response
+        config: { temperature: 0.0 } 
       });
-      
       const text = response.text?.trim() || 'NULL';
-      
       if (text === 'NULL' || text === '') return '';
-      
-      // Because we forced YYYY-MM-DD, we know the string is exactly 10 characters and safe for databases.
       return text; 
     } catch (error) {
       return ''; 

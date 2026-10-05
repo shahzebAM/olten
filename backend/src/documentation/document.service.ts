@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
+import { ExpiryExtractorService, ExtractedExpiry } from './expiry-extractor.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -11,12 +12,12 @@ const prisma = new PrismaClient();
 @Injectable()
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
-  
   private companyCache: Map<string, { cacheName: string, expiresAt: number, model: string }> = new Map();
 
   constructor(
     private geminiService: GeminiService,
     private driveService: DriveService,
+    private expiryExtractor: ExpiryExtractorService
   ) {}
 
   async getCompanyDirectory(company: string) {
@@ -27,20 +28,29 @@ export class DocumentService {
     return this.driveService.createSubFolder(company, folderName);
   }
 
-async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
+  async processNewDocument(file: any, company: string, username: string, targetFolderId?: string) {
     const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${file.originalname}`);
     fs.writeFileSync(tempFilePath, file.buffer);
 
     let safeMimeType = file.mimetype;
     if (file.originalname.toLowerCase().endsWith('.pdf')) safeMimeType = 'application/pdf';
 
-    let driveLink;
-    let geminiData: any = {};
-    let autoExpiryDate = ''; 
+    let driveLink, geminiData: any = {};
+    let finalExpiryData: ExtractedExpiry | null = null;
+    let fallbackDateString = '';
 
     try {
-      // Run all three intense operations concurrently! Instant extraction!
-      const [driveRes, geminiRes, expiryRes] = await Promise.all([
+      // 1. Waterfall Extraction
+      const rawText = file.buffer.toString('utf-8'); 
+      finalExpiryData = this.expiryExtractor.extractViaRegex(rawText);
+
+      if (!finalExpiryData || finalExpiryData.confidence < 0.85) {
+        const aiResult = await this.geminiService.extractStructuredExpiry(file.buffer, safeMimeType, file.originalname);
+        if (aiResult) finalExpiryData = aiResult;
+      }
+
+      // 2. Parallel Uploads & Legacy Extraction logic for compatibility
+      const [driveRes, geminiRes, legacyExpiry] = await Promise.all([
         this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
         this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname),
         this.geminiService.extractExpiryFromBuffer(file.buffer, safeMimeType, file.originalname)
@@ -48,11 +58,16 @@ async processNewDocument(file: any, company: string, username: string, targetFol
       
       driveLink = driveRes;
       geminiData = geminiRes;
-      autoExpiryDate = expiryRes; // GUARANTEED to be YYYY-MM-DD or ''
+      fallbackDateString = legacyExpiry;
     } catch (error: any) {
       throw new BadRequestException(`Upload failed: ${error.message}`);
     } finally {
       if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); 
+    }
+
+    let calculatedStatus = 'NO_EXPIRY';
+    if (finalExpiryData?.expiryDate) {
+      calculatedStatus = finalExpiryData.confidence >= 0.85 ? 'ACTIVE' : 'NEEDS_REVIEW';
     }
 
     const doc = await (prisma as any).document.create({
@@ -67,36 +82,85 @@ async processNewDocument(file: any, company: string, username: string, targetFol
         googleDriveLink: driveLink,
         status: 'ACTIVE',
         uploadedBy: username,
+        // New Expiry Data
+        documentType: finalExpiryData?.documentType,
+        documentNumber: finalExpiryData?.documentNumber,
+        issueDate: finalExpiryData?.issueDate,
+        expiryDate: finalExpiryData?.expiryDate,
+        renewalDate: finalExpiryData?.renewalDate,
+        renewalDaysBeforeExpiry: finalExpiryData?.renewalDaysBeforeExpiry,
+        expiryDateText: finalExpiryData?.expiryDateText,
+        expiryConfidence: finalExpiryData?.confidence,
+        expiryDetectionMethod: finalExpiryData?.method,
+        expiryStatus: calculatedStatus,
       },
     });
 
     this.companyCache.delete(company);
     
-    // Return document with the date embedded instantly
-    return { ...doc, expiryDate: autoExpiryDate };
+    // Return document merged with the fallback date string for older frontend compat
+    return { ...doc, expiryDate: fallbackDateString || finalExpiryData?.expiryDate?.toISOString() };
   }
 
-async analyzeExpiryDates(fileIds: any[], company: string) {
+  // Phase 8: Manual Expiry Override
+  async updateManualExpiry(documentId: number, company: string, newDate: string) {
+    const parsedDate = new Date(newDate);
+    if (isNaN(parsedDate.getTime())) throw new BadRequestException('Invalid date format');
+
+    return (prisma as any).document.update({
+      where: { id: documentId },
+      data: {
+        expiryDate: parsedDate,
+        expiryDetectionMethod: 'MANUAL',
+        expiryStatus: 'ACTIVE',
+        expiryConfidence: 1.0,
+        lastExpiryCheck: new Date()
+      }
+    });
+  }
+
+  // Phase 8: Re-Analyze Request
+  async reanalyzeDocument(documentId: number, company: string) {
+    const doc = await (prisma as any).document.findUnique({ where: { id: documentId } });
+    if (!doc || doc.company !== company) throw new BadRequestException('Document not found');
+    if (!doc.geminiFileUri) throw new BadRequestException('Document not uploaded to Gemini');
+
+    // For re-analysis without the buffer, we utilize the background file URI method
+    const aiResult = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
+    
+    if (aiResult) {
+       return (prisma as any).document.update({
+          where: { id: doc.id },
+          data: {
+             expiryDate: new Date(aiResult),
+             expiryDetectionMethod: 'GEMINI',
+             expiryStatus: 'NEEDS_REVIEW',
+             expiryConfidence: 0.8
+          }
+       });
+    }
+    return doc;
+  }
+
+  // Preserved existing manual batch analyzer
+  async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
-    const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
+    const numericIds = fileIds.map((id: any) => Number(id)).filter((id: any) => !isNaN(id));
 
     const docs = await (prisma as any).document.findMany({
       where: { id: { in: numericIds.length > 0 ? numericIds : [-1] }, company: company }
     });
 
-    await Promise.all(docs.map(async (doc) => {
+    await Promise.all(docs.map(async (doc: any) => {
       if (doc.geminiFileUri && doc.geminiFileId) {
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
-          
-          // Wait up to 45 seconds for Google AI to finish reading the PDF!
           while (status === 'PROCESSING' && retries < 15) {
              await new Promise(resolve => setTimeout(resolve, 3000));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
-          
           if (status === 'ACTIVE') {
             const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
             if (expiry) results[doc.id.toString()] = expiry;
@@ -107,58 +171,57 @@ async analyzeExpiryDates(fileIds: any[], company: string) {
     return results;
   }
 
-async saveReminders(reminders: any[], company: string) {
+  // Preserved manual reminder saving from Modal UI
+  async saveReminders(reminders: any[], company: string) {
     const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
       const docId = Number(rem.id); 
-      // Skip if no valid date was found by the AI
       if (isNaN(docId) || !rem.expiryDate) continue;
 
-      const saved = await (prisma as any).documentReminder.create({
-        data: {
+      const triggerDate = new Date(rem.expiryDate);
+      triggerDate.setDate(triggerDate.getDate() - (Number(rem.reminderDays) || 30));
+
+      const saved = await (prisma as any).documentReminder.upsert({
+        where: { documentId_reminderType: { documentId: docId, reminderType: 'MANUAL' } },
+        update: {
+          expiryDate: new Date(rem.expiryDate),
+          reminderDays: Number(rem.reminderDays) || 30,
+          triggerDate: triggerDate
+        },
+        create: {
           company: company,
           documentId: docId,
           fileName: rem.name,
+          reminderType: 'MANUAL',
           expiryDate: new Date(rem.expiryDate), 
           reminderDays: Number(rem.reminderDays) || 30,
+          triggerDate: triggerDate,
           status: 'PENDING'
         }
       });
       savedReminders.push(saved); 
     }
-    
     return { success: true, count: savedReminders.length };
   }
 
-  // --- NEW: FETCH NOTIFICATIONS ---
-// --- NEW: FETCH NOTIFICATIONS ---
   async getActiveNotifications(company: string) {
     const today = new Date();
     
-    // Find all pending/processing reminders for this company
     const reminders = await (prisma as any).documentReminder.findMany({
       where: { 
         company: company,
         status: { in: ['PENDING', 'PROCESSING'] }
       },
-      orderBy: { expiryDate: 'asc' } // Sort by closest expiry
+      orderBy: { expiryDate: 'asc' }
     });
 
-    // Return ALL reminders, but flag them as triggered or waiting so the frontend can style them!
     return reminders.map((rem: any) => {
-       const triggerDate = new Date(rem.expiryDate);
-       triggerDate.setDate(triggerDate.getDate() - rem.reminderDays);
-       
-       return {
-          ...rem,
-          triggerDate: triggerDate.toISOString(),
-          isTriggered: today >= triggerDate
-       };
+       const isTriggered = rem.triggerDate ? today >= rem.triggerDate : false;
+       return { ...rem, isTriggered };
     });
   }
 
-  // --- NEW: UPDATE NOTIFICATION STATUS ---
   async updateNotificationStatus(reminderId: number, newStatus: string) {
     return await (prisma as any).documentReminder.update({
       where: { id: Number(reminderId) },
@@ -172,9 +235,7 @@ async saveReminders(reminders: any[], company: string) {
         where: { company, status: 'ACTIVE' },
       });
 
-      if (!docs || docs.length === 0) {
-        throw new Error(`No active documents found for ${company}.`);
-      }
+      if (!docs || docs.length === 0) throw new Error(`No active documents found for ${company}.`);
 
       const filesData = docs
         .filter((d: any) => typeof d.geminiFileUri === 'string' && d.geminiFileUri.length > 0)
@@ -185,19 +246,14 @@ async saveReminders(reminders: any[], company: string) {
           driveLink: d.googleDriveLink || 'No link available',
         }));
 
-      if (filesData.length === 0) {
-        throw new Error('Documents exist, but have not finished indexing in Gemini.');
-      }
+      if (filesData.length === 0) throw new Error('Documents exist, but have not finished indexing in Gemini.');
 
       const targetModel = requestedModel || 'gemini-1.5-flash';
       let cacheName: string | null = null;
       let cacheInfo = this.companyCache.get(company);
 
       if (!cacheInfo || Date.now() > cacheInfo.expiresAt || cacheInfo.model !== targetModel) {
-        this.logger.log(`Generating Context Cache for ${company} using ${targetModel}...`);
-        
         const newCacheName = await this.geminiService.createDocumentCache(filesData, targetModel);
-        
         if (newCacheName) {
           cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000), model: targetModel };
           this.companyCache.set(company, cacheInfo);
@@ -222,14 +278,10 @@ async saveReminders(reminders: any[], company: string) {
             completionTokens: answer.usage?.candidatesTokenCount || 0,
           },
         });
-      } catch (dbError) {
-        this.logger.warn('SearchHistory table not found in Prisma Schema. Skipping database logging.');
-      }
+      } catch (dbError) {}
 
       return { answer: responseText, model: targetModel, sourcesSearched: filesData.length, cached: !!cacheName };
-    
     } catch (error: any) {
-      this.logger.error(`Search Request Failed: ${error.message}`);
       throw new BadRequestException(error.message);
     }
   }
@@ -237,9 +289,7 @@ async saveReminders(reminders: any[], company: string) {
   async deleteDocument(driveId: string) {
     try {
       await this.driveService.deleteFile(driveId);
-    } catch (e) { 
-      this.logger.warn(`Drive file inaccessible or already deleted.`); 
-    }
+    } catch (e) {}
 
     const docs = await (prisma as any).document.findMany({
       where: { googleDriveLink: { contains: driveId } }
@@ -247,18 +297,12 @@ async saveReminders(reminders: any[], company: string) {
 
     if (docs && docs.length > 0) {
       const doc = docs[0];
-
       if (doc.geminiFileId) {
-        try { 
-          await this.geminiService.deleteGeminiFile(doc.geminiFileId); 
-        } catch (e) { 
-          this.logger.warn(`Gemini file inaccessible`); 
-        }
+        try { await this.geminiService.deleteGeminiFile(doc.geminiFileId); } catch (e) {}
       }
-
       await (prisma as any).document.delete({ where: { id: doc.id } });
     }
     
-    return { success: true, message: 'Item permanently deleted from Drive, Gemini, and Database' };
+    return { success: true, message: 'Item permanently deleted' };
   }
 }

@@ -111,6 +111,42 @@ model Document {
   reminders       DocumentReminder[]
 
   @@index([company])
+
+  // --- NEW EXPIRY SYSTEM FIELDS ---
+  documentType            String?   
+  documentNumber          String?   
+  issueDate               DateTime?
+  expiryDate              DateTime?
+  renewalDate             DateTime?
+  expiryDateText          String?   // Stores exact text found in the document
+  expiryConfidence        Float?    // 0.0 to 1.0
+  expiryStatus            String?   @default("NO_EXPIRY") // ACTIVE, EXPIRING_SOON, EXPIRED, NO_EXPIRY, NEEDS_REVIEW
+  expiryDetectionMethod   String?   // REGEX, GEMINI, MANUAL
+  renewalDaysBeforeExpiry Int?      // E.g. 90 if the doc requires 90 days prior renewal
+  lastExpiryCheck         DateTime? // Tracks when the cron job last evaluated this document
+
+  updatedAt           DateTime  @updatedAt
+
+  notifications       ExpiryNotification[]
+}
+
+// 2. Create or update your notification model
+model ExpiryNotification {
+  id              Int      @id @default(autoincrement())
+  documentId      Int
+  company         String
+  title           String
+  message         String
+  reminderType    String   // "90_DAYS", "30_DAYS", "7_DAYS", "EXPIRED", "CUSTOM"
+  triggerDate     DateTime // The exact date this notification becomes relevant
+  isRead          Boolean  @default(false)
+  
+  createdAt       DateTime @default(now())
+  
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate notifications for the same reminder threshold on a single document
+  @@unique([documentId, reminderType])
 }
 
 model SearchHistory {
@@ -397,16 +433,22 @@ model PurchaseOrderItem {
 
 // --- NEW DOCUMENT REMINDERS MODEL ---
 model DocumentReminder {
-  id           Int      @id @default(autoincrement())
-  company      String
-  documentId   Int
-  fileName     String
-  expiryDate   DateTime
-  reminderDays Int      @default(30)
-  status       String   @default("PENDING")
-  createdAt    DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  documentId      Int
+  company         String
+  fileName        String
+  title           String?  // Added for automated cron job
+  message         String?  // Added for automated cron job
+  reminderType    String?  // e.g., '90_DAYS', 'MANUAL'
+  expiryDate      DateTime 
+  reminderDays    Int      @default(30)
+  status          String   @default("PENDING") // PENDING, PROCESSING, FULFILLED
+  triggerDate     DateTime? // Used by frontend/cron to know when to show
+  
+  createdAt       DateTime @default(now())
+  
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
-  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-
-  @@index([company])
+  // Prevents the cron job from creating duplicate 30-day reminders for the same document
+  @@unique([documentId, reminderType])
 }

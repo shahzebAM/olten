@@ -14,59 +14,50 @@ export class DocumentController {
   @Get('directory')
   async getDirectory(@Headers('x-company') company: string) {
     if (!company) throw new BadRequestException('Company header missing');
-    
     const directoryData = await this.documentService.getCompanyDirectory(company);
     const storageQuota = await this.driveService.getStorageQuota();
-
-    return {
-      ...directoryData,
-      storageQuota
-    };
+    return { ...directoryData, storageQuota };
   }
 
   @Post('folder')
-  async createFolder(
-    @Headers('x-company') company: string,
-    @Body() body: { folderName: string; parentFolderId?: string; targetFolderId?: string },
-  ) {
-    if (!company || !body.folderName) {
-      throw new BadRequestException('Company and Folder Name are required');
-    }
-
+  async createFolder(@Headers('x-company') company: string, @Body() body: { folderName: string; parentFolderId?: string; targetFolderId?: string }) {
+    if (!company || !body.folderName) throw new BadRequestException('Company and Folder Name are required');
     const targetId = body.targetFolderId || body.parentFolderId;
     return this.driveService.createSubFolder(company, body.folderName, targetId);
   }
 
   @Patch('folder/:id/rename')
   async renameFolder(@Param('id') id: string, @Body() body: { newName: string }) {
-    if (!body.newName || body.newName.trim() === '') {
-      throw new BadRequestException('New folder name is required.');
-    }
+    if (!body.newName || body.newName.trim() === '') throw new BadRequestException('New folder name is required.');
     return this.driveService.renameFolder(id, body.newName);
   }
 
   @Post('upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: memoryStorage(), 
-    }),
-  )
-  async uploadFile(
-    @UploadedFile() file: any,
-    @Headers('x-company') company: string,
-    @Headers('x-username') username: string,
-    @Body('targetFolderId') targetFolderId?: string,
-  ) {
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async uploadFile(@UploadedFile() file: any, @Headers('x-company') company: string, @Headers('x-username') username: string, @Body('targetFolderId') targetFolderId?: string) {
     if (!file) throw new BadRequestException('No file uploaded');
     return this.documentService.processNewDocument(file, company, username, targetFolderId);
   }
+
+  // --- NEW PHASE 8 ENDPOINTS ---
+  @Patch(':id/manual-expiry')
+  async updateManualExpiry(@Param('id') id: string, @Headers('x-company') company: string, @Body('expiryDate') expiryDate: string) {
+    if (!expiryDate) throw new BadRequestException('Expiry Date is required');
+    return this.documentService.updateManualExpiry(Number(id), company, expiryDate);
+  }
+
+  @Post(':id/reanalyze')
+  async reanalyzeDocument(@Param('id') id: string, @Headers('x-company') company: string) {
+    return this.documentService.reanalyzeDocument(Number(id), company);
+  }
+  // -----------------------------
 
   @Post('analyze-expiry')
   async analyzeExpiry(@Body() body: { fileIds: any[] }, @Headers('x-company') company: string) {
     if (!body.fileIds || !Array.isArray(body.fileIds)) throw new BadRequestException('Invalid file IDs');
     return this.documentService.analyzeExpiryDates(body.fileIds, company);
   }
-  // --- NEW: SAVE REMINDERS ---
+
   @Post('save-reminders')
   async saveReminders(@Body() body: { reminders: any[] }, @Headers('x-company') company: string) {
     if (!body.reminders || !Array.isArray(body.reminders)) throw new BadRequestException('Invalid reminders payload');
@@ -84,12 +75,7 @@ export class DocumentController {
   }
 
   @Post('search')
-  async search(
-    @Body('query') query: string,
-    @Body('model') targetModel: string,
-    @Headers('x-company') company: string,
-    @Headers('x-username') username: string,
-  ) {
+  async search(@Body('query') query: string, @Body('model') targetModel: string, @Headers('x-company') company: string, @Headers('x-username') username: string) {
     if (!query) throw new BadRequestException('Query cannot be empty');
     return this.documentService.searchDocuments(query, company, username, targetModel);
   }
