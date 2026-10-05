@@ -146,9 +146,7 @@ CRITICAL RULES:
   // --- OLD SLOW EXTRACTION (Kept as fallback) ---
 async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
     try {
-      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. 
-      You MUST return the date strictly in YYYY-MM-DD format (e.g., 2028-01-28).
-      If no expiry date is found, return exactly: null`;
+      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. Return ONLY the exact date in YYYY-MM-DD format (e.g. 2026-10-06). Do not write sentences.`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
@@ -157,8 +155,15 @@ async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
       });
       
       const text = response.text?.trim() || '';
+      
+      // Guarantee perfect date format extraction
       const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
-      return dateMatch ? dateMatch[0] : ''; 
+      if (dateMatch) return dateMatch[0];
+      
+      const parsedDate = new Date(text);
+      if (!isNaN(parsedDate.getTime())) return parsedDate.toISOString().split('T')[0]; 
+      
+      return ''; 
     } catch (error: any) {
       return ''; 
     }

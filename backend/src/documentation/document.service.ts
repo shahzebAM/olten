@@ -76,7 +76,7 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     return { ...doc, expiryDate: autoExpiryDate };
   }
 
-  async analyzeExpiryDates(fileIds: any[], company: string) {
+async analyzeExpiryDates(fileIds: any[], company: string) {
     const results: Record<string, string> = {};
     const numericIds = fileIds.map(id => Number(id)).filter(id => !isNaN(id));
 
@@ -89,11 +89,14 @@ async processNewDocument(file: any, company: string, username: string, targetFol
         try {
           let status = await this.geminiService.checkFileStatus(doc.geminiFileId);
           let retries = 0;
+          
+          // Wait up to 45 seconds for Google AI to finish reading the PDF!
           while (status === 'PROCESSING' && retries < 15) {
-             await new Promise(resolve => setTimeout(resolve, 1500));
+             await new Promise(resolve => setTimeout(resolve, 3000));
              status = await this.geminiService.checkFileStatus(doc.geminiFileId);
              retries++;
           }
+          
           if (status === 'ACTIVE') {
             const expiry = await this.geminiService.extractExpiryDate(doc.geminiFileUri, doc.mimeType);
             if (expiry) results[doc.id.toString()] = expiry;
