@@ -225,6 +225,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     isAnalyzing: false,
     files: [] as ExpiryReviewFile[]
   });
+  const [reviewFileCount, setReviewFileCount] = useState(0);
+  const currentReviewFile = expiryReviewModal.files[0];
   const [uploadError, setUploadError] = useState('');
   const [reviewError, setReviewError] = useState('');
   
@@ -319,6 +321,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setExpandedFolders(new Set());
     setSourcePreview(null);
     setExpiryReviewModal({ isOpen: false, isAnalyzing: false, files: [] });
+    setReviewFileCount(0);
     setIsEditingReminder(false);
     setIsDeletingSource(false);
     setIsUploading(false);
@@ -627,6 +630,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
          expiryEvidence: doc.expiryEvidence || doc.evidence,
        }));
        setReviewError('');
+       setReviewFileCount(reviewFiles.length);
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
        await Promise.all([fetchDirectory(true), fetchNotifications()]);
     } else {
@@ -634,36 +638,53 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  const handleSaveReminders = async (e: React.FormEvent) => {
+  const advanceExpiryReview = (documentId: number) => {
+    setReviewError('');
+    setExpiryReviewModal(prev => {
+      if (prev.files[0]?.id !== documentId) return prev;
+      const remainingFiles = prev.files.slice(1);
+      return { ...prev, files: remainingFiles, isOpen: remainingFiles.length > 0 };
+    });
+  };
+
+  const handleSkipReminder = () => {
+    if (!currentReviewFile || isProcessing || isReanalyzing || isDeletingSource) return;
+    // The upload's pending-setup state keeps this file without a reminder.
+    advanceExpiryReview(currentReviewFile.id);
+  };
+
+  const handleSaveReviewReminder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isProcessing) return;
-    const filesWithDates = expiryReviewModal.files.filter(canScheduleReminder);
-    if (filesWithDates.length === 0) {
+    const file = currentReviewFile;
+    if (!file || isProcessing || isReanalyzing || isDeletingSource) return;
+    if (!canScheduleReminder(file)) {
       setReviewError('A trusted expiry date is required. Re-analyze the document before setting a reminder.');
       return;
     }
-    if (filesWithDates.some(file => !isValidReminder(file.reminderValue, file.reminderUnit))) {
+    if (!isValidReminder(file.reminderValue, file.reminderUnit)) {
       setReviewError('Reminder amounts must be whole numbers: 0–36500 days or 0–1200 months.');
       return;
     }
     setReviewError('');
     setIsProcessing(true);
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
-        body: JSON.stringify({ reminders: filesWithDates.map(file => ({ id: file.id, reminderValue: Number(file.reminderValue), reminderUnit: file.reminderUnit })) })
+        body: JSON.stringify({ reminders: [{ id: file.id, reminderValue: Number(file.reminderValue), reminderUnit: file.reminderUnit }] })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to save reminders.');
-      const remainingFiles = expiryReviewModal.files.filter(file => !canScheduleReminder(file));
-      showToast(remainingFiles.length ? `Reminders saved. ${remainingFiles.length} document(s) still need re-analysis.` : 'Reminders saved.', 'success');
-      setExpiryReviewModal({ isOpen: remainingFiles.length > 0, files: remainingFiles, isAnalyzing: false });
-      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+      if (!isCurrent()) return;
+      if (!res.ok) throw new Error(data.message || 'Failed to save reminder.');
+      showToast(`Reminder saved for ${file.name}.`, 'success');
+      advanceExpiryReview(file.id);
+      void Promise.all([fetchDirectory(true), fetchNotifications()]);
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to save reminders.');
+      if (isCurrent()) setReviewError(err instanceof Error ? err.message : 'Failed to save reminder.');
     } finally {
-      setIsProcessing(false);
+      if (isCurrent()) setIsProcessing(false);
     }
   };
 
@@ -714,6 +735,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     if (driveIds.size === 0 && documentIds.size === 0) return;
     mutationRevisionRef.current += 1;
     invalidateAiSearch();
+    setReviewError('');
     const matches = (source: DocumentSource) => source.documentId !== undefined && documentIds.has(source.documentId) || !!source.driveFileId && driveIds.has(source.driveFileId);
     setFiles(prev => prev.filter(file => !driveIds.has(file.id) && !(file.documentId !== undefined && documentIds.has(file.documentId))));
     setSelectedFile(prev => prev && (driveIds.has(prev.id) || prev.documentId !== undefined && documentIds.has(prev.documentId)) ? null : prev);
@@ -1418,16 +1440,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       )}
 
       {/* AI EXPIRY & REMINDER REVIEW MODAL */}
-      {expiryReviewModal.isOpen && (
+      {expiryReviewModal.isOpen && currentReviewFile && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
-           <form onSubmit={handleSaveReminders} role="dialog" aria-modal="true" aria-labelledby="expiry-review-title" className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+           <form onSubmit={handleSaveReviewReminder} role="dialog" aria-modal="true" aria-labelledby="expiry-review-title" className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
               <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
                  <div>
-                    <h3 id="expiry-review-title" className="text-xl font-black uppercase tracking-tight">Review Expiry Dates</h3>
-                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Uploaded Files & Reminders</p>
+                    <h3 id="expiry-review-title" className="text-xl font-black uppercase tracking-tight">Review Expiry & Reminder</h3>
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">File {reviewFileCount - expiryReviewModal.files.length + 1} of {reviewFileCount}</p>
                  </div>
                  {!expiryReviewModal.isAnalyzing && (
-                   <button type="button" disabled={isProcessing} aria-label="Close expiry review" onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors disabled:opacity-50">
+                   <button type="button" disabled={isProcessing || isReanalyzing || isDeletingSource} aria-label="Skip this file without a reminder" title="Close this file without a reminder and continue" onClick={handleSkipReminder} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors disabled:opacity-50">
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                    </button>
                  )}
@@ -1435,11 +1457,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
               <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
                  <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-                    Expiry dates come directly from your documents and cannot be edited. Use the eye icon to view the source, choose days or calendar months before expiry, then save. Enter 0 for the expiry day; a reminder whose date has already passed becomes due immediately.
+                    Choose a reminder for this file, or close without a reminder. The next file appears after your choice. Expiry dates cannot be edited; use the eye icon to view the source.
                  </div>
                  {uploadError && <p role="alert" className="text-xs text-rose-700 whitespace-pre-line">Some uploads failed:{`\n${uploadError}`}</p>}
                  
-                 {expiryReviewModal.files.map((file, index) => (
+                 {[currentReviewFile].map(file => (
                     <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
                        <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-start gap-3">
@@ -1463,7 +1485,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                           <div className="flex flex-col gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Detected expiry
                             <span className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800">{file.expiryDate ? displayDate(file.expiryDate) : 'Not detected'}</span>
                           </div>
-                          <ReminderLeadTimeInput value={file.reminderValue} unit={file.reminderUnit} disabled={isProcessing || isReanalyzing || !canScheduleReminder(file)} onChange={(value, unit) => setExpiryReviewModal(prev => ({ ...prev, files: prev.files.map((item, i) => i === index ? { ...item, reminderValue: value, reminderUnit: unit } : item) }))} />
+                          <ReminderLeadTimeInput value={file.reminderValue} unit={file.reminderUnit} disabled={isProcessing || isReanalyzing || isDeletingSource || !canScheduleReminder(file)} onChange={(value, unit) => setExpiryReviewModal(prev => ({ ...prev, files: prev.files.map(item => item.id === file.id ? { ...item, reminderValue: value, reminderUnit: unit } : item) }))} />
                           {!canScheduleReminder(file) && <button type="button" disabled={isReanalyzing || isProcessing} onClick={() => handleReanalyze(file)} className="px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg disabled:opacity-50">{isReanalyzing ? 'Analyzing...' : 'Re-analyze'}</button>}
                        </div>
                     </div>
@@ -1471,8 +1493,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                  
                  {reviewError && <p role="alert" className="text-xs font-medium text-rose-700">{reviewError}</p>}
                  <div className="mt-2 pt-4 border-t border-slate-200 flex flex-wrap justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
-                    <button type="button" disabled={isProcessing} onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-5 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors text-xs shadow-sm disabled:opacity-50">Close Without Reminder</button>
-                    <button type="submit" disabled={isProcessing || isReanalyzing || !expiryReviewModal.files.some(canScheduleReminder)} className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">{isProcessing ? 'Saving...' : 'Save Reminders'}</button>
+                    <button type="button" disabled={isProcessing || isReanalyzing || isDeletingSource} onClick={handleSkipReminder} className="px-5 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors text-xs shadow-sm disabled:opacity-50">Close Without Reminder</button>
+                    <button type="submit" disabled={isProcessing || isReanalyzing || isDeletingSource || !canScheduleReminder(currentReviewFile)} className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">{isProcessing ? 'Saving...' : 'Save Reminder'}</button>
                  </div>
               </div>
            </form>
