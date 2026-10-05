@@ -11,7 +11,7 @@ The existing Prisma `Document` and `DocumentReminder` fields store this workflow
 5. Calendar months are subtracted with the day clamped to the destination month's final day (March 31 minus one month is February 28, or February 29 in a leap year).
 6. Reminder timing remains editable; users cannot edit the expiry date. Successful reanalysis can update the date from the source and update its reminder. Saving unchanged settings preserves a fulfilled reminder. Deleting a document cascades to its reminders through the existing relation. The source preview offers Delete for the exact file, with confirmation; Drive failures keep the database document and report the error.
 
-Notifications appear in the AI Docs reminder panel. While this module is open it refreshes every 30 seconds and on window focus, and opens the panel when a newly due reminder arrives. Overdue pending reminders are shown when the user next opens the module. Email, SMS, operating-system push, and alerts while the application is closed are not configured.
+Notifications appear in the AI Docs reminder panel. While this module is open it refreshes every 30 seconds and on window focus. The panel stays closed until the user clicks the bell; new due reminders update the count without opening it. Overdue pending reminders are shown when the user opens the panel. Email, SMS, operating-system push, and alerts while the application is closed are not configured.
 
 Each reminder has an eye icon that opens its exact source document by document/Drive ID, so files with the same name cannot be mixed up. Negative countdowns are displayed as "Expired X days ago"; an expiry today is displayed as "Expires today". The server supplies calendar days remaining using the configured timezone.
 
@@ -30,6 +30,8 @@ Expiry detection supports PDF, DOCX, readable UTF-8 text, JPG, PNG, WebP, HEIC, 
 The current schema stores one expiry per document. Detection targets the primary document's expiry, including labels such as "Validity of License". Expiries of staff IDs, supporting attachments, and unrelated documents must not replace the primary license/permit expiry. Review the date and its quoted evidence against the source; unclear scans or ambiguous dates cannot activate a reminder until reanalysis obtains a reliable date.
 
 Reanalysis downloads the permanent Google Drive copy because Gemini file references expire after 48 hours. Failed reanalysis preserves the current date and schedule. A reminder confirmed while pending-upload analysis is working takes priority over the older analysis result. Search indexing failures do not discard a successfully stored document and expiry reminder; the upload review reports the indexing warning separately. DOCX search indexing includes readable text; expiry analysis also reads supported embedded scans.
+
+AI search uses only indexed documents whose exact Drive IDs still exist in the current company directory. An empty directory returns an empty answer without consulting Gemini or old cached context. Cache reuse requires the current source set to match, and a source change during analysis requires a fresh search. Deleted files and changed directory contents clear previous displayed answers, including responses still in flight. A Drive failure is reported instead of searching stale sources.
 
 ## API compatibility
 

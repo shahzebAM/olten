@@ -9,13 +9,14 @@ import type { ReminderChoice, ReminderOptions } from './expiry-date.utils';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { createHash } from 'crypto';
 
 const prisma = new PrismaClient();
 
 @Injectable()
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
-  private companyCache: Map<string, { cacheName: string, expiresAt: number, model: string }> = new Map();
+  private companyCache: Map<string, { cacheName: string, expiresAt: number, model: string, sourceFingerprint: string }> = new Map();
 
   constructor(
     private geminiService: GeminiService,
@@ -364,33 +365,66 @@ export class DocumentService {
     return { success: true };
   }
 
-  async searchDocuments(query: string, company: string, username: string, requestedModel?: string) {
+  private async currentSearchSources(company: string) {
+    let directory: Awaited<ReturnType<DriveService['getCompanyDirectory']>>;
     try {
-      const docs = await (prisma as any).document.findMany({
-        where: { company, status: 'ACTIVE' },
-      });
+      directory = await this.driveService.getCompanyDirectory(company);
+      if (!Array.isArray(directory?.files)) throw new Error('Incomplete directory');
+    } catch {
+      throw new BadRequestException('The current Google Drive directory could not be verified. Please retry your search.');
+    }
 
-      if (!docs || docs.length === 0) throw new Error(`No active documents found for ${company}.`);
+    const currentFiles = directory.files.filter(file => typeof file.id === 'string' && file.id.length > 0);
+    const byDriveId = new Map(currentFiles.map(file => [file.id, file]));
+    // Drive membership is authoritative: retained index rows cannot make a
+    // deleted, trashed or moved-out file searchable. Never match by filename.
+    const docs = currentFiles.length ? await prisma.document.findMany({
+      where: { company, status: 'ACTIVE' },
+      select: { id: true, company: true, status: true, filename: true, mimeType: true,
+        googleDriveLink: true, geminiFileUri: true },
+    }) : [];
+    const sourcesByDriveId = new Map<string, { documentId: number, driveId: string, uri: string,
+      mimeType: string, name: string, driveLink: string }>();
+    for (const doc of [...docs].sort((a, b) => b.id - a.id)) {
+      const id = this.driveId(doc.googleDriveLink);
+      const file = id ? byDriveId.get(id) : undefined;
+      if (!file || !id || sourcesByDriveId.has(id) || doc.company !== company || doc.status !== 'ACTIVE'
+        || typeof doc.geminiFileUri !== 'string' || !doc.geminiFileUri.trim()) continue;
+      sourcesByDriveId.set(id, { documentId: doc.id, driveId: id, uri: doc.geminiFileUri,
+        mimeType: doc.mimeType || file.mimeType || 'application/pdf',
+        name: file.name || doc.filename || 'Unknown Document',
+        driveLink: file.webViewLink || doc.googleDriveLink || `https://drive.google.com/file/d/${id}/view` });
+    }
+    const sources = [...sourcesByDriveId.values()].sort((a, b) => a.driveId.localeCompare(b.driveId));
+    const inventory = currentFiles.map(file => ({ id: file.id, name: file.name || '',
+      mimeType: file.mimeType || '', parents: [...(file.parents || [])].sort() }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const sourceFingerprint = createHash('sha256').update(JSON.stringify({ inventory, sources })).digest('hex');
+    return { currentFileCount: currentFiles.length, sourceFingerprint,
+      filesData: sources.map(({ uri, mimeType, name, driveLink }) => ({ uri, mimeType, name, driveLink })) };
+  }
 
-      const filesData = docs
-        .filter((d: any) => typeof d.geminiFileUri === 'string' && d.geminiFileUri.length > 0)
-        .map((d: any) => ({
-          uri: d.geminiFileUri,
-          mimeType: d.mimeType || 'application/pdf',
-          name: d.filename || 'Unknown Document',
-          driveLink: d.googleDriveLink || 'No link available',
-        }));
+  async searchDocuments(query: string, company: string, username: string, requestedModel?: string) {
+    this.requireCompany(company);
+    const targetModel = requestedModel || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+    try {
+      const { currentFileCount, sourceFingerprint, filesData } = await this.currentSearchSources(company);
+      if (!currentFileCount) {
+        this.companyCache.delete(company);
+        return { answer: 'No documents are currently available in this workspace. Upload a document to search it.',
+          model: targetModel, sourcesSearched: 0, cached: false };
+      }
+      if (!filesData.length) throw new BadRequestException('Documents exist, but have not finished indexing in Gemini.');
 
-      if (filesData.length === 0) throw new Error('Documents exist, but have not finished indexing in Gemini.');
-
-      const targetModel = requestedModel || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
       let cacheName: string | null = null;
       let cacheInfo = this.companyCache.get(company);
 
-      if (!cacheInfo || Date.now() > cacheInfo.expiresAt || cacheInfo.model !== targetModel) {
+      if (!cacheInfo || Date.now() >= cacheInfo.expiresAt || cacheInfo.model !== targetModel
+        || cacheInfo.sourceFingerprint !== sourceFingerprint) {
+        this.companyCache.delete(company);
         const newCacheName = await this.geminiService.createDocumentCache(filesData, targetModel);
         if (newCacheName) {
-          cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000), model: targetModel };
+          cacheInfo = { cacheName: newCacheName, expiresAt: Date.now() + (55 * 60 * 1000), model: targetModel, sourceFingerprint };
           this.companyCache.set(company, cacheInfo);
           cacheName = newCacheName;
         }
@@ -399,6 +433,14 @@ export class DocumentService {
       }
 
       const answer = await this.geminiService.askQuestion(query, filesData, cacheName, targetModel);
+      // A deletion can happen while Gemini is responding, including in another
+      // app instance or directly in Drive. Do not return or retain that answer.
+      const currentSources = await this.currentSearchSources(company);
+      if (currentSources.sourceFingerprint !== sourceFingerprint) {
+        this.companyCache.delete(company);
+        return { answer: 'The workspace documents changed while this search was running. Please search again to use the current files.',
+          model: targetModel, sourcesSearched: 0, cached: false, sourcesChanged: true };
+      }
       const responseText = answer.text || 'No response generated.';
 
       try {
@@ -417,6 +459,7 @@ export class DocumentService {
 
       return { answer: responseText, model: targetModel, sourcesSearched: filesData.length, cached: !!cacheName };
     } catch (error: any) {
+      this.companyCache.delete(company);
       throw new BadRequestException(error.message);
     }
   }

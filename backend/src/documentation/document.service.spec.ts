@@ -392,3 +392,174 @@ describe('document expiry and user reminders', () => {
     expect(prisma.document.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+describe('search only current company Drive sources', () => {
+  let service: DocumentService;
+  let gemini: any;
+  let drive: any;
+  let currentFiles: any[];
+  let indexedDocs: any[];
+  const indexed = (id = 1, driveId = 'drive-one', overrides: any = {}) => ({ id, company: 'Olten',
+    status: 'ACTIVE', filename: 'dream.pdf', mimeType: 'application/pdf',
+    googleDriveLink: `https://drive.google.com/file/d/${driveId}/view`, geminiFileUri: `gemini-uri-${id}`, ...overrides });
+  const source = (id = 'drive-one', name = 'dream.pdf') => ({ id, name, mimeType: 'application/pdf', parents: ['company-root'] });
+  const search = (company = 'Olten', model = 'gemini-test') => service.searchDocuments('Which files do I have?', company, 'admin', model);
+
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    jest.setSystemTime(new Date('2026-10-05T04:00:00.000Z'));
+    currentFiles = [source()];
+    indexedDocs = [indexed()];
+    prisma.document = { findMany: jest.fn(async () => indexedDocs), deleteMany: jest.fn(), update: jest.fn() };
+    prisma.searchHistory = { create: jest.fn(async () => ({ id: 1 })) };
+    gemini = { createDocumentCache: jest.fn(async () => 'cache-current'),
+      askQuestion: jest.fn(async () => ({ text: 'Current files only', usage: { promptTokenCount: 12, candidatesTokenCount: 5 } })) };
+    drive = { getCompanyDirectory: jest.fn(async () => ({ companyFolderId: 'company-root', folders: [], files: currentFiles })),
+      deleteFile: jest.fn() };
+    service = new DocumentService(gemini, drive, new ExpiryExtractorService());
+  });
+
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('ignores retained ACTIVE index rows and old cache when the actual Drive directory is empty', async () => {
+    currentFiles = [];
+    (service as any).companyCache.set('Olten', { cacheName: 'old-deleted-files', expiresAt: Date.now() + 60000, model: 'gemini-test' });
+    const result = await search();
+    expect(result).toMatchObject({ answer: expect.stringContaining('No documents'), sourcesSearched: 0, cached: false });
+    expect(drive.getCompanyDirectory).toHaveBeenCalledWith('Olten');
+    expect(prisma.document.findMany).not.toHaveBeenCalled();
+    expect(gemini.createDocumentCache).not.toHaveBeenCalled();
+    expect(gemini.askQuestion).not.toHaveBeenCalled();
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
+    expect(drive.deleteFile).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+  });
+
+  it('matches exact Drive IDs despite duplicate names and partial IDs when one source was deleted', async () => {
+    indexedDocs = [indexed(), indexed(2, 'drive-one-copy')];
+    currentFiles = [source('drive-one-copy')];
+    const result = await search();
+    expect(result).toMatchObject({ sourcesSearched: 1, cached: true });
+    expect(gemini.askQuestion).toHaveBeenCalledWith('Which files do I have?', [{ uri: 'gemini-uri-2', mimeType: 'application/pdf',
+      name: 'dream.pdf', driveLink: 'https://drive.google.com/file/d/drive-one-copy/view' }], 'cache-current', 'gemini-test');
+    expect(prisma.document.findMany.mock.calls[0][0].where).toEqual({ company: 'Olten', status: 'ACTIVE' });
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
+    expect(drive.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('lists one physical source once when multiple retained index rows point to it', async () => {
+    indexedDocs = [indexed(), indexed(2, 'drive-one')];
+    expect(await search()).toMatchObject({ sourcesSearched: 1 });
+    expect(gemini.askQuestion.mock.calls[0][1][0].uri).toBe('gemini-uri-2');
+  });
+
+  it('preserves the indexing message for current Drive files that have no available index', async () => {
+    indexedDocs = [indexed(1, 'removed-source')];
+    (service as any).companyCache.set('Olten', { cacheName: 'stale', expiresAt: Date.now() + 60000, model: 'gemini-test' });
+    await expect(search()).rejects.toThrow('have not finished indexing');
+    expect(gemini.createDocumentCache).not.toHaveBeenCalled();
+    expect(gemini.askQuestion).not.toHaveBeenCalled();
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+  });
+
+  it('reuses a cache only when the exact source fingerprint and model remain unchanged', async () => {
+    indexedDocs = [indexed(), indexed(2, 'drive-two')];
+    currentFiles = [source(), source('drive-two')];
+    await search();
+    currentFiles.reverse();
+    indexedDocs.reverse();
+    await search();
+    expect(gemini.createDocumentCache).toHaveBeenCalledTimes(1);
+    expect(gemini.askQuestion.mock.calls.map(call => call[2])).toEqual(['cache-current', 'cache-current']);
+    expect(prisma.searchHistory.create).toHaveBeenCalledTimes(2);
+    expect(prisma.searchHistory.create.mock.calls[0][0].data).toMatchObject({ username: 'admin', company: 'Olten',
+      query: 'Which files do I have?', response: 'Current files only', modelUsed: 'gemini-test', promptTokens: 12, completionTokens: 5 });
+    expect(drive.getCompanyDirectory).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['source ID', 'Gemini URI', 'Drive name', 'Drive link'])('rebuilds cached context when %s changes with the same file count', async change => {
+    gemini.createDocumentCache.mockResolvedValueOnce('cache-before').mockResolvedValueOnce('cache-after');
+    await search();
+    if (change === 'source ID') {
+      currentFiles = [source('drive-two')];
+      indexedDocs = [indexed(2, 'drive-two')];
+    } else if (change === 'Gemini URI') {
+      indexedDocs = [indexed(1, 'drive-one', { geminiFileUri: 'replacement-index' })];
+    } else if (change === 'Drive name') {
+      currentFiles = [source('drive-one', 'renamed-license.pdf')];
+    } else {
+      currentFiles = [{ ...source(), webViewLink: 'https://drive.google.com/file/d/drive-one/view?usp=updated' }];
+    }
+    expect(await search()).toMatchObject({ sourcesSearched: 1, cached: true });
+    expect(gemini.createDocumentCache).toHaveBeenCalledTimes(2);
+    expect(gemini.askQuestion.mock.calls.map(call => call[2])).toEqual(['cache-before', 'cache-after']);
+    if (change === 'Drive name') expect(gemini.askQuestion.mock.calls[1][1][0].name).toBe('renamed-license.pdf');
+  });
+
+  it('rebuilds cached context when the requested model changes', async () => {
+    await search();
+    await search('Olten', 'gemini-other');
+    expect(gemini.createDocumentCache).toHaveBeenCalledTimes(2);
+    expect(gemini.createDocumentCache.mock.calls[1][1]).toBe('gemini-other');
+  });
+
+  it('discards the answer and history if the source is deleted while Gemini is responding', async () => {
+    gemini.askQuestion.mockImplementation(async () => {
+      currentFiles = [];
+      return { text: 'You have dream.pdf' };
+    });
+    expect(await search()).toMatchObject({ answer: expect.stringContaining('documents changed'), sourcesChanged: true,
+      sourcesSearched: 0, cached: false });
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+  });
+
+  it('discards an answer when its index changes during the request without changing file count', async () => {
+    gemini.askQuestion.mockImplementation(async () => {
+      indexedDocs = [indexed(1, 'drive-one', { geminiFileUri: 'new-index' })];
+      return { text: 'Outdated analysis' };
+    });
+    expect(await search()).toMatchObject({ sourcesChanged: true, cached: false });
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when Drive is unavailable and preserves other companies cache entries', async () => {
+    const otherCache = { cacheName: 'other-company', expiresAt: Date.now() + 60000, model: 'gemini-test' };
+    (service as any).companyCache.set('Olten', { ...otherCache, cacheName: 'old-deleted-files' });
+    (service as any).companyCache.set('Other', otherCache);
+    drive.getCompanyDirectory.mockRejectedValue(new Error('Drive unavailable'));
+    await expect(search()).rejects.toThrow('directory could not be verified');
+    expect(prisma.document.findMany).not.toHaveBeenCalled();
+    expect(gemini.askQuestion).not.toHaveBeenCalled();
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+    expect((service as any).companyCache.get('Other')).toBe(otherCache);
+  });
+
+  it('does not return or save the generated answer if the final Drive verification fails', async () => {
+    drive.getCompanyDirectory.mockResolvedValueOnce({ companyFolderId: 'company-root', folders: [], files: currentFiles })
+      .mockRejectedValueOnce(new Error('Drive unavailable'));
+    await expect(search()).rejects.toThrow('directory could not be verified');
+    expect(gemini.askQuestion).toHaveBeenCalledTimes(1);
+    expect(prisma.searchHistory.create).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+  });
+
+  it('excludes another company and inactive index rows even when filenames and Drive IDs match', async () => {
+    indexedDocs = [indexed(3, 'drive-one', { company: 'Other', geminiFileUri: 'private-other-index' }),
+      indexed(2, 'drive-one', { status: 'DELETED', geminiFileUri: 'inactive-index' }), indexed()];
+    await search();
+    expect(gemini.askQuestion.mock.calls[0][1]).toHaveLength(1);
+    expect(gemini.askQuestion.mock.calls[0][1][0].uri).toBe('gemini-uri-1');
+    expect(drive.getCompanyDirectory.mock.calls).toEqual([['Olten'], ['Olten']]);
+  });
+
+  it('requires company context before reading or searching any documents', async () => {
+    await expect(search('')).rejects.toThrow('Company header missing');
+    expect(drive.getCompanyDirectory).not.toHaveBeenCalled();
+    expect(prisma.document.findMany).not.toHaveBeenCalled();
+    expect(gemini.askQuestion).not.toHaveBeenCalled();
+  });
+});
