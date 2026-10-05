@@ -62,7 +62,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [notifications, setNotifications] = useState<any[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
 
-  // Fetch notifications on load
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/notifications`, {
@@ -77,7 +76,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000); // Check every 30s
+    const interval = setInterval(fetchNotifications, 30000); 
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
@@ -88,28 +87,23 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
-      fetchNotifications(); // Refresh list immediately
+      fetchNotifications(); 
     } catch (e) {
       showToast("Failed to update status", "error");
     }
   };
 
-  // --- MULTI-SELECT STATE ---
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-
-  // --- SEARCH & AI STATES ---
   const [aiQuery, setAiQuery] = useState('');
   const [localQuery, setLocalQuery] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [isSearchingAi, setIsSearchingAi] = useState(false);
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
 
-  // --- RESIZER STATES ---
   const [aiPanelHeight, setAiPanelHeight] = useState(300);
   const [isDraggingResizer, setIsDraggingResizer] = useState(false);
   const rightPaneRef = useRef<HTMLElement>(null);
 
-  // --- MODAL STATES ---
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [renameTarget, setRenameTarget] = useState<{ id: string, name: string } | null>(null);
@@ -122,7 +116,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setTimeout(() => setToast(null), 3500);
   };
 
-  // --- RESIZER LOGIC ---
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsDraggingResizer(true);
@@ -164,7 +157,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     };
   }, [isDraggingResizer, resize, stopResizing]);
 
-  // --- API: FETCH DIRECTORY ---
   const fetchDirectory = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
     try {
@@ -181,7 +173,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setFolders(nextFolders);
       setFiles(nextFiles);
       
-      // Auto-close preview if the file was deleted from another device
       setSelectedFile(prev => {
         if (!prev) return null;
         const stillExists = nextFiles.some(f => f.id === prev.id);
@@ -197,7 +188,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           setExpandedFolders(exp => new Set(exp).add(data.companyFolderId));
           return data.companyFolderId;
         }
-        // If active folder was deleted on another device, fall back to root
         const exists = prev === data.companyFolderId || nextFolders.some(f => f.id === prev);
         return exists ? prev : data.companyFolderId;
       });
@@ -209,17 +199,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [API_BASE_URL, selectedCompany, loginUsername]);
 
   useEffect(() => {
-    fetchDirectory(); // Initial fetch (shows loader)
-
-    // Silent cross-device background sync every 3 seconds
-    const syncInterval = setInterval(() => {
-      fetchDirectory(true);
-    }, 3000);
-
+    fetchDirectory(); 
+    const syncInterval = setInterval(() => { fetchDirectory(true); }, 3000);
     return () => clearInterval(syncInterval);
   }, [fetchDirectory]);
 
-  // --- HELPER: FORMAT BYTES ---
   const formatBytes = (bytes: string | number) => {
     const b = Number(bytes);
     if (b === 0) return '0 B';
@@ -229,7 +213,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // --- API: GEMINI SEARCH ---
   const handleGeminiSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiQuery.trim()) return;
@@ -252,7 +235,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- API: UPLOAD FILE(S) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesArray = Array.from(e.target.files || []);
     if (filesArray.length === 0) return;
@@ -261,7 +243,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsProcessing(true);
     const uploadedDocs: any[] = [];
 
-    // 1. Upload files to Drive & Gemini
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
        const uploadStart = Date.now();
@@ -276,18 +257,15 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        }
 
        try {
-         // USE REAL NETWORK TRACKING INSTEAD OF FAKE PROGRESS
          const uploadedDoc = await new Promise((resolve, reject) => {
              const xhr = new XMLHttpRequest();
              xhr.open('POST', `${API_BASE_URL}/api/docs/upload`);
              xhr.setRequestHeader('x-company', selectedCompany);
              xhr.setRequestHeader('x-username', loginUsername);
 
-             // This tracks the actual physical bytes being sent to your server
              xhr.upload.onprogress = (event) => {
                  if (event.lengthComputable) {
                      const actualPct = (event.loaded / event.total) * 100;
-                     // Cap at 99.9% while the server finishes processing and sends the final OK
                      setUploadProgress(prev => prev ? { ...prev, progressPct: Math.min(actualPct, 99.9) } : prev);
                  }
              };
@@ -309,7 +287,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
          console.error(`Failed to upload ${file.name}`);
        }
 
-       // Upload perfectly finished! Snap to 100%
        setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100, startTime: uploadStart });
        await new Promise(resolve => setTimeout(resolve, 400));
     }
@@ -322,7 +299,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        return showToast("Failed to upload files.", "error");
     }
 
-    // 1. Instantly open modal with the SPINNER ON!
+    // Instantly open modal with the SPINNER ON!
     const initialReviewFiles = uploadedDocs.map((doc: any) => ({
       id: doc.id,
       name: doc.originalName || doc.filename || 'Document',
@@ -334,8 +311,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsProcessing(false);
     fetchDirectory(true);
 
-    // 2. Wait for the AI to securely extract the date in the background
-  // 2. Wait for the AI to securely extract the date in the background
     try {
        const dbFileIds = uploadedDocs.map((d: any) => d.id);
        
@@ -349,23 +324,18 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
        const expiryData = await analysisRes.json();
 
-       // 3. AGGRESSIVELY extract the date from the AI's conversational text
        const finalReviewFiles = initialReviewFiles.map((file: any) => {
           const rawAiText = expiryData[file.id] || expiryData[String(file.id)] || '';
           let finalDateStr = '';
           
           if (rawAiText) {
-             // Look for standard YYYY-MM-DD or conversational dates (e.g. "06 October 2026")
              const strictMatch = rawAiText.match(/\d{4}-\d{2}-\d{2}/);
-             const conversationalMatch = rawAiText.match(/\d{1,2}\s+[a-zA-Z]+\s+\d{4}/);
-             
-             let cleanDateText = '';
-             if (strictMatch) cleanDateText = strictMatch[0];
-             else if (conversationalMatch) cleanDateText = conversationalMatch[0];
-             else cleanDateText = rawAiText; // Fallback
-
-             const pd = new Date(cleanDateText);
-             if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
+             if (strictMatch) {
+                 finalDateStr = strictMatch[0];
+             } else {
+                 const pd = new Date(rawAiText);
+                 if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
+             }
           }
           
           return { ...file, expiryDate: finalDateStr };
@@ -376,17 +346,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        showToast("Failed to auto-analyze dates.", "error");
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
     }
-  }; // <-- Closes handleFileUpload
+  };
 
-  // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
-         // Sanitize the AI Date to ensure perfect math on the backend
          const safeReminders = expiryReviewModal.files.map(file => {
-             let dbSafeDate = file.expiryDate; // Default to raw AI output
+             let dbSafeDate = file.expiryDate;
              
-             // If JS successfully parses the AI text, turn it into a strict ISO Date
              if (file.expiryDate) {
                  const parsedDate = new Date(file.expiryDate);
                  if (!isNaN(parsedDate.getTime())) {
@@ -394,11 +361,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                  }
              }
              
-             return { 
-               ...file, 
-               expiryDate: dbSafeDate, 
-               reminderDays: file.reminderDays 
-             };
+             return { ...file, expiryDate: dbSafeDate, reminderDays: file.reminderDays };
          });
 
          const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
@@ -412,7 +375,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
          showToast("Reminders saved successfully!", "success");
          setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false });
          
-         // Force the bell to refresh immediately after saving!
          fetchNotifications(); 
      } catch (err) {
          showToast("Failed to save reminders.", "error");
@@ -421,7 +383,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
      }
   };
 
-  // --- API: CREATE FOLDER ---
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFolderName.trim() || isCreatingFolder) return;
@@ -458,7 +419,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- API: RENAME FILE/FOLDER ---
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!renameTarget || !newRenameValue.trim()) return;
@@ -480,7 +440,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- API: BULK DELETE ---
   const handleBulkDelete = async () => {
     if (selectedItems.size === 0) return;
     if (!window.confirm(`Permanently delete ${selectedItems.size} selected item(s)?`)) return;
@@ -506,14 +465,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- SEARCH FILTERING (LOCAL ONLY) ---
   const activeFiles = useMemo(() => {
     if (!localQuery.trim()) return files;
     const q = localQuery.toLowerCase();
     return files.filter(f => f.name.toLowerCase().includes(q));
   }, [files, localQuery]);
 
-  // --- RECURSIVE SELECTION LOGIC ---
   const getAllDescendants = useCallback((parentId: string, currentDescendants = new Set<string>()) => {
     const childFolders = folders.filter(f => f.parents?.includes(parentId));
     const childFiles = files.filter(f => f.parents?.includes(parentId));
@@ -566,7 +523,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  // --- TREE HELPERS ---
   const toggleFolderExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const newSet = new Set(expandedFolders);
@@ -582,36 +538,21 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     return <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>;
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'Unknown Date';
-    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  // --- AI TEXT PARSER ---
   const renderFormattedText = (text: string) => {
     const parts = text.split(/(\[[^\]]+\]\([^)]+\))/g);
-    
     return parts.map((part, i) => {
       const match = part.match(/\[([^\]]+)\]\(([^)]+)\)/);
       if (match) {
         const linkText = match[1];
         const linkUrl = match[2];
-        
         return (
-          <a 
-            key={i} 
-            href={linkUrl} 
-            target="_blank" 
-            rel="noopener noreferrer" 
+          <a key={i} href={linkUrl} target="_blank" rel="noopener noreferrer" 
             onClick={(e) => {
               const idMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
               if (idMatch) {
                  const fileId = idMatch[1];
                  const foundFile = files.find(f => f.id === fileId);
-                 if (foundFile) {
-                     e.preventDefault();
-                     setSelectedFile(foundFile);
-                 }
+                 if (foundFile) { e.preventDefault(); setSelectedFile(foundFile); }
               }
             }}
             className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-1 mb-1 bg-indigo-50 border border-indigo-200 rounded text-indigo-700 font-bold text-xs hover:bg-indigo-100 transition-colors no-underline"
@@ -625,7 +566,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     });
   };
 
-  // --- RECURSIVE TREE RENDERER ---
   const renderTree = useCallback((parentId: string, depth: number = 0) => {
     const childFolders = folders.filter(f => f.parents?.includes(parentId));
     const childFiles = files.filter(f => f.parents?.includes(parentId));
@@ -647,10 +587,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               </button>
               <svg className={`w-4 h-4 mr-2 shrink-0 ${activeFolderId === folder.id ? 'text-indigo-500' : 'text-blue-400'}`} fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
               <span className={`truncate flex-1 ${activeFolderId === folder.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-700'}`}>{folder.name}</span>
-              
-              <div className="opacity-0 group-hover:opacity-100 flex items-center shrink-0 pl-2">
-                <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ id: folder.id, name: folder.name }); setNewRenameValue(folder.name); }} className="p-1 text-slate-400 hover:text-indigo-600 rounded" title="Rename"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
-              </div>
             </div>
             {expandedFolders.has(folder.id) && renderTree(folder.id, depth + 1)}
           </React.Fragment>
@@ -669,10 +605,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <div className="w-4 shrink-0 mr-1"></div>
             <div className="mr-2 shrink-0">{getFileIcon(file.mimeType)}</div>
             <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
-            
-            <div className="opacity-0 group-hover:opacity-100 flex items-center shrink-0 pl-2">
-              <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ id: file.id, name: file.name }); setNewRenameValue(file.name); }} className="p-1 text-slate-400 hover:text-indigo-600 rounded" title="Rename"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
-            </div>
           </div>
         ))}
       </div>
@@ -759,12 +691,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       <main className="flex flex-1 overflow-hidden relative">
         
         {/* PANE 1: UNIFIED LEFT SIDEBAR */}
-        {/* Dark overlay backdrop for mobile */}
         {isMobileNavOpen && (
           <div className="absolute inset-0 bg-slate-900/20 z-30 lg:hidden" onClick={() => setIsMobileNavOpen(false)} />
         )}
         <aside className={`absolute lg:relative inset-y-0 left-0 z-40 h-full w-[85%] sm:w-[320px] bg-[#FBFBFC] border-r border-slate-200 flex flex-col shrink-0 shadow-2xl lg:shadow-none transition-transform duration-300 ${isMobileNavOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-          {/* Action Tools */}
           <div className="px-4 py-4 border-b border-slate-100 flex flex-col gap-3 shrink-0 bg-white">
             <div className="flex items-center justify-between flex-wrap gap-2">
                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workspace Actions</span>
@@ -778,26 +708,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                </div>
             </div>
 
-            {/* THICK FILLABLE PROGRESS BAR WITH ETA */}
             {isUploading && uploadProgress && (
               <div className="flex flex-col mt-2 mb-3 bg-white p-3.5 rounded-2xl border border-indigo-100 shadow-sm animate-in fade-in">
                 <div className="flex justify-between items-end mb-2 px-1">
                   <div className="flex flex-col min-w-0 pr-4">
                     <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-2">
                       {uploadProgress.progressPct === 100 ? 'Finalizing...' : `Uploading (${uploadProgress.current}/${uploadProgress.total})`}
-                      
-                      {/* DYNAMIC ETA CALCULATOR */}
-                      {uploadProgress.progressPct > 5 && uploadProgress.progressPct < 100 && (
-                        <span className="text-[9px] font-bold text-slate-400 normal-case bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
-                          {(() => {
-                            const elapsedSec = (Date.now() - uploadProgress.startTime) / 1000;
-                            const totalEstSec = elapsedSec / (uploadProgress.progressPct / 100);
-                            const remainingSec = Math.max(0, Math.ceil(totalEstSec - elapsedSec));
-                            if (remainingSec < 1) return 'Almost done...';
-                            return `~${remainingSec}s left`;
-                          })()}
-                        </span>
-                      )}
                     </span>
                     <span className="text-xs font-bold text-slate-600 truncate mt-0.5">
                       {uploadProgress.filename}
@@ -807,12 +723,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     {Math.round(uploadProgress.progressPct)}%
                   </span>
                 </div>
-                
                 <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner relative border border-slate-200">
-                  <div 
-                    className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-300 ease-out relative" 
-                    style={{ width: `${uploadProgress.progressPct}%` }}
-                  >
+                  <div className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-300 ease-out relative" style={{ width: `${uploadProgress.progressPct}%` }}>
                     <div className="absolute inset-0 bg-white/20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
                   </div>
                 </div>
@@ -834,7 +746,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               </div>
             )}
 
-            {/* NEW LOCAL SEARCH BAR */}
             <div className="relative w-full flex bg-slate-100 rounded-lg overflow-hidden border border-transparent focus-within:border-indigo-300 focus-within:bg-white transition-all shadow-inner mt-2">
               <div className="pl-3 flex items-center shrink-0">
                 <svg className="w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -848,12 +759,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </div>
           </div>
 
-          {/* Optimized Tree View / Local Search List */}
           <div className="flex-1 overflow-y-auto py-2">
             {isLoading ? (
               <div className="flex justify-center py-10"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>
             ) : localQuery.trim() ? (
-              // Fast Flat List for Local Searching
               <div className="px-2 space-y-1">
                 {activeFiles.length === 0 ? (
                   <p className="text-center text-xs font-bold text-slate-400 py-10">No matching files locally.</p>
@@ -874,14 +783,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 )}
               </div>
             ) : (
-              // Full Recursive Tree
               <div className="px-2">
                 {rootFolderId && renderTree(rootFolderId, 0)}
               </div>
             )}
           </div>
 
-          {/* DYNAMIC STORAGE METER */}
           <div className="p-5 shrink-0 border-t border-slate-200/60 bg-white">
             <div className="flex items-center gap-3">
               <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
@@ -909,12 +816,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           </div>
         </aside>
 
-        {/* PANE 2: DOCUMENT PREVIEW (RIGHT MAIN AREA WITH RESIZER) */}
+        {/* PANE 2: DOCUMENT PREVIEW */}
         <section 
           ref={rightPaneRef} 
           className="w-full lg:w-auto h-full flex-1 bg-white lg:rounded-tl-[32px] lg:border-t lg:border-l border-slate-200 lg:shadow-[-4px_4px_24px_rgba(0,0,0,0.02)] flex flex-col z-20 lg:z-auto"
         >
-          {/* MOBILE BACK BUTTON */}
           <div className="lg:hidden p-4 bg-white border-b border-slate-200 flex items-center shrink-0">
             <button onClick={() => setIsMobileNavOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-indigo-600">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
@@ -922,7 +828,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </button>
           </div>         
           
-          {/* AI ANSWER PANEL (Top Section) */}
           {aiAnswer && (
            <div 
               style={selectedFile ? { height: `${aiPanelHeight}px` } : {}}
@@ -931,14 +836,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               <div className={`flex-1 overflow-y-auto ${selectedFile ? 'p-4 lg:p-6' : 'p-4 lg:p-8'}`}>
                 <div className={`bg-white border border-indigo-100 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-top-4 ${selectedFile ? 'p-5 min-h-full' : 'p-6'}`}>
                   <button onClick={() => setAiAnswer(null)} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-white border border-slate-200 rounded-md shadow-sm transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                  
                   <div className="flex items-center gap-2 mb-4">
                     <span className="w-2.5 h-2.5 bg-indigo-600 rounded-full"></span>
                     <span className="text-[11px] font-black uppercase tracking-widest text-indigo-700">
                       GEMINI {selectedModel.includes('3.6') ? '3.6 FLASH' : '3.5 FLASH-LITE'} ANSWER
                     </span>
                   </div>
-                  
                   <div className="text-sm font-medium text-slate-800 leading-relaxed whitespace-pre-wrap">
                     {renderFormattedText(aiAnswer)}
                   </div>
@@ -947,7 +850,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </div>
           )}
 
-          {/* DRAGGABLE HORIZONTAL SEPARATOR */}
           {aiAnswer && selectedFile && (
             <div 
               onMouseDown={startResizing}
@@ -958,10 +860,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             </div>
           )}
 
-          {/* DOCUMENT PREVIEW PANEL (Bottom Section) */}
           {selectedFile ? (
             <div className="flex-1 flex flex-col min-h-0 relative bg-white">
-              {/* Direct Download Header */}
               <div className="px-6 py-3 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
                 <span className="text-sm font-bold text-slate-800 truncate pr-4">{selectedFile.name}</span>
                 <a 
@@ -977,7 +877,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 </a>
               </div>
 
-              {/* Document Canvas Area */}
               <div className="flex-1 bg-white flex flex-col w-full h-full">
                 <div className="flex-1 w-full flex flex-col h-full">
                   <div className="flex-1 bg-white rounded-lg overflow-hidden flex flex-col shadow-sm border border-slate-200/60 min-h-[400px]">
@@ -1001,7 +900,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               </div>
             </div>
           ) : !aiAnswer ? (
-            /* EMPTY STATE */
             <div className="flex-1 flex flex-col items-center justify-center px-4 bg-white">
               <div className="w-24 h-24 mb-6 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-center shadow-inner">
                 <svg className="w-12 h-12 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -1016,7 +914,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
       {/* --- MODALS --- */}
       
-      {/* Create Folder Modal */}
       {isNewFolderModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
@@ -1068,26 +965,38 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                        <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div className="flex-1 min-w-0 pr-4">
                              <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                             {/* VISUAL FEEDBACK - Hides the Date! */}
+                             {file.expiryDate ? (
+                                <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
+                                   ✓ AI Date Locked
+                                </div>
+                             ) : (
+                                <div className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
+                                   ⚠ AI Failed to Read Expiry
+                                </div>
+                             )}
                           </div>
                           
                           <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                             <div className="flex flex-col gap-1.5 w-36">
-                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
-                                <div className="relative">
-                                  <input 
-                                    type="number" 
-                                    min="1"
-                                    value={file.reminderDays} 
-                                    onChange={(e) => {
-                                       const newFiles = [...expiryReviewModal.files];
-                                       newFiles[index].reminderDays = Number(e.target.value);
-                                       setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                    }} 
-                                    className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                                  />
-                                  <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                             {file.expiryDate && (
+                                <div className="flex flex-col gap-1.5 w-36">
+                                   <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
+                                   <div className="relative">
+                                     <input 
+                                       type="number" 
+                                       min="1"
+                                       value={file.reminderDays} 
+                                       onChange={(e) => {
+                                          const newFiles = [...expiryReviewModal.files];
+                                          newFiles[index].reminderDays = Number(e.target.value);
+                                          setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                       }} 
+                                       className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                                     />
+                                     <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                                   </div>
                                 </div>
-                             </div>
+                             )}
                           </div>
                        </div>
                     ))}
@@ -1102,7 +1011,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         </div>
       )}
 
-      {/* Rename Modal */}
       {renameTarget && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
@@ -1121,9 +1029,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
       {/* FLOATING NOTIFICATION WIDGET */}
-     {/* FLOATING NOTIFICATION WIDGET */}
       <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
-        {/* The Open Panel */}
         {isNotifOpen && (
           <div className="mb-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-5">
             <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
@@ -1145,8 +1051,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                        )}
                     </div>
                     
-                    <div className="text-[10px] font-bold text-slate-500 uppercase">AI Expiry: {new Date(n.expiryDate).toLocaleDateString()}</div>
-                    
                     {!n.isTriggered ? (
                         <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
                           Reminds on: {new Date(n.triggerDate).toLocaleDateString()}
@@ -1166,7 +1070,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           </div>
         )}
 
-        {/* The Bell Button */}
         <button 
           onClick={() => setIsNotifOpen(!isNotifOpen)} 
           className="relative w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105"
