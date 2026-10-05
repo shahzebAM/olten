@@ -9,9 +9,11 @@ import { MasterInventoryController } from './master-inventory/master-inventory.c
 import { SalesController } from './sales/sales.controller';
 import { OrderSlipsController } from './sales/order-slips.controller';
 import { ProcurementController } from './sales/purchase-orders.controller';
+import { AuthSessionModule } from './auth/auth-session.module';
 
 @Module({
   imports: [
+    AuthSessionModule,
     EmployeesModule,
     DocumentationModule,
   ],

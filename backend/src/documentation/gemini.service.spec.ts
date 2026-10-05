@@ -7,7 +7,8 @@ import { readPdfExpiryText } from './pdf-expiry-text';
 jest.mock('@google/genai', () => ({
   GoogleGenAI: jest.fn(),
   Type: { OBJECT: 'OBJECT', STRING: 'STRING', INTEGER: 'INTEGER', NUMBER: 'NUMBER', BOOLEAN: 'BOOLEAN' },
-  MediaResolution: { MEDIA_RESOLUTION_HIGH: 'MEDIA_RESOLUTION_HIGH' },
+  MediaResolution: { MEDIA_RESOLUTION_HIGH: 'MEDIA_RESOLUTION_HIGH', MEDIA_RESOLUTION_MEDIUM: 'MEDIA_RESOLUTION_MEDIUM' },
+  ThinkingLevel: { MINIMAL: 'MINIMAL', LOW: 'LOW' },
 }));
 jest.mock('node:fs/promises', () => ({ readFile: jest.fn() }));
 jest.mock('./pdf-expiry-text', () => ({ readPdfExpiryText: jest.fn() }));
@@ -23,7 +24,7 @@ function expiryResponse(overrides: Record<string, unknown> = {}) {
   return { text: JSON.stringify({
     documentType: 'Permit', documentNumber: 'P-123', issueDate: '2026-01-01',
     expiryDate: '2026-10-06', renewalDate: '2026-09-06', renewalDaysBeforeExpiry: 30,
-    expiryDateText: 'Expiry Date: 6 October 2026', confidence: 0.98,
+    expiryDateText: 'Expiry Date: 6 October 2026', confidence: 0.98, uncertain: false,
     reason: 'Explicit expiry label on page 1.', ...overrides,
   }) };
 }
@@ -48,6 +49,7 @@ describe('GeminiService expiry analysis', () => {
     files: { upload: jest.Mock; get: jest.Mock; delete: jest.Mock };
   };
   const previousExpiryModel = process.env.GEMINI_EXPIRY_MODEL;
+  const previousExpiryLimit = process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS;
 
   beforeEach(() => {
     client = {
@@ -58,14 +60,18 @@ describe('GeminiService expiry analysis', () => {
     };
     jest.mocked(GoogleGenAI).mockImplementation(() => client as unknown as GoogleGenAI);
     process.env.GEMINI_EXPIRY_MODEL = 'configured-expiry-model';
+    delete process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS;
     service = new GeminiService();
     jest.mocked(readPdfExpiryText).mockReset().mockResolvedValue('');
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
     if (previousExpiryModel === undefined) delete process.env.GEMINI_EXPIRY_MODEL;
     else process.env.GEMINI_EXPIRY_MODEL = previousExpiryModel;
+    if (previousExpiryLimit === undefined) delete process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS;
+    else process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS = previousExpiryLimit;
   });
 
   it('uses one configured structured analysis with source evidence and safe date parsing', async () => {
@@ -121,8 +127,7 @@ describe('GeminiService expiry analysis', () => {
   });
 
   it('keeps issue-only documents distinct from extraction failures', async () => {
-    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDate: null, expiryDateText: '' }))
-      .mockResolvedValueOnce(verificationResponse({ hasPrimaryExpiry: false, expiryDateText: null }));
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDate: null, expiryDateText: '' }));
     await expect(service.extractStructuredExpiry(Buffer.from('issue only'), 'image/jpeg', 'permit.jpg')).resolves.toBeNull();
     client.models.generateContent.mockRejectedValue(new Error('API quota unavailable'));
     await expect(service.extractExpiryFromBuffer(Buffer.from('image'), 'image/jpeg', 'permit.jpg')).rejects.toThrow('API quota unavailable');
@@ -158,10 +163,11 @@ describe('GeminiService expiry analysis', () => {
   });
 
   it('analyzes text as text and rejects Office binary files with a useful warning', async () => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Expiry Date: 2026-10-06' }));
     await service.extractStructuredExpiry(Buffer.from('Expiry Date: 2026-10-06'), 'text/plain', 'permit.txt');
     expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text).toContain('Expiry Date: 2026-10-06');
     await expect(service.extractStructuredExpiry(Buffer.from('legacy Office binary'), 'application/msword', 'permit.doc')).rejects.toThrow('Export this file as PDF');
-    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
   });
 
   it('reads real DOCX body/header text and sends embedded scans as image parts', async () => {
@@ -312,5 +318,227 @@ describe('GeminiService expiry analysis', () => {
     await expect(service.uploadFileToGemini('large.pdf', 'application/pdf', 'large.pdf')).resolves.toEqual({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'application/pdf' });
     expect(client.files.get).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ['gemini-3.6-flash', 2048, { thinkingLevel: 'MINIMAL' }],
+    ['gemini-3.7-flash', 2048, { thinkingLevel: 'LOW' }],
+    ['models/gemini-3.1-pro-preview', 4096, { thinkingLevel: 'LOW' }],
+    ['gemini-2.5-flash', 2048, { thinkingBudget: 0 }],
+    ['custom-expiry-model', 2048, undefined],
+  ])('bounds output and supported thinking for %s', async (model, limit, thinkingConfig) => {
+    process.env.GEMINI_EXPIRY_MODEL = String(model);
+    service = new GeminiService();
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    expect(client.models.generateContent.mock.calls[0][0].config).toEqual(expect.objectContaining({ maxOutputTokens: limit }));
+    expect(client.models.generateContent.mock.calls[0][0].config.thinkingConfig).toEqual(thinkingConfig);
+  });
+
+  it('accepts an explicit response limit while rejecting invalid limits', async () => {
+    process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS = '3072';
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png');
+    expect(client.models.generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(3072);
+    process.env.GEMINI_EXPIRY_MAX_OUTPUT_TOKENS = '10';
+    await service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png');
+    expect(client.models.generateContent.mock.calls[1][0].config.maxOutputTokens).toBe(2048);
+  });
+
+  it('uses medium native PDF resolution first and high resolution for ambiguous verification', async () => {
+    await service.extractStructuredExpiry(Buffer.from('PDF contents'), 'application/pdf', 'permit.pdf');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+    const [analysis, verification] = client.models.generateContent.mock.calls.map(([request]) => request);
+    expect(analysis.config.mediaResolution).toBe('MEDIA_RESOLUTION_MEDIUM');
+    expect(verification.config.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH');
+    expect(analysis.contents[0].parts[0].inlineData.mimeType).toBe('application/pdf');
+    expect(verification.contents[0].parts[0].inlineData.data).toBe(analysis.contents[0].parts[0].inlineData.data);
+  });
+
+  it.each(['image/png', 'image/jpeg'])('keeps readable image resolution high for %s', async mimeType => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('scan'), mimeType, 'permit');
+    expect(client.models.generateContent.mock.calls[0][0].config.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH');
+  });
+
+  it('accepts a confident primary license quote in a scan without a duplicate model reading', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const result = await service.extractStructuredExpiry(Buffer.from('scanned license'), 'image/png', 'permit.png');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { confidence: 0.94 },
+    { uncertain: true },
+    { expiryDateText: 'Expiry Date: 6 October 2026' },
+    { expiryDateText: 'License Expiry: 6 October 2026' },
+  ])('still independently verifies insufficient primary evidence %j', async overrides => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026', ...overrides }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks a scanned multi-page PDF again even when its model quote names a primary license', async () => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue('[Document page 1]\n\n[Document page 2]\n');
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('scanned PDF'), 'application/pdf', 'permit.pdf');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    'Validity of License: 6 October 2026\nValidity of License: 7 October 2026',
+    'Validity of License: 6 October 2026\nPermit Expiry: 06/10/2026',
+    'Validity of License: unclear\nExpiry Date: 6 October 2026',
+  ])('verifies conflicting or unreadable primary source labels rather than treating them as absent', async sourceText => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue(sourceText);
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    await service.extractStructuredExpiry(Buffer.from('PDF contents'), 'application/pdf', 'permit.pdf');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts literal complete text evidence without another model call', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Expiry Date: 2026-10-06' }));
+    const result = await service.extractStructuredExpiry(Buffer.from('Permit P-123\nExpiry Date: 2026-10-06'), 'text/plain', 'permit.txt');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires verification for a text quote invented outside the actual source', async () => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Expiry Date: 2026-10-06' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Expiry Date: 7 October 2026' }));
+    const result = await service.extractStructuredExpiry(Buffer.from('Expiry Date: 7 October 2026'), 'text/plain', 'permit.txt');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-07');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads complete Word body and header text once when its literal date matches', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Expiry Date: 2026-10-06' }));
+    const result = await service.extractStructuredExpiry(await docxBuffer(), 'application/octet-stream', 'permit.docx');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat Word text as the complete source when it also contains an embedded scan', async () => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Expiry Date: 2026-10-06' }))
+      .mockResolvedValueOnce(verificationResponse());
+    await service.extractStructuredExpiry(await docxBuffer(true), 'application/octet-stream', 'permit.docx');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows a confident no-expiry result in one reading when there is no contradictory label', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDate: null, expiryDateText: '' }));
+    await expect(service.extractStructuredExpiry(Buffer.from('issue-only scan'), 'image/png', 'permit.png')).resolves.toBeNull();
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['Expiry Date: 6 October 2026', 'Validity of License: 6 October 2026', 'Expires: 06/10/2026'])('verifies a claimed absence against contradictory source label %s', async sourceText => {
+    jest.mocked(readPdfExpiryText).mockResolvedValue(sourceText);
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDate: null, expiryDateText: '' }))
+      .mockResolvedValueOnce(verificationResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const result = await service.extractStructuredExpiry(Buffer.from('PDF contents'), 'application/pdf', 'permit.pdf');
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a token-truncated first response even if its partial result is valid JSON', async () => {
+    client.models.generateContent.mockResolvedValue({ ...expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }), candidates: [{ finishReason: 'MAX_TOKENS' }] });
+    await expect(service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png')).rejects.toThrow('response token limit');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects token-truncated verification rather than accepting an unreliable date', async () => {
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse())
+      .mockResolvedValueOnce({ ...verificationResponse(), candidates: [{ finishReason: 'MAX_TOKENS' }] });
+    await expect(service.extractStructuredExpiry(Buffer.from('scan'), 'image/png', 'permit.png')).rejects.toThrow('response token limit');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses identical upload analysis across normalized MIME and renamed files while copying mutable dates', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const bytes = Buffer.from('scanned license');
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'image/png' });
+    const first = await service.extractStructuredExpiry(bytes, 'image/png', 'first.png', indexing);
+    first!.expiryDate!.setUTCFullYear(2000);
+    first!.issueDate!.setUTCFullYear(2000);
+    first!.renewalDate!.setUTCFullYear(2000);
+    const second = await service.extractStructuredExpiry(bytes, 'application/octet-stream', 'renamed.PNG', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    expect(second?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(second?.issueDate?.toISOString().slice(0, 10)).toBe('2026-01-01');
+    expect(second?.renewalDate?.toISOString().slice(0, 10)).toBe('2026-09-06');
+  });
+
+  it('shares simultaneous identical upload requests instead of spending twice', async () => {
+    let resolveAnalysis!: (value: ReturnType<typeof expiryResponse>) => void;
+    client.models.generateContent.mockImplementation(() => new Promise(resolve => { resolveAnalysis = resolve; }));
+    const bytes = Buffer.from('scanned license');
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'image/png' });
+    const first = service.extractStructuredExpiry(bytes, 'image/png', 'first.png', indexing);
+    const second = service.extractStructuredExpiry(bytes, 'image/png', 'copy.png', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    resolveAnalysis(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toEqual(secondResult);
+    expect(firstResult?.expiryDate).not.toBe(secondResult?.expiryDate);
+  });
+
+  it('does not reuse analysis for changed source bytes or a different native MIME', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index' });
+    await service.extractStructuredExpiry(Buffer.from('first scan'), 'image/png', 'permit.png', indexing);
+    await service.extractStructuredExpiry(Buffer.from('changed scan'), 'image/png', 'permit.png', indexing);
+    await service.extractStructuredExpiry(Buffer.from('first scan'), 'image/jpeg', 'permit.jpg', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps explicit reanalysis fresh even when an upload result was recently cached', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const bytes = Buffer.from('scanned license');
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index' });
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing);
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png');
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(3);
+  });
+
+  it('expires duplicate-upload results after ten minutes', async () => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(10_000);
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const bytes = Buffer.from('scanned license');
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index' });
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing);
+    now.mockReturnValue(10_000 + 599_999);
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    now.mockReturnValue(10_000 + 600_000);
+    await service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries failed duplicate uploads rather than caching analysis errors', async () => {
+    client.models.generateContent.mockRejectedValueOnce(new Error('Temporary quota failure'))
+      .mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const bytes = Buffer.from('scanned license');
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index' });
+    await expect(service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing)).rejects.toThrow('Temporary quota failure');
+    await expect(service.extractStructuredExpiry(bytes, 'image/png', 'permit.png', indexing)).resolves.toEqual(expect.objectContaining({ expiryDate: new Date('2026-10-06T00:00:00Z') }));
+    expect(client.models.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds successful duplicate-upload entries and evicts the oldest result', async () => {
+    client.models.generateContent.mockResolvedValue(expiryResponse({ expiryDateText: 'Validity of License: 6 October 2026' }));
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index' });
+    for (let index = 0; index < 129; index += 1) {
+      await service.extractStructuredExpiry(Buffer.from(`scan ${index}`), 'image/png', 'permit.png', indexing);
+    }
+    await service.extractStructuredExpiry(Buffer.from('scan 128'), 'image/png', 'permit.png', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(129);
+    await service.extractStructuredExpiry(Buffer.from('scan 0'), 'image/png', 'permit.png', indexing);
+    expect(client.models.generateContent).toHaveBeenCalledTimes(130);
   });
 });

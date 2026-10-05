@@ -63,7 +63,9 @@ export class ExpiryCronService implements OnModuleInit {
     // Uploads in the review-first flow stay unscheduled until the user saves
     // their chosen reminder. Preserve that durable state across cron ticks and
     // restarts, including when the detected expiry has already passed.
-    if (typeof doc.expiryStatus === 'string' && doc.expiryStatus.startsWith('AWAITING_REMINDER')) return;
+    if (typeof doc.expiryStatus === 'string' &&
+      (doc.expiryStatus.startsWith('AWAITING_REMINDER') ||
+        doc.expiryStatus === 'REMINDER_DISABLED' || doc.expiryStatus === 'REMINDER_DISABLED_REVIEW')) return;
 
     const date = parseIsoDate(doc.expiryDate);
     const needsReview = !date || doc.expiryStatus === 'NEEDS_REVIEW' ||

@@ -98,7 +98,7 @@ describe('ExpiryCronService', () => {
     expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
-  it.each(['AWAITING_REMINDER', 'AWAITING_REMINDER_REVIEW'])
+  it.each(['AWAITING_REMINDER', 'AWAITING_REMINDER_REVIEW', 'REMINDER_DISABLED', 'REMINDER_DISABLED_REVIEW'])
     ('preserves %s after expiry and server restart until reminder review is saved', async expiryStatus => {
       prisma.document.findMany.mockResolvedValue([document({
         expiryStatus, expiryDate: date('2026-10-03'),
@@ -198,6 +198,20 @@ describe('ExpiryCronService', () => {
       expiryStatus: doc.expiryStatus, updatedAt: doc.updatedAt,
     });
     expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it('does not create a default when the user clears a reminder after cron fetched the document', async () => {
+    const doc = document();
+    let currentStatus = doc.expiryStatus;
+    prisma.document.findMany.mockImplementation(async () => {
+      const fetched = { ...doc };
+      currentStatus = 'REMINDER_DISABLED';
+      return [fetched];
+    });
+    prisma.document.updateMany.mockImplementation(async ({ where }) => ({ count: where.expiryStatus === currentStatus ? 1 : 0 }));
+    await service.checkExpirations();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+    expect(currentStatus).toBe('REMINDER_DISABLED');
   });
 
   it('prevents overlapping checks from the startup hook and scheduled timer', async () => {

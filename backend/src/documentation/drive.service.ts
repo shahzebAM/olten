@@ -5,11 +5,27 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+export interface DriveFileContent {
+  stream: Readable;
+  mimeType: string;
+  size?: number;
+  name?: string;
+}
+
+const PREVIEW_MIME_TYPES = new Set([
+  'application/pdf', 'image/jpeg', 'image/png', 'image/gif',
+  'image/webp', 'image/bmp', 'image/avif',
+]);
+const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
+
+const driveQueryLiteral = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
 @Injectable()
 export class DriveService {
   private readonly logger = new Logger(DriveService.name);
   private drive: any;
   private readonly companyFolderRequests = new Map<string, Promise<string>>();
+  private readonly companyDirectoryRequests = new Map<string, Promise<{ companyFolderId: string; folders: any[]; files: any[] }>>();
 
   constructor() {
     const oauth2Client = new google.auth.OAuth2(
@@ -44,7 +60,7 @@ export class DriveService {
     const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
     if (!rootFolderId) throw new HttpException("Missing GOOGLE_DRIVE_FOLDER_ID in .env", HttpStatus.BAD_REQUEST);
 
-    const query = `name = '${companyName}' and '${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const query = `name = '${driveQueryLiteral(companyName)}' and '${driveQueryLiteral(rootFolderId)}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
     try {
       const searchRes = await this.drive.files.list({
@@ -79,6 +95,21 @@ export class DriveService {
   }
 
   async getCompanyDirectory(companyName: string) {
+    let request = this.companyDirectoryRequests.get(companyName);
+    if (!request) {
+      request = this.loadCompanyDirectory(companyName);
+      this.companyDirectoryRequests.set(companyName, request);
+    }
+    try {
+      return structuredClone(await request);
+    } finally {
+      // Share only concurrent reads. New requests always recheck Drive, and a
+      // completed mutation removes older scans before post-write refreshes.
+      if (this.companyDirectoryRequests.get(companyName) === request) this.companyDirectoryRequests.delete(companyName);
+    }
+  }
+
+  private async loadCompanyDirectory(companyName: string) {
     const companyFolderId = await this.getOrCreateCompanyFolder(companyName);
 
     const folders: any[] = [];
@@ -94,7 +125,7 @@ export class DriveService {
       do {
         const response = await this.drive.files.list({
           q: `'${parentId}' in parents and trashed = false`,
-          fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,webViewLink,createdTime,size,parents)',
+          fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,webViewLink,createdTime,modifiedTime,md5Checksum,size,parents)',
           spaces: 'drive',
           pageSize: 1000,
           pageToken,
@@ -136,16 +167,20 @@ export class DriveService {
     // If a specific parent folder is passed, use it. Otherwise, default to the company's root folder.
     const parentId = parentFolderId || await this.getOrCreateCompanyFolder(companyName);
     
-    const createRes = await this.drive.files.create({
-      requestBody: {
-        name: folderName,
-        mimeType: 'application/vnd.google-apps.folder',
-        parents: [parentId],
-      },
-      fields: 'id, name',
-      supportsAllDrives: true,
-    });
-    return createRes.data;
+    try {
+      const createRes = await this.drive.files.create({
+        requestBody: {
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentId],
+        },
+        fields: 'id, name',
+        supportsAllDrives: true,
+      });
+      return createRes.data;
+    } finally {
+      this.companyDirectoryRequests.clear();
+    }
   }
 
   async uploadFileToDrive(fileBuffer: Buffer, mimeType: string, originalName: string, company: string, targetFolderId?: string) {
@@ -174,6 +209,8 @@ export class DriveService {
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Google Drive Upload Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
+    } finally {
+      this.companyDirectoryRequests.clear();
     }
   }
 
@@ -187,6 +224,8 @@ export class DriveService {
       if (Number(error.code) === 404 || error.response?.status === 404 || error.response?.data?.error?.code === 404) return;
       this.logger.warn(`Could not delete file ${fileId} from Drive: ${error.message}`);
       throw new HttpException('Google Drive could not delete the document. Please retry.', HttpStatus.BAD_GATEWAY);
+    } finally {
+      this.companyDirectoryRequests.clear();
     }
   }
 
@@ -198,6 +237,46 @@ export class DriveService {
       supportsAllDrives: true,
     }, { responseType: 'arraybuffer' });
     return Buffer.from(response.data);
+  }
+
+  // The document service checks company ownership before calling this method.
+  // Stream the durable original without Gemini or a third-party viewer page.
+  async downloadFileStream(fileId: string): Promise<DriveFileContent> {
+    if (!/^[A-Za-z0-9_-]+$/.test(fileId)) {
+      throw new HttpException('Invalid document source ID', HttpStatus.BAD_REQUEST);
+    }
+    try {
+      const metadata = await this.drive.files.get({
+        fileId, fields: 'name,mimeType,size,trashed', supportsAllDrives: true,
+      });
+      if (metadata.data.trashed) {
+        throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
+      }
+      const mimeType = String(metadata.data.mimeType || '').split(';')[0].trim().toLowerCase();
+      // Active HTML and SVG are deliberately never served as inline previews.
+      if (!PREVIEW_MIME_TYPES.has(mimeType)) {
+        throw new HttpException('This file type must be opened in Drive', HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+      }
+      const size = Number(metadata.data.size);
+      if (Number.isFinite(size) && size > MAX_PREVIEW_BYTES) {
+        throw new HttpException('This file is too large for an inline preview. Open it in Drive.', HttpStatus.PAYLOAD_TOO_LARGE);
+      }
+      const response = await this.drive.files.get({
+        fileId, alt: 'media', supportsAllDrives: true,
+      }, { responseType: 'stream' });
+      return {
+        stream: response.data,
+        mimeType,
+        ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}),
+        ...(typeof metadata.data.name === 'string' ? { name: metadata.data.name } : {}),
+      };
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      const code = Number(error.code || error.response?.status || error.response?.data?.error?.code);
+      if (code === 404) throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
+      // Do not expose account details or Google API error payloads to clients.
+      throw new HttpException('The document could not be loaded. Please retry.', HttpStatus.BAD_GATEWAY);
+    }
   }
 
   // Method to rename folders (or files)
@@ -216,6 +295,8 @@ export class DriveService {
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Folder Rename Failed: ${actualError}`);
       throw new HttpException(actualError, HttpStatus.BAD_REQUEST);
+    } finally {
+      this.companyDirectoryRequests.clear();
     }
   }
 

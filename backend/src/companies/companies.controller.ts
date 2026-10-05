@@ -1,9 +1,11 @@
-import { Controller, Get, Post, Delete, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { CompanyAuthGuard } from '../auth/company-auth.guard';
 
 const prisma = new PrismaClient();
 
 @Controller('companies')
+@UseGuards(CompanyAuthGuard)
 export class CompaniesController {
   
   @Get()

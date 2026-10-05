@@ -24,6 +24,14 @@ export class ExpiryExtractorService {
     return dates.size === 1 ? this.toResult(candidates[0], text) : null;
   }
 
+  public hasAmbiguousPrimaryValidity(text: string): boolean {
+    const labels = text.match(/\b(?:Validity\s*of\s*(?:the\s*)?(?:License|Licence|Permit)|(?:License|Licence|Permit)\s*(?:Valid\s*Until|Expiry(?:\s*Date)?|Expiration(?:\s*Date)?))\b/gi) || [];
+    const candidates = this.findCandidates(text).filter(candidate => candidate.primary);
+    // A null extraction can mean missing evidence OR conflicting/unreadable
+    // dates. Do not treat the latter as permission to accept any quoted date.
+    return labels.length > candidates.length || new Set(candidates.map(candidate => candidate.date.toISOString())).size > 1;
+  }
+
   public extractViaRegex(text: string): ExtractedExpiry | null {
     // This helper accepts extracted text only; PDF/image/Office binary bytes
     // must go through Gemini, never buffer.toString() and a date guess.
