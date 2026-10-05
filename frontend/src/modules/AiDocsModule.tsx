@@ -58,6 +58,42 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     files: [] as { id: number; name: string; expiryDate: string; reminderDays: number }[]
   });
 
+  // --- NOTIFICATION STATES ---
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+
+  // Fetch notifications on load
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/notifications`, {
+        headers: { 'x-company': selectedCompany }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data);
+      }
+    } catch (e) {}
+  }, [API_BASE_URL, selectedCompany]);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
+  const handleUpdateNotif = async (id: number, status: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      fetchNotifications(); // Refresh list immediately
+    } catch (e) {
+      showToast("Failed to update status", "error");
+    }
+  };
+
   // --- MULTI-SELECT STATE ---
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
@@ -947,71 +983,39 @@ setUploadProgress(null);
       )}
 
       {/* AI EXPIRY & REMINDER REVIEW MODAL */}
-      {expiryReviewModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
-           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
-              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
-                 <div>
-                    <h3 className="text-xl font-black uppercase tracking-tight">Document Validity Review</h3>
-                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Set Reminders for Uploaded Files</p>
-                 </div>
-                 {!expiryReviewModal.isAnalyzing && (
-                   <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                   </button>
-                 )}
-              </div>
-
-              {expiryReviewModal.isAnalyzing ? (
-                 <div className="p-16 flex flex-col items-center justify-center space-y-6 bg-slate-50">
-                    <div className="animate-spin rounded-full h-14 w-14 border-4 border-indigo-200 border-t-indigo-600"></div>
-                    <div>
-                      <div className="text-sm font-black text-slate-800 uppercase tracking-widest text-center">AI is analyzing your documents...</div>
-                      <div className="text-[10px] font-bold text-slate-400 text-center uppercase tracking-widest mt-2">Extracting expiry and validity dates. Please wait.</div>
-                    </div>
-                 </div>
-              ) : (
-                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
-                   <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-                      Review the auto-detected dates below. If a document does not expire, simply leave the date blank.
-                   </div>
-                   
-                   {expiryReviewModal.files.map((file, index) => (
+  {expiryReviewModal.files.map((file, index) => (
                       <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                          <div className="flex-1 min-w-0 pr-4">
                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                            {file.expiryDate ? (
+                               <div className="text-xs font-bold text-emerald-600 mt-1">AI Detected Expiry: {file.expiryDate}</div>
+                            ) : (
+                               <div className="text-xs font-bold text-rose-500 mt-1">AI could not detect an expiry date.</div>
+                            )}
                          </div>
-                    <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                            <div className="flex flex-col gap-1.5 w-32">
-                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expires in</label>
-                               <div className="relative">
-                                 <input 
-                                   type="number" 
-                                   min="1"
-                                   value={file.reminderDays} 
-                                   onChange={(e) => {
-                                      const newFiles = [...expiryReviewModal.files];
-                                      newFiles[index].reminderDays = Number(e.target.value);
-                                      setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                   }} 
-                                   className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                                 />
-                                 <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
-                               </div>
-                            </div>
+                         <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+                            {file.expiryDate && (
+                              <div className="flex flex-col gap-1.5 w-36">
+                                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
+                                 <div className="relative">
+                                   <input 
+                                     type="number" 
+                                     min="1"
+                                     value={file.reminderDays} 
+                                     onChange={(e) => {
+                                        const newFiles = [...expiryReviewModal.files];
+                                        newFiles[index].reminderDays = Number(e.target.value);
+                                        setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
+                                     }} 
+                                     className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
+                                   />
+                                   <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
+                                 </div>
+                              </div>
+                            )}
                          </div>
                       </div>
                    ))}
-                   
-                   <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
-                      <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Reminders</button>
-                      <button onClick={handleSaveReminders} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
-                   </div>
-                 </div>
-              )}
-           </div>
-        </div>
-      )}
 
       {/* Rename Modal */}
       {renameTarget && (
@@ -1030,7 +1034,49 @@ setUploadProgress(null);
       )}
 
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+      {/* FLOATING NOTIFICATION WIDGET */}
+      <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
+        {/* The Open Panel */}
+        {isNotifOpen && (
+          <div className="mb-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-5">
+            <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
+              <h3 className="font-black text-sm uppercase tracking-wider">Expiry Reminders</h3>
+              <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-white"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+            </div>
+            <div className="max-h-80 overflow-y-auto p-2 bg-slate-50">
+              {notifications.length === 0 ? (
+                <div className="p-4 text-center text-xs font-bold text-slate-400">No active reminders.</div>
+              ) : (
+                notifications.map(n => (
+                  <div key={n.id} className="bg-white p-3 mb-2 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="text-xs font-black text-slate-800 truncate mb-1">{n.fileName}</div>
+                    <div className="text-[10px] font-bold text-rose-500 uppercase">Expires: {new Date(n.expiryDate).toLocaleDateString()}</div>
+                    <div className="flex gap-2 mt-3">
+                      {n.status === 'PENDING' && (
+                        <button onClick={() => handleUpdateNotif(n.id, 'PROCESSING')} className="flex-1 bg-amber-100 text-amber-700 hover:bg-amber-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Process</button>
+                      )}
+                      <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Fulfill</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
 
+        {/* The Bell Button */}
+        <button 
+          onClick={() => setIsNotifOpen(!isNotifOpen)} 
+          className="relative w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+          {notifications.length > 0 && (
+            <span className="absolute top-0 right-0 w-5 h-5 bg-rose-500 border-2 border-white text-[10px] font-black flex items-center justify-center rounded-full animate-bounce">
+              {notifications.length}
+            </span>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
