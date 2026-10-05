@@ -146,25 +146,22 @@ CRITICAL RULES:
   // --- OLD SLOW EXTRACTION (Kept as fallback) ---
 async extractExpiryDate(fileUri: string, mimeType: string): Promise<string> {
     try {
-      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. Return ONLY the exact date in YYYY-MM-DD format (e.g. 2026-10-06). Do not write sentences.`;
+      // The prompt explicitly forbids conversational text
+      const prompt = `Analyze this document. Find the expiration date, validity end date, or renewal deadline. You must reply ONLY with the exact date in strict YYYY-MM-DD format (e.g., 2026-10-06). If no date is found, reply exactly with "NULL". Do not include any other text, sentences, or punctuation.`;
       
       const response = await this.ai.models.generateContent({
         model: 'gemini-1.5-flash',
         contents: [{ role: 'user', parts: [{ fileData: { fileUri, mimeType } }, { text: prompt }] }],
-        config: { temperature: 0.0 } 
+        config: { temperature: 0.0 } // 0.0 forces the most deterministic, non-creative response
       });
       
-      const text = response.text?.trim() || '';
+      const text = response.text?.trim() || 'NULL';
       
-      // Guarantee perfect date format extraction
-      const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
-      if (dateMatch) return dateMatch[0];
+      if (text === 'NULL' || text === '') return '';
       
-      const parsedDate = new Date(text);
-      if (!isNaN(parsedDate.getTime())) return parsedDate.toISOString().split('T')[0]; 
-      
-      return ''; 
-    } catch (error: any) {
+      // Because we forced YYYY-MM-DD, we know the string is exactly 10 characters and safe for databases.
+      return text; 
+    } catch (error) {
       return ''; 
     }
   }
