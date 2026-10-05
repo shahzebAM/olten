@@ -336,14 +336,25 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   // --- API: SAVE REMINDERS ---
+// --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
      setIsProcessing(true);
      try {
-         // Send the AI expiry date and the reminder days straight to the database
+         // Sanitize the AI Date to ensure perfect math on the backend
          const safeReminders = expiryReviewModal.files.map(file => {
+             let dbSafeDate = file.expiryDate; // Default to raw AI output
+             
+             // If JS successfully parses the AI text, turn it into a strict ISO Date
+             if (file.expiryDate) {
+                 const parsedDate = new Date(file.expiryDate);
+                 if (!isNaN(parsedDate.getTime())) {
+                     dbSafeDate = parsedDate.toISOString(); 
+                 }
+             }
+             
              return { 
                ...file, 
-               expiryDate: file.expiryDate, 
+               expiryDate: dbSafeDate, 
                reminderDays: file.reminderDays 
              };
          });
@@ -358,6 +369,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
          
          showToast("Reminders saved successfully!", "success");
          setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false });
+         
+         // Force the bell to refresh immediately after saving!
+         fetchNotifications(); 
      } catch (err) {
          showToast("Failed to save reminders.", "error");
      } finally {
