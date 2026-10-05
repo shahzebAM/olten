@@ -1,93 +1,142 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaClient } from '@prisma/client';
+import {
+  companyToday,
+  DEFAULT_REMINDER_DAYS,
+  expiryStatus,
+  parseIsoDate,
+  reminderMessage,
+  reminderSchedule,
+} from './expiry-date.utils';
 
 const prisma = new PrismaClient();
 
+const isAutomaticReminder = (type: string | null | undefined) =>
+  typeof type === 'string' &&
+  (/^AUTO_DEFAULT_\d+$/.test(type) || /^\d+_DAYS$/.test(type) || type === 'EXPIRED');
+
 @Injectable()
-export class ExpiryCronService {
+export class ExpiryCronService implements OnModuleInit {
   private readonly logger = new Logger(ExpiryCronService.name);
-  
-  // Configurable reminder thresholds (in days)
-  private readonly defaultReminders = [90, 60, 30, 14, 7, 3, 1, 0];
+  private checkInProgress = false;
 
-  @Cron('0 8 * * *') // Runs every day at 8:00 AM server time
+  async onModuleInit() {
+    // Reconcile missed dates as soon as the server starts, including after downtime.
+    await this.checkExpirations();
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
   async checkExpirations() {
-    this.logger.log('Starting daily document expiration check...');
-    
-    // 1. Load active documents containing an expiry date
-    const documents = await (prisma as any).document.findMany({
-      where: {
-        expiryDate: { not: null },
-        expiryStatus: { not: 'EXPIRED' }
-      }
-    });
+    if (this.checkInProgress) return;
+    this.checkInProgress = true;
 
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    try {
+      const today = companyToday();
+      const documents = await (prisma as any).document.findMany({
+        where: { status: 'ACTIVE', expiryDate: { not: null } },
+        include: { reminders: true },
+      });
 
-    for (const doc of documents) {
-      const expiryDate = new Date(doc.expiryDate);
-      expiryDate.setUTCHours(0, 0, 0, 0);
-
-      // 2. Calculate remaining calendar days accurately
-      const diffTime = expiryDate.getTime() - today.getTime();
-      const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-      // 3. Update the expiry status based on days remaining
-      let newStatus = doc.expiryStatus;
-      if (daysRemaining < 0) newStatus = 'EXPIRED';
-      else if (daysRemaining === 0) newStatus = 'EXPIRES_TODAY';
-      else if (daysRemaining <= 30 && doc.expiryStatus !== 'NEEDS_REVIEW') newStatus = 'EXPIRING_SOON';
-      else if (doc.expiryStatus !== 'NEEDS_REVIEW') newStatus = 'ACTIVE';
-
-      if (newStatus !== doc.expiryStatus) {
-        await (prisma as any).document.update({
-          where: { id: doc.id },
-          data: { expiryStatus: newStatus, lastExpiryCheck: new Date() }
-        });
-      }
-
-      // 4. Generate notifications when a configured threshold is reached
-      const applicableReminders = [...this.defaultReminders];
-      if (doc.renewalDaysBeforeExpiry && !applicableReminders.includes(doc.renewalDaysBeforeExpiry)) {
-        applicableReminders.push(doc.renewalDaysBeforeExpiry);
-      }
-
-      for (const days of applicableReminders) {
-        // If we have reached or passed the exact threshold mark (e.g. 29 days remaining triggers the 30-day alert)
-        if (daysRemaining <= days && daysRemaining >= 0) {
-          const type = days === 0 ? 'EXPIRED' : `${days}_DAYS`;
-          const title = days === 0 ? 'Document Expiring Today' : 'Document Expiry Reminder';
-          const message = days === 0 
-            ? `${doc.originalName} expires today (${expiryDate.toISOString().split('T')[0]}).`
-            : `${doc.originalName} will expire on ${expiryDate.toISOString().split('T')[0]}. ${daysRemaining} days remaining.`;
-
-          // 6. Avoid duplicate notifications using Prisma upsert and the compound unique key
-          await (prisma as any).documentReminder.upsert({
-            where: {
-              documentId_reminderType: {
-                documentId: doc.id,
-                reminderType: type
-              }
-            },
-            update: {}, // No-op if it already exists
-            create: {
-              documentId: doc.id,
-              company: doc.company,
-              fileName: doc.originalName,
-              title: title,
-              message: message,
-              reminderType: type,
-              expiryDate: expiryDate,
-              triggerDate: today,
-              reminderDays: days,
-              status: 'PENDING'
-            }
-          });
+      for (const doc of documents) {
+        try {
+          // Updating the document holds its row lock until the schedule is saved.
+          // User edits update that same row before saving their reminder, so the
+          // status and schedule cannot be reconciled from different date cycles.
+          await (prisma as any).$transaction(
+            (client: any) => this.reconcileDocument(doc, today, client),
+            { timeout: 10000 },
+          );
+        } catch (error: any) {
+          this.logger.error(`Could not check expiry for document ${doc.id}: ${error.message}`);
         }
       }
+    } catch (error: any) {
+      // Database/configuration failures must not prevent Nest from starting.
+      this.logger.error(`Document expiry check failed: ${error.message}`);
+    } finally {
+      this.checkInProgress = false;
     }
-    this.logger.log('Daily expiration check completed successfully.');
+  }
+
+  private async reconcileDocument(doc: any, today: Date, client: any) {
+    const date = parseIsoDate(doc.expiryDate);
+    const needsReview = !date || doc.expiryStatus === 'NEEDS_REVIEW' ||
+      (doc.expiryDetectionMethod !== 'MANUAL' &&
+        typeof doc.expiryConfidence === 'number' && doc.expiryConfidence < 0.85);
+
+    const refreshed = await client.document.updateMany({
+      where: {
+        id: doc.id,
+        status: 'ACTIVE',
+        expiryDate: doc.expiryDate,
+        expiryStatus: doc.expiryStatus,
+        ...(doc.updatedAt ? { updatedAt: doc.updatedAt } : {}),
+      },
+      data: {
+        expiryStatus: expiryStatus(date, needsReview, today),
+        lastExpiryCheck: new Date(),
+      },
+    });
+
+    // A document changed since the query (for example, the user confirmed its
+    // date). Let the next check use the new values instead of overwriting them.
+    if (!refreshed.count || !date || needsReview) return;
+
+    const reminders: any[] = doc.reminders || [];
+    const automatic = reminders.filter(rem => isAutomaticReminder(rem.reminderType));
+    // A completed user reminder still represents their chosen schedule. Never add a
+    // fresh default after they have dismissed or fulfilled that reminder.
+    if (reminders.some(rem => !isAutomaticReminder(rem.reminderType))) {
+      await this.retireAutomaticReminders(doc.id, automatic, client);
+      return;
+    }
+
+    const configuredDays = doc.renewalDaysBeforeExpiry;
+    const days = Number.isSafeInteger(configuredDays) && configuredDays >= 0 && configuredDays <= 36500
+      ? configuredDays : DEFAULT_REMINDER_DAYS;
+    const schedule = reminderSchedule(date, { value: days, unit: 'days' });
+    const reminderType = `AUTO_DEFAULT_${days}`;
+    const current = automatic.find(rem => rem.reminderType === reminderType);
+    const previousCycle = current && parseIsoDate(current.expiryDate)?.getTime() !== date.getTime();
+    // Preserve a previously acknowledged legacy alert when replacing the old
+    // threshold fan-out with the single corresponding automatic reminder.
+    const legacyType = days === 0 ? 'EXPIRED' : `${days}_DAYS`;
+    const legacy = automatic.find(rem => rem.reminderType === legacyType &&
+      parseIsoDate(rem.expiryDate)?.getTime() === date.getTime());
+    const data = {
+      company: doc.company,
+      fileName: doc.originalName,
+      title: 'Document Expiry Reminder',
+      message: reminderMessage(doc.originalName, date, today),
+      expiryDate: date,
+      triggerDate: schedule.triggerDate,
+      reminderDays: schedule.reminderDays,
+    };
+
+    await client.documentReminder.upsert({
+      where: { documentId_reminderType: { documentId: doc.id, reminderType } },
+      update: { ...data, ...(previousCycle ? { status: 'PENDING' } : {}) },
+      create: {
+        ...data,
+        documentId: doc.id,
+        reminderType,
+        status: legacy?.status || 'PENDING',
+      },
+    });
+    await this.retireAutomaticReminders(doc.id,
+      automatic.filter(rem => rem.reminderType !== reminderType), client);
+  }
+
+  private async retireAutomaticReminders(documentId: number, reminders: any[], client: any) {
+    if (reminders.length === 0) return;
+    await client.documentReminder.updateMany({
+      where: {
+        documentId,
+        reminderType: { in: reminders.map(rem => rem.reminderType) },
+        status: { in: ['PENDING', 'PROCESSING'] },
+      },
+      data: { status: 'FULFILLED' },
+    });
   }
 }

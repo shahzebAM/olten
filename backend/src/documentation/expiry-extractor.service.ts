@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { parseIsoDate } from './expiry-date.utils';
 
 export interface ExtractedExpiry {
   documentType: string | null;
@@ -15,52 +16,57 @@ export interface ExtractedExpiry {
 
 @Injectable()
 export class ExpiryExtractorService {
-  private readonly logger = new Logger(ExpiryExtractorService.name);
-
   public extractViaRegex(text: string): ExtractedExpiry | null {
-    if (!text) return null;
-
-    const expiryRegex = /(?:Expiry Date|Expiration Date|Date of Expiry|Valid Until|Valid Through|Validity of License|License Valid Until|Permit Expiry|Renewal Date)\s*[:\-]?\s*([A-Za-z0-9\s,\/\-]+)/i;
-    const match = text.match(expiryRegex);
-
-    if (!match) return null;
-
-    const dateText = match[1].trim();
-    const parsedDate = this.parseDateString(dateText);
-
-    if (parsedDate) {
-      return {
+    // This helper accepts extracted text only; PDF/image/Office binary bytes
+    // must go through Gemini, never buffer.toString() and a date guess.
+    if (!text || text.includes('\0')) return null;
+    const datePattern = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|\\d{1,2}(?:st|nd|rd|th)?[ \\t]+[A-Za-z]+[ \\t]+\\d{4}|[A-Za-z]+[ \\t]+\\d{1,2}(?:st|nd|rd|th)?[,]?[ \\t]+\\d{4})';
+    const expiryRegex = new RegExp(`\\b(?:Expiry Date|Expiration Date|Date of Expiry|Valid Until|Valid Through|Validity of License|License Valid Until|Permit Expiry)\\s*[:\\-]?\\s*(${datePattern})(?![\\d/-])`, 'gi');
+    const candidates = Array.from(text.matchAll(expiryRegex))
+      .map(match => ({ date: this.parseDateString(match[1].trim()), evidence: match[0] }))
+      .filter((candidate): candidate is { date: Date; evidence: string } => candidate.date !== null)
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
+    if (!candidates.length) return null;
+    const candidate = candidates[0];
+    return {
         documentType: null,
         documentNumber: null,
         issueDate: null,
-        expiryDate: parsedDate,
+        expiryDate: candidate.date,
         renewalDate: null,
         renewalDaysBeforeExpiry: this.extractRenewalDays(text),
-        expiryDateText: match[0],
+        expiryDateText: candidate.evidence,
         confidence: 0.95,
-        reason: 'Deterministic regex match based on standard label.',
+        reason: 'Explicit expiry label with an unambiguous calendar date in readable text.',
         method: 'REGEX'
-      };
-    }
-
-    return null;
+    };
   }
 
   private parseDateString(dateStr: string): Date | null {
-    const pd = new Date(dateStr);
-    if (!isNaN(pd.getTime())) return pd;
-
-    const euroMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-    if (euroMatch) {
-      const [_, day, month, year] = euroMatch;
-      return new Date(`${year}-${month}-${day}`);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return parseIsoDate(dateStr);
+    const numeric = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (numeric) {
+      const first = Number(numeric[1]);
+      const second = Number(numeric[2]);
+      if (first <= 12 && second <= 12 && first !== second) return null;
+      const day = first > 12 ? first : second;
+      const month = first > 12 ? second : first;
+      return parseIsoDate(`${numeric[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     }
-    return null;
+
+    const named = dateStr.replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1').match(/^(?:(\d{1,2})\s+([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2}),?)\s+(\d{4})$/);
+    if (!named) return null;
+    const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+    const monthText = (named[2] || named[3]).toLowerCase();
+    const month = monthNames.findIndex(name => name === monthText || (monthText.length === 3 && name.startsWith(monthText))) + 1;
+    const day = Number(named[1] || named[4]);
+    return month ? parseIsoDate(`${named[5]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`) : null;
   }
 
   private extractRenewalDays(text: string): number | null {
-    const renewalRegex = /renew(?:ed)? within (\d+) days/i;
+    const renewalRegex = /\b(?:renew(?:al|ed)?|notice)\b[^\r\n.]{0,60}?\b(\d+)\s+days?\s+(?:before|prior to)\s+(?:the\s+)?(?:expiry|expiration)\b/i;
     const match = text.match(renewalRegex);
-    return match ? parseInt(match[1], 10) : null;
+    const days = match ? Number(match[1]) : null;
+    return days !== null && Number.isSafeInteger(days) ? days : null;
   }
 }

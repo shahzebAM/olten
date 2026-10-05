@@ -153,7 +153,7 @@ export class DriveService {
         supportsAllDrives: true,
       });
 
-      return response.data.webViewLink;
+      return response.data.webViewLink || `https://drive.google.com/file/d/${response.data.id}/view`;
     } catch (error: any) {
       const actualError = error.response?.data?.error?.message || error.message;
       this.logger.error(`Google Drive Upload Failed: ${actualError}`);
@@ -170,6 +170,16 @@ export class DriveService {
     } catch (error: any) {
       this.logger.warn(`Could not delete file ${fileId} from Drive: ${error.message}`);
     }
+  }
+
+  // Gemini file URIs expire; the durable Drive copy is the source for reanalysis.
+  async downloadFile(fileId: string): Promise<Buffer> {
+    const response = await this.drive.files.get({
+      fileId,
+      alt: 'media',
+      supportsAllDrives: true,
+    }, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data);
   }
 
   // Method to rename folders (or files)

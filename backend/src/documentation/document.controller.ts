@@ -2,6 +2,7 @@ import { Controller, Post, Get, Delete, Patch, Param, Body, Headers, UseIntercep
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentService } from './document.service';
+import type { ReminderOptions } from './expiry-date.utils';
 import { DriveService } from './drive.service';
 
 @Controller('api/docs')
@@ -34,21 +35,21 @@ export class DocumentController {
 
   @Post('upload')
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
-  async uploadFile(@UploadedFile() file: any, @Headers('x-company') company: string, @Headers('x-username') username: string, @Body('targetFolderId') targetFolderId?: string) {
+  async uploadFile(@UploadedFile() file: any, @Headers('x-company') company: string, @Headers('x-username') username: string, @Body() body: ReminderOptions & { targetFolderId?: string }) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return this.documentService.processNewDocument(file, company, username, targetFolderId);
+    return this.documentService.processNewDocument(file, company, username, body.targetFolderId, body);
   }
 
   // --- NEW PHASE 8 ENDPOINTS ---
   @Patch(':id/manual-expiry')
-  async updateManualExpiry(@Param('id') id: string, @Headers('x-company') company: string, @Body('expiryDate') expiryDate: string) {
-    if (!expiryDate) throw new BadRequestException('Expiry Date is required');
-    return this.documentService.updateManualExpiry(Number(id), company, expiryDate);
+  async updateManualExpiry(@Param('id') id: string, @Headers('x-company') company: string, @Body() body: ReminderOptions & { expiryDate: string }) {
+    if (!body.expiryDate) throw new BadRequestException('Expiry Date is required');
+    return this.documentService.updateManualExpiry(id, company, body.expiryDate, body);
   }
 
   @Post(':id/reanalyze')
   async reanalyzeDocument(@Param('id') id: string, @Headers('x-company') company: string) {
-    return this.documentService.reanalyzeDocument(Number(id), company);
+    return this.documentService.reanalyzeDocument(id, company);
   }
   // -----------------------------
 
@@ -70,8 +71,8 @@ export class DocumentController {
   }
 
   @Patch('notifications/:id/status')
-  async updateNotificationStatus(@Param('id') id: string, @Body('status') status: string) {
-    return this.documentService.updateNotificationStatus(Number(id), status);
+  async updateNotificationStatus(@Param('id') id: string, @Headers('x-company') company: string, @Body('status') status: string) {
+    return this.documentService.updateNotificationStatus(Number(id), status, company);
   }
 
   @Post('search')
