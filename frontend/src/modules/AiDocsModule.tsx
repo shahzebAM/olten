@@ -16,6 +16,72 @@ interface DriveFile {
   expiryStatus?: string;
   expiryDetectionMethod?: string;
   expiryConfidence?: number;
+  documentId?: number;
+  reminder?: DocumentReminder | null;
+  reminderWarning?: string;
+}
+
+type ReminderUnit = 'days' | 'months';
+
+interface DocumentReminder {
+  id: number;
+  fileName: string;
+  expiryDate: string;
+  reminderDays: number;
+  triggerDate: string;
+  status: string;
+  isTriggered: boolean;
+  title?: string;
+  message?: string;
+  reminderValue?: number;
+  reminderUnit?: ReminderUnit;
+}
+
+interface ExpiryReviewFile {
+  id: number;
+  name: string;
+  expiryDate: string;
+  reminderValue: string;
+  reminderUnit: ReminderUnit;
+  expiryStatus?: string;
+  warning?: string;
+  hasReminder: boolean;
+}
+
+interface UploadedDocument {
+  id: number;
+  originalName?: string;
+  filename?: string;
+  expiryDate?: string;
+  expiryStatus?: string;
+  reminder?: DocumentReminder | null;
+  reminderWarning?: string;
+  detectionWarning?: string;
+  indexingWarning?: string;
+}
+
+const dateInputValue = (date?: string) => date?.slice(0, 10) || '';
+const displayDate = (date: string) => new Date(`${dateInputValue(date)}T00:00:00`).toLocaleDateString();
+const isValidReminder = (value: string, unit: ReminderUnit) => value.trim() !== '' && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= (unit === 'months' ? 1200 : 36500);
+
+function ReminderLeadTimeInput({ value, unit, onChange, disabled = false }: {
+  value: string;
+  unit: ReminderUnit;
+  onChange: (value: string, unit: ReminderUnit) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+      Remind me before expiry
+      <span className="flex gap-2">
+        <input aria-label="Reminder amount" type="number" min="0" max={unit === 'months' ? 1200 : 36500} step="1" required value={value} disabled={disabled} onChange={e => onChange(e.target.value, unit)} className="w-20 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+        <select aria-label="Reminder unit" value={unit} disabled={disabled} onChange={e => onChange(value, e.target.value as ReminderUnit)} className="px-2 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="days">Days</option>
+          <option value="months">Months</option>
+        </select>
+      </span>
+    </label>
+  );
 }
 
 interface DriveFolder {
@@ -62,45 +128,76 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [expiryReviewModal, setExpiryReviewModal] = useState({
     isOpen: false,
     isAnalyzing: false,
-    files: [] as { id: number; name: string; expiryDate: string; reminderDays: number }[]
+    files: [] as ExpiryReviewFile[]
   });
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  const [uploadReminderValue, setUploadReminderValue] = useState('30');
+  const [uploadReminderUnit, setUploadReminderUnit] = useState<ReminderUnit>('days');
+  const [uploadError, setUploadError] = useState('');
+  const [reviewError, setReviewError] = useState('');
   
   // --- MANUAL EXPIRY STATES ---
   const [isEditingExpiry, setIsEditingExpiry] = useState(false);
   const [manualExpiryDate, setManualExpiryDate] = useState('');
+  const [manualReminderValue, setManualReminderValue] = useState('30');
+  const [manualReminderUnit, setManualReminderUnit] = useState<ReminderUnit>('days');
+  const [isSavingExpiry, setIsSavingExpiry] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
 
   // --- NOTIFICATION STATES ---
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [notificationState, setNotificationState] = useState<{ company: string; items: DocumentReminder[]; error: string }>({ company: selectedCompany, items: [], error: '' });
+  const notifications = notificationState.company === selectedCompany ? notificationState.items : [];
+  const notificationError = notificationState.company === selectedCompany ? notificationState.error : '';
+  const [openNotificationCompany, setOpenNotificationCompany] = useState<string | null>(null);
+  const isNotifOpen = openNotificationCompany === selectedCompany;
+  const setIsNotifOpen = (open: boolean) => setOpenNotificationCompany(open ? selectedCompany : null);
+  const seenTriggeredReminders = useRef(new Set<string>());
+  const notificationCompanyRef = useRef(selectedCompany);
 
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/notifications`, {
-        headers: { 'x-company': selectedCompany }
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(data);
+      if (!res.ok) throw new Error('Could not refresh expiry reminders.');
+      const data: DocumentReminder[] = await res.json();
+      if (notificationCompanyRef.current !== selectedCompany) return;
+      setNotificationState({ company: selectedCompany, items: data, error: '' });
+      const active = data.filter(n => n.isTriggered && n.status !== 'FULFILLED');
+      if (active.some(n => !seenTriggeredReminders.current.has(`${selectedCompany}:${n.id}:${n.triggerDate}`))) {
+        setOpenNotificationCompany(selectedCompany);
       }
-    } catch (e) {}
-  }, [API_BASE_URL, selectedCompany]);
+      active.forEach(n => seenTriggeredReminders.current.add(`${selectedCompany}:${n.id}:${n.triggerDate}`));
+    } catch {
+      if (notificationCompanyRef.current === selectedCompany) setNotificationState(prev => ({ company: selectedCompany, items: prev.company === selectedCompany ? prev.items : [], error: 'Reminders could not be refreshed. Check your connection and retry.' }));
+    }
+  }, [API_BASE_URL, selectedCompany, loginUsername]);
 
   useEffect(() => {
-    fetchNotifications();
+    notificationCompanyRef.current = selectedCompany;
+    const initialRefresh = setTimeout(fetchNotifications, 0);
     const interval = setInterval(fetchNotifications, 30000); 
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') fetchNotifications(); };
+    window.addEventListener('focus', fetchNotifications);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      clearTimeout(initialRefresh);
+      clearInterval(interval);
+      window.removeEventListener('focus', fetchNotifications);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [fetchNotifications, selectedCompany]);
 
   const handleUpdateNotif = async (id: number, status: string) => {
     try {
-      await fetch(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
+      const res = await fetch(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ status })
       });
-      fetchNotifications(); 
-    } catch (e) {
+      if (!res.ok) throw new Error('Could not update reminder');
+      await fetchNotifications();
+    } catch {
       showToast("Failed to update status", "error");
     }
   };
@@ -244,11 +341,28 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesArray = Array.from(e.target.files || []);
-    if (filesArray.length === 0) return;
-    
+    e.target.value = '';
+    if (filesArray.length === 0 || isUploading) return;
+    setUploadError('');
+    setPendingUploadFiles(filesArray);
+  };
+
+  const uploadPendingFiles = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isUploading || pendingUploadFiles.length === 0) return;
+    if (!isValidReminder(uploadReminderValue, uploadReminderUnit)) {
+      setUploadError(`Enter a whole number from 0 to ${uploadReminderUnit === 'months' ? 1200 : 36500}.`);
+      return;
+    }
+    const filesArray = pendingUploadFiles;
+    const reminderValue = uploadReminderValue;
+    const reminderUnit = uploadReminderUnit;
+    setPendingUploadFiles([]);
+    setUploadError('');
     setIsUploading(true);
     setIsProcessing(true);
-    const uploadedDocs: any[] = [];
+    const uploadedDocs: UploadedDocument[] = [];
+    const failedFiles: string[] = [];
 
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
@@ -257,12 +371,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0, startTime: uploadStart });
        const formData = new FormData();
        formData.append('file', file);
+       formData.append('reminderValue', reminderValue);
+       formData.append('reminderUnit', reminderUnit);
        if (activeFolderId && activeFolderId !== rootFolderId) {
          formData.append('targetFolderId', activeFolderId); 
        }
 
        try {
-         const uploadedDoc = await new Promise((resolve, reject) => {
+         const uploadedDoc = await new Promise<UploadedDocument>((resolve, reject) => {
              const xhr = new XMLHttpRequest();
              xhr.open('POST', `${API_BASE_URL}/api/docs/upload`);
              xhr.setRequestHeader('x-company', selectedCompany);
@@ -276,39 +392,79 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
              };
 
              xhr.onload = () => {
-                 if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-                 else reject(new Error('Upload failed'));
+                 try {
+                   const response = JSON.parse(xhr.responseText);
+                   if (xhr.status >= 200 && xhr.status < 300) resolve(response);
+                   else reject(new Error(response.message || 'Upload failed'));
+                 } catch {
+                   reject(new Error('The upload returned an invalid response'));
+                 }
              };
              xhr.onerror = () => reject(new Error('Network error'));
              xhr.send(formData);
          });
          uploadedDocs.push(uploadedDoc);
        } catch (err) {
-         console.error(`Failed to upload ${file.name}`);
+         failedFiles.push(`${file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`);
        }
 
        setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100, startTime: uploadStart });
-       await new Promise(resolve => setTimeout(resolve, 400));
     }
 
     setUploadProgress(null);
     setIsUploading(false);
     setIsProcessing(false);
+    if (failedFiles.length > 0) setUploadError(failedFiles.join('\n'));
 
     if (uploadedDocs.length > 0) {
-       // Instantly open the modal with the newly extracted AI dates!
-       const reviewFiles = uploadedDocs.map((doc: any) => ({
+       const reviewFiles: ExpiryReviewFile[] = uploadedDocs.map(doc => ({
          id: doc.id,
          name: doc.originalName || doc.filename || 'Document',
-         // The backend now returns the expiry date instantly!
-         expiryDate: doc.expiryDate ? new Date(doc.expiryDate).toISOString().split('T')[0] : '',
-         reminderDays: doc.renewalDaysBeforeExpiry || 30
+         expiryDate: dateInputValue(doc.expiryDate),
+         reminderValue,
+         reminderUnit,
+         expiryStatus: doc.expiryStatus,
+         warning: [doc.detectionWarning, doc.reminderWarning, doc.indexingWarning].filter(Boolean).join(' '),
+         hasReminder: Boolean(doc.reminder)
        }));
-       
+       setReviewError('');
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
-       fetchDirectory(true);
+       await Promise.all([fetchDirectory(true), fetchNotifications()]);
     } else {
        showToast("Failed to upload files.", "error");
+    }
+  };
+
+  const handleSaveReminders = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isProcessing) return;
+    const filesWithDates = expiryReviewModal.files.filter(file => file.expiryDate);
+    if (filesWithDates.length === 0) {
+      setReviewError('Enter an expiry date for at least one document to create a reminder.');
+      return;
+    }
+    if (filesWithDates.some(file => !isValidReminder(file.reminderValue, file.reminderUnit))) {
+      setReviewError('Reminder amounts must be whole numbers: 0–36500 days or 0–1200 months.');
+      return;
+    }
+    setReviewError('');
+    setIsProcessing(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        body: JSON.stringify({ reminders: filesWithDates.map(file => ({ id: file.id, expiryDate: file.expiryDate, reminderValue: Number(file.reminderValue), reminderUnit: file.reminderUnit })) })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to save reminders.');
+      const missingDateCount = expiryReviewModal.files.length - filesWithDates.length;
+      showToast(missingDateCount ? `Reminders saved. ${missingDateCount} document(s) still need an expiry date.` : 'Expiry dates and reminders saved.', 'success');
+      setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false });
+      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Failed to save reminders.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -379,27 +535,33 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const calculateDaysRemaining = (expiryStr?: string) => {
     if (!expiryStr) return null;
     const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const exp = new Date(expiryStr);
-    exp.setUTCHours(0, 0, 0, 0);
-    return Math.ceil((exp.getTime() - today.getTime()) / 86400000);
+    const todayDate = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const expiryDate = new Date(`${dateInputValue(expiryStr)}T00:00:00Z`).getTime();
+    return Number.isFinite(expiryDate) ? Math.round((expiryDate - todayDate) / 86400000) : null;
   };
 
   const handleManualExpiryUpdate = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || isSavingExpiry) return;
+    if (!manualExpiryDate || !isValidReminder(manualReminderValue, manualReminderUnit)) {
+      showToast('Enter an expiry date and a valid whole-number reminder amount.', 'error');
+      return;
+    }
+    setIsSavingExpiry(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/docs/${selectedFile.id}/manual-expiry`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-        body: JSON.stringify({ expiryDate: manualExpiryDate })
+        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        body: JSON.stringify({ expiryDate: manualExpiryDate, reminderValue: Number(manualReminderValue), reminderUnit: manualReminderUnit })
       });
-      if (res.ok) {
-        showToast("Expiry date manually verified and updated", "success");
-        setIsEditingExpiry(false);
-        fetchDirectory(); 
-      }
-    } catch (e) {
-      showToast("Failed to update date", "error");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to update expiry and reminder.');
+      showToast('Expiry date verified and reminder saved.', 'success');
+      setIsEditingExpiry(false);
+      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update expiry and reminder.', 'error');
+    } finally {
+      setIsSavingExpiry(false);
     }
   };
 
@@ -410,14 +572,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       showToast("Re-analyzing document with AI...", "success");
       const res = await fetch(`${API_BASE_URL}/api/docs/${selectedFile.id}/reanalyze`, {
         method: 'POST',
-        headers: { 'x-company': selectedCompany }
+        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
       });
-      if (res.ok) {
-        showToast("Re-analysis complete.", "success");
-        fetchDirectory(true);
-      }
-    } catch (e) {
-      showToast("Failed to re-analyze", "error");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to re-analyze.');
+      showToast(data.detectionWarning || data.reminderWarning || (data.expiryStatus === 'NEEDS_REVIEW' ? 'The detected expiry needs your review.' : 'Re-analysis complete.'), data.detectionWarning || data.reminderWarning ? 'error' : 'success');
+      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to re-analyze.', 'error');
     } finally {
       setIsReanalyzing(false);
     }
@@ -427,9 +589,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     switch (status) {
       case 'ACTIVE': return <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-[10px] font-bold">ACTIVE</span>;
       case 'EXPIRING_SOON': return <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded text-[10px] font-bold animate-pulse">EXPIRING SOON</span>;
-      case 'EXPIRES_TODAY':
+      case 'EXPIRES_TODAY': return <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded text-[10px] font-bold">EXPIRES TODAY</span>;
       case 'EXPIRED': return <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded text-[10px] font-bold">EXPIRED</span>;
       case 'NEEDS_REVIEW': return <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded text-[10px] font-bold">NEEDS REVIEW</span>;
+      case 'NO_EXPIRY': return <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-[10px] font-bold">NO EXPIRY FOUND</span>;
       default: return null;
     }
   };
@@ -554,7 +717,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         {childFiles.map(file => (
           <div 
             key={file.id}
-            onClick={() => { setSelectedFile(file); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
+            onClick={() => { setSelectedFile(file); setIsEditingExpiry(false); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
             className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
@@ -579,7 +742,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     <div className="flex flex-col h-screen w-full bg-[#FBFBFC] font-sans text-slate-800 overflow-hidden relative">
       
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3 rounded-lg shadow-lg font-bold text-sm border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+        <div role="status" className={`fixed bottom-24 right-6 z-[250] max-w-sm px-5 py-3 rounded-lg shadow-lg font-bold text-sm border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
@@ -691,7 +854,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <button onClick={() => setIsNewFolderModalOpen(true)} className="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg> Folder
                 </button>
-                <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isProcessing || pendingUploadFiles.length > 0} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg> Upload
                 </button>
               </div>
@@ -840,7 +1003,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                       
                       {selectedFile.expiryDate && (
                         <span className="text-xs font-medium text-slate-600">
-                          Expires: <span className="font-bold">{new Date(selectedFile.expiryDate).toLocaleDateString()}</span>
+                          Expires: <span className="font-bold">{displayDate(selectedFile.expiryDate)}</span>
                           {calculateDaysRemaining(selectedFile.expiryDate) !== null && (
                             <span className={`ml-2 ${calculateDaysRemaining(selectedFile.expiryDate)! < 30 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
                               ({calculateDaysRemaining(selectedFile.expiryDate)} days remaining)
@@ -855,25 +1018,37 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         </span>
                       )}
                     </div>
+                    {selectedFile.reminder && (
+                      <p className="text-xs font-medium text-indigo-700 mt-2">
+                        Reminder: {selectedFile.reminder.reminderValue ?? selectedFile.reminder.reminderDays} {selectedFile.reminder.reminderUnit || 'days'} before expiry
+                        {selectedFile.reminder.status === 'FULFILLED' ? ' · Inactive' : ` · ${displayDate(selectedFile.reminder.triggerDate)}${selectedFile.reminder.isTriggered ? ' · Due now' : ''}`}
+                      </p>
+                    )}
+                    {(selectedFile.reminderWarning || (!selectedFile.reminder && (!selectedFile.expiryDate || selectedFile.expiryStatus === 'NEEDS_REVIEW'))) && (
+                      <p className="text-xs font-medium text-amber-700 mt-2 max-w-lg">{selectedFile.reminderWarning || 'No reminder is scheduled. Confirm the expiry date and reminder below.'}</p>
+                    )}
                   </div>
                   
                   {/* PHASE 8: MANUAL ACTIONS */}
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex gap-2 flex-wrap">
                     {isEditingExpiry ? (
-                      <div className="flex gap-2 items-center bg-white border border-slate-200 p-1.5 rounded-lg shadow-sm">
-                        <input 
-                          type="date" 
-                          value={manualExpiryDate} 
-                          onChange={e => setManualExpiryDate(e.target.value)}
-                          className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-indigo-500"
-                        />
-                        <button onClick={handleManualExpiryUpdate} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 text-xs font-bold rounded transition-colors">Save</button>
-                        <button onClick={() => setIsEditingExpiry(false)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1 text-xs font-bold rounded transition-colors">Cancel</button>
+                      <div className="flex gap-3 flex-wrap items-end bg-white border border-slate-200 p-3 rounded-lg shadow-sm">
+                        <label className="flex flex-col gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry date
+                          <input type="date" value={manualExpiryDate} disabled={isSavingExpiry} onChange={e => setManualExpiryDate(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-2 text-xs text-slate-800 outline-none focus:border-indigo-500" />
+                        </label>
+                        <ReminderLeadTimeInput value={manualReminderValue} unit={manualReminderUnit} disabled={isSavingExpiry} onChange={(value, unit) => { setManualReminderValue(value); setManualReminderUnit(unit); }} />
+                        <button onClick={handleManualExpiryUpdate} disabled={isSavingExpiry} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-xs font-bold rounded transition-colors disabled:opacity-50">{isSavingExpiry ? 'Saving...' : 'Save'}</button>
+                        <button onClick={() => setIsEditingExpiry(false)} disabled={isSavingExpiry} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 text-xs font-bold rounded transition-colors">Cancel</button>
                       </div>
                     ) : (
                       <>
-                        <button onClick={() => setIsEditingExpiry(true)} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors">
-                          Edit Expiry
+                        <button onClick={() => {
+                          setManualExpiryDate(dateInputValue(selectedFile.expiryDate));
+                          setManualReminderValue(String(selectedFile.reminder?.reminderValue ?? selectedFile.reminder?.reminderDays ?? 30));
+                          setManualReminderUnit(selectedFile.reminder?.reminderUnit || 'days');
+                          setIsEditingExpiry(true);
+                        }} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors">
+                          Edit Expiry & Reminder
                         </button>
                         <button onClick={handleReanalyze} disabled={isReanalyzing} className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-50 transition-colors flex items-center gap-1.5 disabled:opacity-50">
                           {isReanalyzing ? (
@@ -925,6 +1100,36 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       </main>
 
       {/* --- MODALS --- */}
+
+      {pendingUploadFiles.length > 0 && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[200]">
+          <form onSubmit={uploadPendingFiles} role="dialog" aria-modal="true" aria-labelledby="upload-reminder-title" className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
+            <div>
+              <h3 id="upload-reminder-title" className="text-lg font-black text-slate-800">Set your expiry reminder</h3>
+              <p className="text-sm text-slate-500 mt-2">Gemini will read the expiry date from each document or picture. Choose when to be reminded before uploading.</p>
+            </div>
+            <ul className="max-h-32 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              {pendingUploadFiles.map((file, index) => <li key={`${file.name}-${index}`} className="truncate">{file.name}</li>)}
+            </ul>
+            <ReminderLeadTimeInput value={uploadReminderValue} unit={uploadReminderUnit} onChange={(value, unit) => { setUploadReminderValue(value); setUploadReminderUnit(unit); }} />
+            <p className="text-xs text-slate-500">This applies to all selected files; you can edit each after upload. Months use calendar dates. Enter 0 for the expiry day. If the reminder date has already passed, the reminder becomes due immediately.</p>
+            {uploadError && <p role="alert" className="text-xs font-medium text-rose-700">{uploadError}</p>}
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setPendingUploadFiles([])} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-lg">Cancel</button>
+              <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg">Upload & Detect Expiry</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {uploadError && pendingUploadFiles.length === 0 && !expiryReviewModal.isOpen && (
+        <div role="alert" className="fixed top-20 right-4 z-[160] max-w-md bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 shadow-lg">
+          <div className="flex justify-between gap-4 items-start">
+            <p className="text-xs whitespace-pre-line">Some files could not be uploaded. Select them again to retry.{`\n${uploadError}`}</p>
+            <button onClick={() => setUploadError('')} aria-label="Dismiss upload error" className="font-bold">×</button>
+          </div>
+        </div>
+      )}
       
       {isNewFolderModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in">
@@ -961,14 +1166,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       {/* AI EXPIRY & REMINDER REVIEW MODAL */}
       {expiryReviewModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex justify-center items-center p-4">
-           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
+           <form onSubmit={handleSaveReminders} role="dialog" aria-modal="true" aria-labelledby="expiry-review-title" className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200">
               <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
                  <div>
-                    <h3 className="text-xl font-black uppercase tracking-tight">Document Validity Review</h3>
-                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Set Reminders for Uploaded Files</p>
+                    <h3 id="expiry-review-title" className="text-xl font-black uppercase tracking-tight">Review Expiry Dates</h3>
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">Uploaded Files & Reminders</p>
                  </div>
                  {!expiryReviewModal.isAnalyzing && (
-                   <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors">
+                   <button type="button" disabled={isProcessing} aria-label="Close expiry review" onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="p-1.5 bg-black/10 hover:bg-black/20 rounded-full transition-colors disabled:opacity-50">
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                    </button>
                  )}
@@ -976,67 +1181,42 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
               <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
                  <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-                    Review the AI-detected dates and set how many days before expiry you want to be reminded.
+                    Check the detected dates against your documents. Reminders are already scheduled for confirmed dates. Add or confirm a date where Gemini needs your review, then save. Files without an expiry date have no reminder.
                  </div>
+                 {uploadError && <p role="alert" className="text-xs text-rose-700 whitespace-pre-line">Some uploads failed:{`\n${uploadError}`}</p>}
                  
                  {expiryReviewModal.files.map((file, index) => (
-                    <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
                        <div className="flex-1 min-w-0 pr-4">
                           <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
-                          {file.expiryDate ? (
+                          {file.hasReminder ? (
                              <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
-                                ✓ AI Date Locked
+                                Reminder scheduled
                              </div>
                           ) : (
-                             <div className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
-                                ⚠ AI Failed to Read Expiry
+                             <div className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
+                                {file.expiryDate || file.expiryStatus === 'NEEDS_REVIEW' ? 'Confirm expiry to schedule' : 'No expiry detected'}
                              </div>
                           )}
+                          {file.warning && <p className="text-xs text-amber-700 mt-2">{file.warning}</p>}
                        </div>
                        
-                       <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                          {file.expiryDate && (
-                             <div className="flex flex-col gap-1.5 w-36">
-                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
-                                <div className="relative">
-                                  <input 
-                                    type="number" 
-                                    min="1"
-                                    value={file.reminderDays} 
-                                    onChange={(e) => {
-                                       const newFiles = [...expiryReviewModal.files];
-                                       newFiles[index].reminderDays = Number(e.target.value);
-                                       setExpiryReviewModal({ ...expiryReviewModal, files: newFiles });
-                                    }} 
-                                    className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" 
-                                  />
-                                  <span className="absolute right-3 top-2 text-[10px] font-bold text-slate-400 uppercase">Days</span>
-                                </div>
-                             </div>
-                          )}
+                       <div className="flex flex-wrap items-end gap-4 w-full">
+                          <label className="flex flex-col gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Expiry date
+                            <input type="date" value={file.expiryDate} required={file.hasReminder} disabled={isProcessing} onChange={e => setExpiryReviewModal(prev => ({ ...prev, files: prev.files.map((item, i) => i === index ? { ...item, expiryDate: e.target.value } : item) }))} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500" />
+                          </label>
+                          <ReminderLeadTimeInput value={file.reminderValue} unit={file.reminderUnit} disabled={isProcessing} onChange={(value, unit) => setExpiryReviewModal(prev => ({ ...prev, files: prev.files.map((item, i) => i === index ? { ...item, reminderValue: value, reminderUnit: unit } : item) }))} />
                        </div>
                     </div>
                  ))}
                  
-                 <div className="mt-2 pt-4 border-t border-slate-200 flex justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
-                    <button onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-black uppercase tracking-wider hover:bg-slate-50 transition-colors text-xs shadow-sm">Skip Custom Reminders</button>
-                    <button onClick={async () => {
-                        setIsProcessing(true);
-                        try {
-                           await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
-                              body: JSON.stringify({ reminders: expiryReviewModal.files })
-                           });
-                           showToast("Reminders saved successfully!", "success");
-                           setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false });
-                           fetchNotifications();
-                        } catch { showToast("Failed to save.", "error"); }
-                        setIsProcessing(false);
-                    }} disabled={isProcessing} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">Save Reminders</button>
+                 {reviewError && <p role="alert" className="text-xs font-medium text-rose-700">{reviewError}</p>}
+                 <div className="mt-2 pt-4 border-t border-slate-200 flex flex-wrap justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
+                    <button type="button" disabled={isProcessing} onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-5 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors text-xs shadow-sm disabled:opacity-50">Keep Uploaded Settings</button>
+                    <button type="submit" disabled={isProcessing} className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">{isProcessing ? 'Saving...' : 'Confirm Dates & Save Reminders'}</button>
                  </div>
               </div>
-           </div>
+           </form>
         </div>
       )}
 
@@ -1045,36 +1225,46 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       {/* FLOATING NOTIFICATION WIDGET */}
       <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
         {isNotifOpen && (
-          <div className="mb-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-5">
+          <div aria-live="polite" className="mb-4 w-80 max-w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-5">
             <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
               <h3 className="font-black text-sm uppercase tracking-wider">Expiry Reminders</h3>
               <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-white"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
             </div>
             <div className="max-h-80 overflow-y-auto p-2 bg-slate-50">
+              {notificationError && (
+                <div role="alert" className="p-3 mb-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg">
+                  {notificationError}
+                  <button onClick={() => fetchNotifications()} className="block mt-2 font-bold underline">Retry</button>
+                </div>
+              )}
+              <p className="px-2 py-1 text-[10px] text-slate-500">Due reminders appear here while this workspace is open.</p>
               {notifications.length === 0 ? (
                 <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders scheduled.</div>
               ) : (
                 notifications.map(n => (
-                  <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
+                  <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered && n.status !== 'FULFILLED' ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
                     <div className="flex justify-between items-start mb-1.5">
-                       <div className="text-xs font-black text-slate-800 pr-2 leading-tight">{n.title || 'Reminder'}</div>
-                       {!n.isTriggered ? (
+                       <div className="text-xs font-black text-slate-800 pr-2 leading-tight">{n.title || n.fileName || 'Expiry reminder'}</div>
+                       {n.status === 'FULFILLED' ? (
+                          <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Handled</span>
+                       ) : !n.isTriggered ? (
                           <span className="text-[9px] font-bold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Waiting</span>
                        ) : (
                           <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
                        )}
                     </div>
-                    <div className="text-[10px] text-slate-600 mb-2">{n.message || n.fileName}</div>
+                    {n.message && <div className="text-[10px] text-slate-600 mb-2">{n.message}</div>}
+                    <div className="text-[10px] text-slate-600 mb-2">Expires: {displayDate(n.expiryDate)} · {n.reminderValue ?? n.reminderDays} {n.reminderUnit || 'days'} before</div>
                     
                     {!n.isTriggered ? (
                         <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
-                          Alert scheduled: {new Date(n.triggerDate).toLocaleDateString()}
+                          Alert scheduled: {displayDate(n.triggerDate)}
                         </div>
-                    ) : (
+                    ) : n.status !== 'FULFILLED' ? (
                         <div className="flex gap-2 mt-3">
                           <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Mark Handled</button>
                         </div>
-                    )}
+                    ) : null}
                   </div>
                 ))
               )}
@@ -1083,13 +1273,15 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         )}
 
         <button 
-          onClick={() => setIsNotifOpen(!isNotifOpen)} 
+          onClick={() => { setIsNotifOpen(!isNotifOpen); if (!isNotifOpen) fetchNotifications(); }}
+          aria-label={`Expiry reminders: ${notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length} due`}
+          aria-expanded={isNotifOpen}
           className="relative w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-          {notifications.filter(n => n.isTriggered).length > 0 && (
+          {notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length > 0 && (
             <span className="absolute top-0 right-0 w-5 h-5 bg-rose-500 border-2 border-white text-[10px] font-black flex items-center justify-center rounded-full animate-bounce">
-              {notifications.filter(n => n.isTriggered).length}
+              {notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length}
             </span>
           )}
         </button>
