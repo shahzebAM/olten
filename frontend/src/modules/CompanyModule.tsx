@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -131,7 +132,7 @@ export default function CompanyModule({
 
       try {
         const res = await fetch(`${API_BASE_URL}/admins/${currentUser?.id || loginUsername}/preferences`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ moduleOrder: newOrder })
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: JSON.stringify({ moduleOrder: newOrder })
         });
         if (res.ok) showToast("Layout synced across devices.", "success");
         else showToast(`Database sync failed: ${res.status}`, "error");

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 
 interface UserControlModuleProps {
   adminUsers: any[];
@@ -139,7 +140,7 @@ export default function UserControlModule({
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify(payload)
       });
 
@@ -172,7 +173,7 @@ export default function UserControlModule({
     if (!window.confirm(`Permanently remove access for user "${targetUsername}"?`)) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/admins/${id}`, { method: 'DELETE', headers: getApiAuthHeaders() });
       if (!res.ok) throw new Error();
       showToast("User removed from workspace.", "success");
       fetchAdmins();

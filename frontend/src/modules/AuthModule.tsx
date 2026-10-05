@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { clearApiSession, setApiSession } from '../lib/apiSession';
 
-export default function AuthModule({ onLoginSuccess, isPrivacyRoute, API_BASE_URL }: any) {
+export default function AuthModule({ onLoginSuccess, isPrivacyRoute, API_BASE_URL, sessionMessage = '' }: any) {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -10,12 +11,7 @@ const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setLoginError('');
-
-    // --- SECRET DEVELOPER BACKDOOR ---
-    if (loginUsername.trim().toLowerCase() === 'system_dev' && loginPassword === 'admin_override_99') {
-      onLoginSuccess('system_dev');
-      return;
-    }
+    clearApiSession();
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -24,12 +20,14 @@ const handleLogin = async (e: React.FormEvent) => {
         body: JSON.stringify({ username: loginUsername.trim().toLowerCase(), password: loginPassword })
       });
       if (response.ok) {
+        const session = await response.json();
+        setApiSession(session.accessToken, session.expiresAt);
         onLoginSuccess(loginUsername.trim().toLowerCase());
       } else {
-        setLoginError('Access Denied: Invalid credentials.');
+        setLoginError(response.status === 401 ? 'Access Denied: Invalid credentials.' : 'The backend could not complete login. Please try again shortly.');
       }
-    } catch (error) { 
-      setLoginError('Network Error: Could not connect to backend.'); 
+    } catch (error) {
+      setLoginError(error instanceof TypeError ? 'Network Error: Could not connect to backend.' : error instanceof Error ? error.message : 'Login failed. Please try again.');
     } 
     finally { 
       setIsLoggingIn(false); 
@@ -86,9 +84,9 @@ const handleLogin = async (e: React.FormEvent) => {
            </div>
            
            <form onSubmit={handleLogin} className="flex flex-col gap-5 w-full">
-              {loginError && (
+              {(loginError || sessionMessage) && (
                 <div className="text-rose-700 text-xs font-bold text-center bg-rose-50 p-2.5 rounded-lg border border-rose-200">
-                  {loginError}
+                  {loginError || sessionMessage}
                 </div>
               )}
               

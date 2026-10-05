@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import DocumentPreview from '../components/DocumentPreview';
+import { getApiAuthHeaders, expireApiSession } from '../lib/apiSession';
+import { safeDocumentLink } from '../lib/documentLinks';
 
 // --- INTERFACES ---
 interface DriveFile {
@@ -25,6 +28,8 @@ interface DriveFile {
   daysRemaining?: number | null;
   expires?: { daysRemaining?: number | null };
   reminderSetupPending?: boolean;
+  reminderDisabled?: boolean;
+  reminderValue?: number | null;
 }
 
 type ReminderUnit = 'days' | 'months';
@@ -125,7 +130,7 @@ function SourceEyeIcon() {
 }
 
 const dateInputValue = (date?: string) => date?.slice(0, 10) || '';
-const displayDate = (date: string) => new Date(`${dateInputValue(date)}T00:00:00`).toLocaleDateString();
+const displayDate = (date: string) => new Date(`${dateInputValue(date)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const isValidReminder = (value: string, unit: ReminderUnit) => value.trim() !== '' && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= (unit === 'months' ? 1200 : 36500);
 const canScheduleReminder = (file: { expiryDate?: string; expiryStatus?: string }) => Boolean(file.expiryDate) && file.expiryStatus !== 'NEEDS_REVIEW';
 
@@ -174,16 +179,20 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const mutationRevisionRef = useRef(0);
   const sourceFingerprintRef = useRef<string | null>(null);
   const directoryRequestRef = useRef(0);
-  const directoryAppliedRequestRef = useRef(0);
   const notificationRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const directoryAbortRef = useRef<AbortController | null>(null);
+  const notificationAbortRef = useRef<AbortController | null>(null);
+  const directoryRetryRef = useRef({ failures: 0, retryAt: 0 });
+  const notificationRetryRef = useRef({ failures: 0, retryAt: 0 });
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); };
+    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); directoryAbortRef.current?.abort(); notificationAbortRef.current?.abort(); };
   }, []);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [directoryError, setDirectoryError] = useState('');
   
   // --- SUBMISSION LOCKS ---
   const [isUploading, setIsUploading] = useState(false);
@@ -216,7 +225,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [sourcePreview, setSourcePreview] = useState<({ name: string; url: string; previewUrl: string } & DocumentSource) | null>(null);
+  const [sourcePreview, setSourcePreview] = useState<({ name: string; url: string } & DocumentSource) | null>(null);
   const [isDeletingSource, setIsDeletingSource] = useState(false);
   
   // --- EXPIRY REMINDER STATES ---
@@ -245,48 +254,73 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const isNotifOpen = openNotificationCompany === selectedCompany;
   const setIsNotifOpen = (open: boolean) => setOpenNotificationCompany(open ? selectedCompany : null);
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchDocApi = useCallback(async (url: string, options?: RequestInit) => {
+    const generation = workspaceRef.current.generation;
+    const response = await fetch(url, options);
+    if (response.status === 401 && mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === generation) expireApiSession();
+    return response;
+  }, [workspaceKey]);
+
+  const fetchNotifications = useCallback(async (force = false) => {
+    if (!force && (document.visibilityState === 'hidden' || navigator.onLine === false || Date.now() < notificationRetryRef.current.retryAt || notificationAbortRef.current)) return;
+    notificationAbortRef.current?.abort();
+    const controller = new AbortController();
+    notificationAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
     const workspaceGeneration = workspaceRef.current.generation;
     const mutationRevision = mutationRevisionRef.current;
     const requestId = ++notificationRequestRef.current;
     const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration && mutationRevisionRef.current === mutationRevision && notificationRequestRef.current === requestId;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/notifications`, {
-        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/notifications`, {
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername }, signal: controller.signal,
       });
+      if (res.status === 401) return;
       if (!res.ok) throw new Error('Could not refresh expiry reminders.');
       const data: DocumentReminder[] = await res.json();
       if (!isCurrent()) return;
+      notificationRetryRef.current = { failures: 0, retryAt: 0 };
       setNotificationState({ company: selectedCompany, items: data, error: '' });
     } catch {
-      if (isCurrent()) setNotificationState(prev => ({ company: selectedCompany, items: prev.company === selectedCompany ? prev.items : [], error: 'Reminders could not be refreshed. Check your connection and retry.' }));
+      if (isCurrent()) {
+        const failures = Math.min(notificationRetryRef.current.failures + 1, 5);
+        notificationRetryRef.current = { failures, retryAt: Date.now() + Math.min(300_000, 30_000 * 2 ** failures) };
+        setNotificationState(prev => ({ company: selectedCompany, items: prev.company === selectedCompany ? prev.items : [], error: 'Reminders could not be refreshed. Check your connection and retry.' }));
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (notificationAbortRef.current === controller) notificationAbortRef.current = null;
     }
-  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey]);
+  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey, fetchDocApi]);
 
   useEffect(() => {
     setOpenNotificationCompany(null);
-    const initialRefresh = setTimeout(fetchNotifications, 0);
-    const interval = setInterval(fetchNotifications, 30000); 
+    const initialRefresh = setTimeout(() => void fetchNotifications(), 0);
+    const interval = setInterval(() => void fetchNotifications(), 30000);
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') fetchNotifications(); };
-    window.addEventListener('focus', fetchNotifications);
+    const refreshOnFocus = () => void fetchNotifications();
+    const refreshOnline = () => void fetchNotifications(true);
+    window.addEventListener('focus', refreshOnFocus);
+    window.addEventListener('online', refreshOnline);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       clearTimeout(initialRefresh);
       clearInterval(interval);
-      window.removeEventListener('focus', fetchNotifications);
+      window.removeEventListener('focus', refreshOnFocus);
+      window.removeEventListener('online', refreshOnline);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [fetchNotifications, selectedCompany]);
 
   const handleUpdateNotif = async (id: number, status: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ status })
       });
       if (!res.ok) throw new Error('Could not update reminder');
-      await fetchNotifications();
+      await fetchNotifications(true);
     } catch {
       showToast("Failed to update status", "error");
     }
@@ -310,6 +344,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   useEffect(() => {
     mutationRevisionRef.current += 1;
+    directoryAbortRef.current?.abort();
+    notificationAbortRef.current?.abort();
+    directoryAbortRef.current = null;
+    notificationAbortRef.current = null;
+    directoryRetryRef.current = { failures: 0, retryAt: 0 };
+    notificationRetryRef.current = { failures: 0, retryAt: 0 };
+    setDirectoryError('');
     sourceFingerprintRef.current = null;
     invalidateAiSearch();
     setFiles([]);
@@ -355,8 +396,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     const sourceUrl = matchingFile?.webViewLink || source.sourceUrl || source.googleDriveLink
       || (source.driveFileId ? `https://drive.google.com/file/d/${encodeURIComponent(source.driveFileId)}/view` : '');
     try {
-      const url = new URL(sourceUrl);
-      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) throw new Error('Unsupported document link');
+      const link = safeDocumentLink(sourceUrl);
+      if (!link) throw new Error('Unsupported document link');
+      const driveFileId = matchingFile?.id || source.driveFileId || link.driveFileId;
+      const documentId = matchingFile?.documentId ?? source.documentId;
+      if (!driveFileId && documentId === undefined) throw new Error('Missing document source');
       if (matchingFile) {
         setSelectedFile(matchingFile);
         setIsEditingReminder(false);
@@ -364,13 +408,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         setExpandedFolders(prev => new Set([...prev, ...(matchingFile.parents || [])]));
       }
       setIsNotifOpen(false);
-      const driveMatch = url.hostname === 'drive.google.com' ? url.pathname.match(/\/file\/d\/([^/]+)/) : null;
-      if (driveMatch || url.hostname === 'docs.google.com') {
-        const previewUrl = driveMatch ? `https://drive.google.com/file/d/${encodeURIComponent(decodeURIComponent(driveMatch[1]))}/preview` : url.href;
-        setSourcePreview({ name: matchingFile?.name || name, url: url.href, previewUrl, documentId: matchingFile?.documentId ?? source.documentId, driveFileId: matchingFile?.id || source.driveFileId || driveMatch?.[1] });
-      } else {
-        window.open(url.href, '_blank', 'noopener,noreferrer');
-      }
+      setSourcePreview({ name: matchingFile?.name || name, url: link.href, documentId, driveFileId });
     } catch {
       showToast('The source document link is unavailable. Refresh the directory and try again.', 'error');
     }
@@ -415,23 +453,30 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     };
   }, [isDraggingResizer, resize, stopResizing]);
 
-  const fetchDirectory = useCallback(async (isSilent = false) => {
+  const fetchDirectory = useCallback(async (isSilent = false, force = false) => {
+    if (!force && isSilent && (document.visibilityState === 'hidden' || navigator.onLine === false || Date.now() < directoryRetryRef.current.retryAt || directoryAbortRef.current)) return;
+    directoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    directoryAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 60_000);
     const workspaceGeneration = workspaceRef.current.generation;
     const mutationRevision = mutationRevisionRef.current;
     const requestId = ++directoryRequestRef.current;
-    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration && mutationRevisionRef.current === mutationRevision && directoryAppliedRequestRef.current <= requestId;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration && mutationRevisionRef.current === mutationRevision && directoryRequestRef.current === requestId;
     if (!isSilent) setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/directory`, {
-        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/directory`, {
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername }, signal: controller.signal,
       });
+      if (res.status === 401) return;
       if (!res.ok) throw new Error('Failed to load directory');
       const data = await res.json();
       
       const nextFolders: DriveFolder[] = data.folders || [];
       const nextFiles: DriveFile[] = data.files || [];
       if (!isCurrent()) return;
-      directoryAppliedRequestRef.current = requestId;
+      directoryRetryRef.current = { failures: 0, retryAt: 0 };
+      setDirectoryError('');
       const fingerprint = JSON.stringify({
         root: data.companyFolderId,
         folders: nextFolders.map(folder => [folder.id, folder.name, [...(folder.parents || [])].sort()]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
@@ -463,16 +508,24 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         return exists ? prev : data.companyFolderId;
       });
     } catch (err: any) {
-      if (!isSilent && isCurrent()) showToast(err.message || 'Error loading workspace', 'error');
+      if (isCurrent()) {
+        const failures = Math.min(directoryRetryRef.current.failures + 1, 5);
+        directoryRetryRef.current = { failures, retryAt: Date.now() + Math.min(120_000, 5_000 * 2 ** failures) };
+        setDirectoryError('The workspace could not be refreshed. Your last loaded files are shown. Check your connection and retry.');
+      }
     } finally {
+      clearTimeout(timeout);
+      if (directoryAbortRef.current === controller) directoryAbortRef.current = null;
       if (!isSilent && mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration) setIsLoading(false);
     }
-  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey, invalidateAiSearch]);
+  }, [API_BASE_URL, selectedCompany, loginUsername, workspaceKey, invalidateAiSearch, fetchDocApi]);
 
   useEffect(() => {
     fetchDirectory(); 
-    const syncInterval = setInterval(() => { fetchDirectory(true); }, 5000);
-    return () => clearInterval(syncInterval);
+    const syncInterval = setInterval(() => { void fetchDirectory(true); }, 30000);
+    const refreshOnline = () => void fetchDirectory(true, true);
+    window.addEventListener('online', refreshOnline);
+    return () => { clearInterval(syncInterval); window.removeEventListener('online', refreshOnline); };
   }, [fetchDirectory]);
 
   const formatBytes = (bytes: string | number) => {
@@ -497,10 +550,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsSearchingAi(true);
     setAiAnswer(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/search`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/search`, {
         method: 'POST',
         signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ query: aiQuery, model: selectedModel })
       });
       const data = await res.json();
@@ -549,6 +602,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
              xhr.open('POST', `${API_BASE_URL}/api/docs/upload`);
              xhr.setRequestHeader('x-company', selectedCompany);
              xhr.setRequestHeader('x-username', loginUsername);
+             for (const [name, value] of Object.entries(getApiAuthHeaders())) xhr.setRequestHeader(name, value);
 
              xhr.upload.onprogress = (event) => {
                  if (event.lengthComputable && uploadContextActive()) {
@@ -567,6 +621,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
              };
 
              xhr.onload = () => {
+                 if (xhr.status === 401 && uploadContextActive()) expireApiSession();
                  try {
                    const response = JSON.parse(xhr.responseText);
                    if (xhr.status >= 200 && xhr.status < 300) {
@@ -632,7 +687,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        setReviewError('');
        setReviewFileCount(reviewFiles.length);
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
-       await Promise.all([fetchDirectory(true), fetchNotifications()]);
+       await Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } else {
        showToast("Failed to upload files.", "error");
     }
@@ -647,10 +702,35 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     });
   };
 
-  const handleSkipReminder = () => {
-    if (!currentReviewFile || isProcessing || isReanalyzing || isDeletingSource) return;
-    // The upload's pending-setup state keeps this file without a reminder.
-    advanceExpiryReview(currentReviewFile.id);
+  const handleSkipReminder = async () => {
+    const file = currentReviewFile;
+    if (!file || isProcessing || isReanalyzing || isDeletingSource) return;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
+    setReviewError('');
+    setIsProcessing(true);
+    try {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(file.id))}/reminder`, {
+        method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername },
+      });
+      const data = await res.json();
+      if (!isCurrent()) return;
+      if (!res.ok) throw new Error(data.message || 'Could not close without a reminder. Please retry.');
+      mutationRevisionRef.current += 1;
+      const isThisFile = (source: DocumentSource) => source.documentId === file.id || !!file.driveFileId && source.driveFileId === file.driveFileId;
+      setFiles(prev => prev.map(item => item.documentId === file.id || !!file.driveFileId && item.id === file.driveFileId
+        ? { ...item, reminder: null, reminderValue: null, reminderDisabled: true, reminderSetupPending: false, reminderWarning: data.reminderWarning } : item));
+      setSelectedFile(prev => prev && (prev.documentId === file.id || !!file.driveFileId && prev.id === file.driveFileId)
+        ? { ...prev, reminder: null, reminderValue: null, reminderDisabled: true, reminderSetupPending: false, reminderWarning: data.reminderWarning } : prev);
+      setNotificationState(prev => ({ ...prev, items: prev.items.filter(item => !isThisFile(item)) }));
+      setManualReminderValue('');
+      advanceExpiryReview(file.id);
+      void Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
+    } catch (err) {
+      if (isCurrent()) setReviewError(err instanceof Error ? err.message : 'Could not close without a reminder. Please retry.');
+    } finally {
+      if (isCurrent()) setIsProcessing(false);
+    }
   };
 
   const handleSaveReviewReminder = async (e: React.FormEvent) => {
@@ -670,9 +750,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     const workspaceGeneration = workspaceRef.current.generation;
     const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/save-reminders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ reminders: [{ id: file.id, reminderValue: Number(file.reminderValue), reminderUnit: file.reminderUnit }] })
       });
       const data = await res.json();
@@ -680,7 +760,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       if (!res.ok) throw new Error(data.message || 'Failed to save reminder.');
       showToast(`Reminder saved for ${file.name}.`, 'success');
       advanceExpiryReview(file.id);
-      void Promise.all([fetchDirectory(true), fetchNotifications()]);
+      void Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } catch (err) {
       if (isCurrent()) setReviewError(err instanceof Error ? err.message : 'Failed to save reminder.');
     } finally {
@@ -694,9 +774,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsCreatingFolder(true);
     try {
       const targetId = activeFolderId && activeFolderId !== rootFolderId ? activeFolderId : undefined;
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/folder`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany },
         body: JSON.stringify({ folderName: newFolderName.trim(), targetFolderId: targetId, parentFolderId: targetId })
       });
       if (!res.ok) throw new Error();
@@ -704,7 +784,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setIsNewFolderModalOpen(false);
       showToast('Folder created', 'success');
       if (targetId) setExpandedFolders(prev => new Set(prev).add(targetId));
-      fetchDirectory(true);
+      void fetchDirectory(true, true);
     } catch {
       showToast('Could not create folder', 'error');
     } finally {
@@ -716,16 +796,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     e.preventDefault();
     if (!renameTarget || !newRenameValue.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/folder/${renameTarget.id}/rename`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/folder/${renameTarget.id}/rename`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ newName: newRenameValue.trim() })
       });
       if (!res.ok) throw new Error();
       showToast('Renamed successfully', 'success');
       setRenameTarget(null);
       if (selectedFile?.id === renameTarget.id) setSelectedFile({ ...selectedFile, name: newRenameValue.trim() });
-      fetchDirectory(true);
+      void fetchDirectory(true, true);
     } catch {
       showToast('Failed to rename', 'error');
     }
@@ -762,7 +842,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsDeletingSource(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(id))}`, { method: 'DELETE', headers: { 'x-company': selectedCompany, 'x-username': loginUsername } });
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(id))}`, { method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername } });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || 'The document could not be deleted.');
@@ -772,7 +852,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       setIsEditingReminder(false);
       setSourcePreview(null);
       showToast('Document and reminders deleted.', 'success');
-      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+      await Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } catch (err) {
       if (isCurrent()) showToast(err instanceof Error ? err.message : 'The document could not be deleted.', 'error');
     } finally {
@@ -791,7 +871,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       folders.filter(folder => selectedItems.has(folder.id)).forEach(folder => getAllDescendants(folder.id).forEach(id => nestedIds.add(id)));
       const targets = [...selectedItems].filter(id => !nestedIds.has(id));
       const results = await Promise.allSettled(targets.map(async id => {
-        const res = await fetch(`${API_BASE_URL}/api/docs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'x-company': selectedCompany, 'x-username': loginUsername } });
+        const res = await fetchDocApi(`${API_BASE_URL}/api/docs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername } });
         if (!res.ok) throw new Error('Delete failed');
         return id;
       }));
@@ -802,7 +882,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       removeDocumentsFromView(deletedIds, documentIds);
       const failures = results.filter(result => result.status === 'rejected').length;
       showToast(failures ? `${failures} selected item(s) could not be deleted. Try again.` : `Deleted ${selectedItems.size} item(s)`, failures ? 'error' : 'success');
-      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+      await Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } catch {
       if (isCurrent()) {
         showToast('Failed to delete some items', 'error');
@@ -830,44 +910,53 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       showToast('A trusted detected expiry date and a valid reminder amount are required.', 'error');
       return;
     }
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsSavingReminder(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs/save-reminders`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/save-reminders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
+        headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
         body: JSON.stringify({ reminders: [{ id: selectedFile.documentId ?? selectedFile.id, reminderValue: Number(manualReminderValue), reminderUnit: manualReminderUnit }] })
       });
       const data = await res.json();
+      if (!isCurrent()) return;
       if (!res.ok) throw new Error(data.message || 'Failed to save reminder.');
+      mutationRevisionRef.current += 1;
       showToast('Reminder saved.', 'success');
       setIsEditingReminder(false);
-      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+      await Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to save reminder.', 'error');
+      if (isCurrent()) showToast(err instanceof Error ? err.message : 'Failed to save reminder.', 'error');
     } finally {
-      setIsSavingReminder(false);
+      if (isCurrent()) setIsSavingReminder(false);
     }
   };
 
   const handleReanalyze = async (reviewFile?: ExpiryReviewFile) => {
     const id = reviewFile?.id ?? selectedFile?.documentId ?? selectedFile?.id;
     if (id === undefined || isReanalyzing) return;
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsReanalyzing(true);
     try {
       showToast("Re-analyzing document with AI...", "success");
-      const res = await fetch(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(id))}/reanalyze`, {
+      const res = await fetchDocApi(`${API_BASE_URL}/api/docs/${encodeURIComponent(String(id))}/reanalyze`, {
         method: 'POST',
-        headers: { 'x-company': selectedCompany, 'x-username': loginUsername }
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'x-username': loginUsername }
       });
       const data = await res.json();
+      if (!isCurrent()) return;
       if (!res.ok) throw new Error(data.message || 'Failed to re-analyze.');
+      mutationRevisionRef.current += 1;
+      invalidateAiSearch();
       setExpiryReviewModal(prev => ({ ...prev, files: prev.files.map(file => file.id === data.id ? { ...file, expiryDate: dateInputValue(data.expiryDate), expiryStatus: data.expiryStatus, expiryDateText: data.expiryDateText, expiryEvidence: data.expiryEvidence || data.evidence, warning: [data.detectionWarning, data.reminderWarning, data.indexingWarning].filter(Boolean).join(' '), hasReminder: Boolean(data.reminder) } : file) }));
       showToast(data.detectionWarning || data.reminderWarning || (data.expiryStatus === 'NEEDS_REVIEW' ? 'The detected expiry needs your review.' : 'Re-analysis complete.'), data.detectionWarning || data.reminderWarning ? 'error' : 'success');
-      await Promise.all([fetchDirectory(true), fetchNotifications()]);
+      await Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to re-analyze.', 'error');
+      if (isCurrent()) showToast(err instanceof Error ? err.message : 'Failed to re-analyze.', 'error');
     } finally {
-      setIsReanalyzing(false);
+      if (isCurrent()) setIsReanalyzing(false);
     }
   };
 
@@ -952,16 +1041,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       const match = part.match(/\[([^\]]+)\]\(([^)]+)\)/);
       if (match) {
         const linkText = match[1];
-        const linkUrl = match[2];
+        const link = safeDocumentLink(match[2]);
+        const foundFile = link?.driveFileId ? files.find(file => file.id === link.driveFileId) : undefined;
+        if (!link || !foundFile) return <span key={i}>{linkText}</span>;
         return (
-          <a key={i} href={linkUrl} target="_blank" rel="noopener noreferrer" 
+          <a key={i} href={link.href} target="_blank" rel="noopener noreferrer"
             onClick={(e) => {
-              const idMatch = linkUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-              if (idMatch) {
-                 const fileId = idMatch[1];
-                 const foundFile = files.find(f => f.id === fileId);
-                 if (foundFile) { e.preventDefault(); setSelectedFile(foundFile); }
-              }
+              e.preventDefault();
+              handlePreviewSource({ documentId: foundFile.documentId, driveFileId: foundFile.id }, foundFile.name);
             }}
             className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-1 mb-1 bg-indigo-50 border border-indigo-200 rounded text-indigo-700 font-bold text-xs hover:bg-indigo-100 transition-colors no-underline"
           >
@@ -1035,7 +1122,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
       {/* TOP HEADER */}
       <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shrink-0 z-30 shadow-sm relative">
-        <div className="flex items-center gap-4 w-1/4">
+        <div className="flex items-center gap-4 w-auto lg:w-1/4 shrink-0">
           <button onClick={() => setIsMobileNavOpen(!isMobileNavOpen)} className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
@@ -1052,7 +1139,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         </div>
 
         {/* GEMINI AI SEARCH BAR */}
-        <div className="flex-1 flex justify-center max-w-3xl">
+        <div className="flex-1 min-w-0 mx-3 flex justify-center max-w-3xl">
           <form onSubmit={handleGeminiSearch} className="relative w-full flex bg-[#F4F5F7] rounded-lg border border-transparent focus-within:border-indigo-300 focus-within:bg-white transition-all overflow-hidden shadow-sm">
             <div className="pl-4 flex items-center shrink-0">
               {isSearchingAi ? (
@@ -1079,13 +1166,24 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           </form>
         </div>
 
-        <div className="w-1/4 flex justify-end items-center gap-4">
+        <div className="w-auto lg:w-1/4 flex justify-end items-center gap-2 lg:gap-4 shrink-0">
           <button onClick={onBack} disabled={isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource} title={isUploading ? 'Wait for the upload and reminder review to finish' : undefined} className="flex items-center gap-2 px-4 lg:px-5 py-2 lg:py-2.5 bg-slate-900 text-white rounded-xl text-[10px] lg:text-xs font-bold uppercase tracking-widest shadow-sm hover:bg-slate-800 transition-all disabled:opacity-50">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
             <span className="hidden sm:inline">Gateway</span>
           </button>
+          <button type="button" onClick={() => { setIsNotifOpen(!isNotifOpen); if (!isNotifOpen) void fetchNotifications(true); }}
+            aria-label={`Expiry reminders: ${notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length} due`}
+            aria-controls="expiry-reminders-panel" aria-expanded={isNotifOpen}
+            className="relative w-10 h-10 lg:w-11 lg:h-11 shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-sm flex items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+            {notifications.some(n => n.isTriggered && n.status !== 'FULFILLED') && <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-rose-600 border-2 border-white text-[10px] font-extrabold flex items-center justify-center rounded-full">{notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length}</span>}
+          </button>
         </div>
       </header>
+      {directoryError && <div role="alert" className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800 flex items-center justify-between gap-3">
+        <span>{directoryError}</span>
+        <button type="button" onClick={() => void fetchDirectory(true, true)} className="shrink-0 underline font-bold">Retry connection</button>
+      </div>}
 
       {/* MAIN 2-PANE WORKSPACE */}
       <main className="flex flex-1 overflow-hidden relative">
@@ -1276,7 +1374,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               <div className="px-6 py-3 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
                 <span className="text-sm font-bold text-slate-800 truncate pr-4">{selectedFile.name}</span>
                 <a 
-                  href={`https://drive.google.com/uc?export=download&id=${selectedFile.id}`}
+                  href={`https://drive.google.com/uc?export=download&id=${encodeURIComponent(selectedFile.id)}`}
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-2 shrink-0 shadow-sm"
@@ -1341,7 +1439,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     ) : (
                       <>
                         <button onClick={() => {
-                          setManualReminderValue(String(selectedFile.reminder?.reminderValue ?? selectedFile.reminder?.reminderDays ?? 30));
+                          setManualReminderValue(selectedFile.reminder ? String(selectedFile.reminder.reminderValue ?? selectedFile.reminder.reminderDays) : '');
                           setManualReminderUnit(selectedFile.reminder?.reminderUnit || 'days');
                           setIsEditingReminder(true);
                         }} disabled={!canScheduleReminder(selectedFile) || isReanalyzing} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50">
@@ -1363,22 +1461,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
               <div className="flex-1 bg-white flex flex-col w-full h-full">
                 <div className="flex-1 w-full flex flex-col h-full">
-                  <div className="flex-1 bg-white overflow-hidden flex flex-col min-h-[400px]">
-                    {selectedFile.webViewLink ? (
-                     <iframe 
-                        src={selectedFile.webViewLink.replace('/view', '/preview')} 
-                        className="w-full h-full border-0"
-                        title={selectedFile.name}
-                        sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
-                      />
-                    ) : (
-                      <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-slate-50">
-                        <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mb-4">{getFileIcon(selectedFile.mimeType)}</div>
-                        <h3 className="text-lg font-black text-slate-800">Preview not available</h3>
-                        <p className="text-sm font-medium text-slate-500 mt-2 max-w-sm">Google Drive cannot render this file type in a native iframe window.</p>
-                        <button onClick={() => window.open(selectedFile.webViewLink, '_blank')} className="mt-6 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm">Open externally</button>
-                      </div>
-                    )}
+                  <div className="flex-1 bg-white overflow-hidden flex flex-col min-h-0">
+                    <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={selectedFile.documentId} driveFileId={selectedFile.id} sourceName={selectedFile.name} externalUrl={selectedFile.webViewLink} />
                   </div>
                 </div>
               </div>
@@ -1512,29 +1596,29 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <button type="button" disabled={isDeletingSource} aria-label="Close source preview" onClick={() => setSourcePreview(null)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-50">×</button>
               </div>
             </div>
-            <iframe src={sourcePreview.previewUrl} title={`Original document: ${sourcePreview.name}`} className="w-full flex-1 border-0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads" />
+            <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={sourcePreview.documentId} driveFileId={sourcePreview.driveFileId} sourceName={sourcePreview.name} externalUrl={sourcePreview.url} />
           </div>
         </div>
       )}
 
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
-      {/* FLOATING NOTIFICATION WIDGET */}
-      <div className="fixed bottom-6 right-6 z-[150] flex flex-col items-end">
+      {/* HEADER NOTIFICATION PANEL */}
+      <div className="fixed top-20 right-4 lg:right-8 z-[150] flex flex-col items-end">
         {isNotifOpen && (
-          <div aria-live="polite" className="mb-4 w-80 max-w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-5">
+          <div id="expiry-reminders-panel" role="region" aria-label="Expiry reminders" aria-live="polite" className="w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
               <h3 className="font-black text-sm uppercase tracking-wider">Expiry Reminders</h3>
               <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-white"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
             </div>
-            <div className="max-h-80 overflow-y-auto p-2 bg-slate-50">
+            <div className="max-h-[min(32rem,calc(100dvh-10rem))] overflow-y-auto p-3 bg-slate-50">
               {notificationError && (
                 <div role="alert" className="p-3 mb-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg">
                   {notificationError}
-                  <button onClick={() => fetchNotifications()} className="block mt-2 font-bold underline">Retry</button>
+                  <button onClick={() => void fetchNotifications(true)} className="block mt-2 font-bold underline">Retry</button>
                 </div>
               )}
-              <p className="px-2 py-1 text-[10px] text-slate-500">Due reminders appear here while this workspace is open.</p>
+              <p className="px-2 py-2 text-sm text-slate-600 leading-5">Due reminders appear here while this workspace is open.</p>
               {notifications.length === 0 ? (
                 <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders scheduled.</div>
               ) : (
@@ -1543,7 +1627,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   return (
                   <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered && n.status !== 'FULFILLED' ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
                     <div className="flex justify-between items-start mb-1.5">
-                       <div className="text-xs font-black text-slate-800 pr-2 leading-tight flex-1">{n.title || n.fileName || 'Expiry reminder'}</div>
+                       <div className="text-sm font-extrabold text-slate-900 pr-2 leading-5 flex-1">{n.title || n.fileName || 'Expiry reminder'}</div>
                        <button type="button" title="View source document" aria-label={`View source document for ${n.fileName}`} onClick={() => handlePreviewSource(n, n.fileName)} className="shrink-0 p-1 text-indigo-600 hover:bg-indigo-50 rounded mr-1"><SourceEyeIcon /></button>
                        {n.status === 'FULFILLED' ? (
                           <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Handled</span>
@@ -1553,9 +1637,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                           <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
                        )}
                     </div>
-                    {n.message && <div className="text-[10px] text-slate-600 mb-2">{n.message}</div>}
-                    <div className="text-[10px] text-slate-600 mb-2">Expires: {displayDate(n.expiryDate)} · {n.reminderValue ?? n.reminderDays} {n.reminderUnit || 'days'} before</div>
-                    {daysRemaining !== null && <div className={`text-[10px] font-bold mb-2 ${daysRemaining <= 0 ? 'text-rose-600' : 'text-indigo-600'}`}>{expiryCountdownText(daysRemaining)}</div>}
+                    {n.message && <div className="text-sm font-semibold text-slate-900 leading-6 mb-2 break-words">{n.message}</div>}
+                    <div className="text-sm font-semibold text-slate-800 leading-6 mb-2">Expires: {displayDate(n.expiryDate)} · {n.reminderValue ?? n.reminderDays} {n.reminderUnit || 'days'} before</div>
+                    {daysRemaining !== null && <div className={`text-sm font-bold mb-2 ${daysRemaining <= 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{expiryCountdownText(daysRemaining)}</div>}
                     
                     {!n.isTriggered ? (
                         <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
@@ -1573,19 +1657,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
           </div>
         )}
 
-        <button 
-          onClick={() => { setIsNotifOpen(!isNotifOpen); if (!isNotifOpen) fetchNotifications(); }}
-          aria-label={`Expiry reminders: ${notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length} due`}
-          aria-expanded={isNotifOpen}
-          className="relative w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105"
-        >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-          {notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length > 0 && (
-            <span className="absolute top-0 right-0 w-5 h-5 bg-rose-500 border-2 border-white text-[10px] font-black flex items-center justify-center rounded-full animate-bounce">
-              {notifications.filter(n => n.isTriggered && n.status !== 'FULFILLED').length}
-            </span>
-          )}
-        </button>
       </div>
     </div>
   );

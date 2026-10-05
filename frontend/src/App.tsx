@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import AuthModule from './modules/AuthModule';
 import CompanyModule from './modules/CompanyModule';
 import UserControlModule from './modules/UserControlModule';
 import PayrollModule from './modules/PayrollModule';
 import AiDocsModule from './modules/AiDocsModule';
-import DeveloperModule from './modules/DeveloperModule';
 import MasterInventory from './modules/MasterInventory';
 import OrderSlipsModule from './modules/OrderSlipsModule';
 
@@ -13,13 +12,16 @@ import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
 import SupplierModule from './modules/SupplierModule';
+import { resolveApiConfig } from './lib/apiConfig';
+import { clearApiSession, getApiAuthHeaders, expireApiSession } from './lib/apiSession';
 
-const rawUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
-export const API_BASE_URL = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
+const apiConfig = resolveApiConfig(import.meta.env.VITE_API_BASE_URL, import.meta.env.DEV);
+export const API_BASE_URL = apiConfig.baseUrl;
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
+  const [loginNotice, setLoginNotice] = useState('');
   
   const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
@@ -33,24 +35,49 @@ export default function App() {
     return saved ? JSON.parse(saved) : { payroll: true, ai_docs: true, products: true, inventory: true, warehouses: true, purchasing: true, sales: true };
   });
 
-  const isDeveloper = loginUsername === 'system_dev';
+  const [syncError, setSyncError] = useState('');
+  const mountedRef = useRef(true);
+  const authRef = useRef({ isAuthenticated, loginUsername });
+  authRef.current = { isAuthenticated, loginUsername };
+  const readsRef = useRef<Partial<Record<'admins' | 'companies', Promise<boolean>>>>({});
+  const controllersRef = useRef(new Set<AbortController>());
+  const retrySyncRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const onSessionExpired = () => {
+      setIsAuthenticated(false);
+      setLoginUsername('');
+      setAdminUsers([]);
+      setActiveModule('none');
+      setSelectedCompany(null);
+      setSyncError('');
+      setLoginNotice('Your session has expired. Please log in again.');
+    };
+    window.addEventListener('olten-session-expired', onSessionExpired);
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener('olten-session-expired', onSessionExpired);
+      controllersRef.current.forEach(controller => controller.abort());
+    };
+  }, []);
 
   // --- ONLINE STATUS TRACKER (LOGIN & BROWSER CLOSE) ---
   const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
 
   useEffect(() => {
-    if (isAuthenticated && currentUser?.id && !isDeveloper) {
+    if (isAuthenticated && currentUser?.id) {
       fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: true })
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: JSON.stringify({ isOnline: true })
       }).catch(() => {});
     }
-  }, [isAuthenticated, currentUser?.id, isDeveloper]);
+  }, [isAuthenticated, currentUser?.id]);
 
   useEffect(() => {
     const handleUnload = () => {
       if (currentUser?.id) {
         fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: false }), keepalive: true
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: JSON.stringify({ isOnline: false }), keepalive: true
         }).catch(()=>{});
       }
     };
@@ -86,60 +113,102 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => { 
-    fetchCompanies();
-    fetch(`${API_BASE_URL}/settings`).catch(() => {}); 
-  }, []);
-  
-  useEffect(() => {
-    if (!isAuthenticated || isDeveloper) return;
-    fetchAdmins();
-    const interval = setInterval(() => { 
-      fetchAdmins(); 
-      fetchCompanies(); 
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, isDeveloper]);
-
-  const fetchAdmins = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/admins`);
-      if (response.ok) {
-        const data = await response.json();
-        setAdminUsers(data);
-      }
-    } catch (error) { console.error("Could not fetch admins"); }
-  };
-
-  const fetchCompanies = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/companies`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.length > 0) {
-          setCompaniesList(data.map((c: any) => c.name));
-        } else {
-          await Promise.all([
-            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Surgicom' }) }),
-            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Olten' }) }),
-            fetch(`${API_BASE_URL}/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Ordent' }) })
-          ]);
-          const newRes = await fetch(`${API_BASE_URL}/companies`);
-          const newData = await newRes.json();
-          setCompaniesList(newData.map((c: any) => c.name));
-        }
-      }
-    } catch (e) { console.error("Could not fetch companies"); }
-  };
-
-  const handleLogout = async () => {
-    if (currentUser?.id) {
+  const readAppData = useCallback((kind: 'admins' | 'companies'): Promise<boolean> => {
+    if (readsRef.current[kind]) return readsRef.current[kind]!;
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    const requestedUser = authRef.current.loginUsername;
+    const request = (async () => {
       try {
-        await fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isOnline: false })
-        });
-      } catch (e) {}
+        const response = await fetch(`${API_BASE_URL}/${kind}`, { signal: controller.signal, headers: getApiAuthHeaders() });
+        if (response.status === 401) { expireApiSession(); return false; }
+        if (!response.ok) throw new Error(`Backend request failed (HTTP ${response.status}).`);
+        const data = await response.json();
+        if (!Array.isArray(data)) throw new Error('The backend returned an invalid response.');
+        if (!mountedRef.current || !authRef.current.isAuthenticated || authRef.current.loginUsername !== requestedUser) return false;
+        if (kind === 'admins') setAdminUsers(data);
+        else setCompaniesList(data.map((company: any) => company.name));
+        return true;
+      } catch {
+        if (mountedRef.current && authRef.current.isAuthenticated && authRef.current.loginUsername === requestedUser) {
+          setSyncError('Connection to the backend was lost. Changes may be out of date; reconnecting automatically.');
+        }
+        return false;
+      } finally {
+        window.clearTimeout(timeout);
+        controllersRef.current.delete(controller);
+        delete readsRef.current[kind];
+      }
+    })();
+    readsRef.current[kind] = request;
+    return request;
+  }, []);
+
+  const fetchAdmins = useCallback(() => readAppData('admins'), [readAppData]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let stopped = false;
+    let syncing = false;
+    let retryRequested = false;
+    let failures = 0;
+    let lastCompaniesSync = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const sync = async () => {
+      if (stopped) return;
+      if (syncing) { retryRequested = true; return; }
+      if (document.hidden || !navigator.onLine) {
+        if (!navigator.onLine) setSyncError('You are offline. Reconnect to refresh workspace data.');
+        timer = setTimeout(sync, 30000);
+        return;
+      }
+      syncing = true;
+      const refreshCompanies = Date.now() - lastCompaniesSync >= 30000;
+      const results = await Promise.all([fetchAdmins(), refreshCompanies ? readAppData('companies') : Promise.resolve(true)]);
+      syncing = false;
+      if (stopped) return;
+      if (results.every(Boolean)) {
+        failures = 0;
+        setSyncError('');
+        if (refreshCompanies) lastCompaniesSync = Date.now();
+      } else failures += 1;
+      const delay = retryRequested ? 0 : Math.min(60000, 3000 * 2 ** Math.min(failures, 5));
+      retryRequested = false;
+      timer = setTimeout(sync, delay);
+    };
+    const retry = () => {
+      clearTimeout(timer);
+      failures = 0;
+      lastCompaniesSync = 0;
+      void sync();
+    };
+    const onVisibility = () => { if (!document.hidden) retry(); };
+    retrySyncRef.current = retry;
+    void sync();
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      retrySyncRef.current = () => {};
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', onVisibility);
+      controllersRef.current.forEach(controller => controller.abort());
+    };
+  }, [isAuthenticated, loginUsername, fetchAdmins, readAppData]);
+
+  const handleLogout = () => {
+    const headers = { 'Content-Type': 'application/json', ...getApiAuthHeaders() };
+    if (currentUser?.id) {
+      void fetch(`${API_BASE_URL}/admins/${currentUser.id}/status`, {
+        method: 'PATCH', headers, body: JSON.stringify({ isOnline: false }), keepalive: true,
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
     }
+    clearApiSession();
+    setSyncError('');
+    setAdminUsers([]);
     setIsAuthenticated(false);
     setLoginUsername('');
     setActiveModule('none');
@@ -151,7 +220,7 @@ export default function App() {
       try {
         const res = await fetch(`${API_BASE_URL}/companies`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
           body: JSON.stringify({ name: newCompany })
         });
         
@@ -170,7 +239,8 @@ export default function App() {
 
   const handleRemoveCompany = async (companyToRemove: string) => {
     try {
-      await fetch(`${API_BASE_URL}/companies/${companyToRemove}`, { method: 'DELETE' });
+      const response = await fetch(`${API_BASE_URL}/companies/${encodeURIComponent(companyToRemove)}`, { method: 'DELETE', headers: getApiAuthHeaders() });
+      if (!response.ok) throw new Error('Could not delete the workspace.');
       setCompaniesList(companiesList.filter(c => c !== companyToRemove));
       if (selectedCompany === companyToRemove) setSelectedCompany(null);
     } catch (e) { console.error(e); }
@@ -211,9 +281,8 @@ export default function App() {
 
   const isPrivacyRoute = window.location.pathname === '/privacy';
 
-  if (!isAuthenticated) return <AuthModule onLoginSuccess={(user: string) => { setIsAuthenticated(true); setLoginUsername(user); }} isPrivacyRoute={isPrivacyRoute} API_BASE_URL={API_BASE_URL} />;
-  
-  if (isDeveloper) return <DeveloperModule onLogout={handleLogout} globalModules={globalModules} setGlobalModules={setGlobalModules} />;
+  const renderModule = () => {
+  if (!isAuthenticated) return <AuthModule onLoginSuccess={(user: string) => { setLoginNotice(''); setIsAuthenticated(true); setLoginUsername(user); }} sessionMessage={loginNotice} isPrivacyRoute={isPrivacyRoute} API_BASE_URL={API_BASE_URL} />;
   
   if (!selectedCompany && activeModule !== 'users') return (
     <CompanyModule 
@@ -264,4 +333,13 @@ export default function App() {
   );
 
   return null;
+  };
+
+  return <>
+    {(syncError || apiConfig.error) && <div role="alert" className="fixed left-3 right-3 top-3 z-[200] mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 shadow-lg">
+      <span>{apiConfig.error || syncError}</span>
+      {isAuthenticated && <button type="button" onClick={() => retrySyncRef.current()} className="shrink-0 rounded-lg bg-amber-100 px-3 py-2 font-bold hover:bg-amber-200">Retry connection</button>}
+    </div>}
+    {renderModule()}
+  </>;
 }
