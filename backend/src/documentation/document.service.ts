@@ -129,6 +129,7 @@ async saveReminders(reminders: any[], company: string) {
   }
 
   // --- NEW: FETCH NOTIFICATIONS ---
+// --- NEW: FETCH NOTIFICATIONS ---
   async getActiveNotifications(company: string) {
     const today = new Date();
     
@@ -137,14 +138,20 @@ async saveReminders(reminders: any[], company: string) {
       where: { 
         company: company,
         status: { in: ['PENDING', 'PROCESSING'] }
-      }
+      },
+      orderBy: { expiryDate: 'asc' } // Sort by closest expiry
     });
 
-    // Filter to only show those where the reminder date has actually arrived
-    return reminders.filter(rem => {
+    // Return ALL reminders, but flag them as triggered or waiting so the frontend can style them!
+    return reminders.map((rem: any) => {
        const triggerDate = new Date(rem.expiryDate);
        triggerDate.setDate(triggerDate.getDate() - rem.reminderDays);
-       return today >= triggerDate;
+       
+       return {
+          ...rem,
+          triggerDate: triggerDate.toISOString(),
+          isTriggered: today >= triggerDate
+       };
     });
   }
 
