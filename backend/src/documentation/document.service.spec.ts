@@ -26,6 +26,7 @@ describe('document expiry and user reminders', () => {
       create: jest.fn(async ({ data }) => ({ id: 1, ...data })),
       findFirst: jest.fn(async () => doc()), findMany: jest.fn(async () => []),
       update: jest.fn(async ({ data }) => ({ ...doc(), ...data })),
+      deleteMany: jest.fn(async () => ({ count: 1 })),
     };
     prisma.documentReminder = {
       findUnique: jest.fn(async () => null), findMany: jest.fn(async () => []),
@@ -42,7 +43,9 @@ describe('document expiry and user reminders', () => {
         expiryDateText: 'Valid until October 6, 2026', confidence: 0.95, method: 'GEMINI' })),
     };
     drive = { uploadFileToDrive: jest.fn(async () => doc().googleDriveLink),
-      downloadFile: jest.fn(async () => Buffer.from('original PDF bytes')) };
+      downloadFile: jest.fn(async () => Buffer.from('original PDF bytes')),
+      getCompanyDirectory: jest.fn(async () => ({ companyFolderId: 'company-root', folders: [], files: [] })),
+      deleteFile: jest.fn(async () => undefined) };
     service = new DocumentService(gemini, drive, new ExpiryExtractorService());
   });
 
@@ -54,6 +57,22 @@ describe('document expiry and user reminders', () => {
     expect(gemini.extractStructuredExpiry).toHaveBeenCalledTimes(1);
     expect(result.expiryDate).toEqual(date('2026-10-06'));
     expect(result.reminder).toMatchObject({ reminderDays: 2, triggerDate: date('2026-10-04'), isTriggered: true });
+  });
+
+  it('shares the indexing upload with expiry analysis while preserving search metadata', async () => {
+    const indexed = Promise.resolve({ fileId: 'files/shared', fileUri: 'uri/shared', mimeType: 'application/pdf' });
+    gemini.uploadFileToGemini.mockReturnValueOnce(indexed);
+    gemini.extractStructuredExpiry.mockImplementationOnce(async (_buffer, _mime, _name, readyFile) => {
+      expect(readyFile).toBe(indexed);
+      expect(await readyFile).toMatchObject({ fileUri: 'uri/shared' });
+      return { expiryDate: date('2026-10-06'), confidence: 0.95, method: 'GEMINI' };
+    });
+    const result = await service.processNewDocument({ originalname: 'large.pdf', mimetype: 'application/pdf',
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1) }, 'Olten', 'admin', undefined, { reminderSetup: 'after-upload' });
+    expect(gemini.uploadFileToGemini).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ geminiFileUri: 'uri/shared', geminiFileId: 'files/shared',
+      expiryDate: date('2026-10-06'), reminderSetupPending: true });
+    expect(gemini.deleteGeminiFile).not.toHaveBeenCalled();
   });
 
   it('waits for the post-upload review without creating a default reminder', async () => {
@@ -99,7 +118,7 @@ describe('document expiry and user reminders', () => {
     const result = await service.processNewDocument({ originalname: 'permit.pdf', mimetype: 'application/pdf',
       buffer: Buffer.from('PDF') }, 'Olten', 'admin');
     expect(result).toMatchObject({ expiryStatus: 'NO_EXPIRY', reminder: null });
-    expect(result.reminderWarning).toContain('Enter a date');
+    expect(result.reminderWarning).toContain('Re-analyze');
     expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
@@ -131,22 +150,22 @@ describe('document expiry and user reminders', () => {
     expect(prisma.documentReminder.upsert.mock.calls[0][0].update).not.toHaveProperty('status');
   });
 
-  it('reactivates an inactive schedule when its untrusted date is confirmed', async () => {
+  it('rejects reminder setup for an untrusted date without upgrading AI confidence', async () => {
     prisma.document.findFirst.mockResolvedValue({ ...doc(), expiryStatus: 'NEEDS_REVIEW', expiryConfidence: 0.5 });
     prisma.documentReminder.findUnique.mockResolvedValue({ expiryDate: date('2026-10-06'),
       triggerDate: date('2026-10-04'), status: 'FULFILLED' });
-    await service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 2 }], 'Olten');
-    expect(prisma.documentReminder.upsert.mock.calls[0][0].update.status).toBe('PENDING');
-    expect(prisma.document.update.mock.calls[0][0].data.expiryDetectionMethod).toBe('MANUAL');
+    await expect(service.saveReminders([{ id: 1, reminderDays: 2 }], 'Olten')).rejects.toThrow('reliable expiry');
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
-  it('confirms a legacy low-confidence date even when its stored status is stale', async () => {
+  it('rejects a legacy low-confidence date even when its stored status is stale', async () => {
     prisma.document.findFirst.mockResolvedValue({ ...doc(), expiryStatus: 'ACTIVE', expiryConfidence: 0.5 });
     prisma.documentReminder.findUnique.mockResolvedValue({ expiryDate: date('2026-10-06'),
       triggerDate: date('2026-10-04'), status: 'FULFILLED' });
-    await service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 2 }], 'Olten');
-    expect(prisma.document.update.mock.calls[0][0].data).toMatchObject({ expiryDetectionMethod: 'MANUAL', expiryConfidence: 1 });
-    expect(prisma.documentReminder.upsert.mock.calls[0][0].update.status).toBe('PENDING');
+    await expect(service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 2 }], 'Olten')).rejects.toThrow('reliable expiry');
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
   it('removes remote copies if saving the document/reminder transaction fails', async () => {
@@ -173,12 +192,59 @@ describe('document expiry and user reminders', () => {
     expect(prisma.documentReminder.updateMany).toHaveBeenCalledWith({ where: { id: 10, company: 'Other' }, data: { status: 'FULFILLED' } });
   });
 
-  it('updates a manual date and preserves the calendar-month reminder preference', async () => {
+  it('allows the legacy endpoint to edit reminder settings while preserving the detected date', async () => {
     prisma.documentReminder.findMany.mockResolvedValue([{ reminderType: 'MANUAL_MONTHS_2', reminderDays: 61 }]);
     prisma.document.findMany.mockResolvedValue([doc()]);
-    const result = await service.updateManualExpiry('drive-permit', 'Olten', '2027-03-31');
-    expect(result.reminder).toMatchObject({ reminderType: 'MANUAL_MONTHS_2', triggerDate: date('2027-01-31') });
-    expect(result.expiryDetectionMethod).toBe('MANUAL');
+    const result = await service.updateManualExpiry('drive-permit', 'Olten', '2026-10-06');
+    expect(result.reminder).toMatchObject({ reminderType: 'MANUAL_MONTHS_2', triggerDate: date('2026-08-06') });
+    expect(result.expiryDetectionMethod).toBe('GEMINI');
+    expect(prisma.document.update.mock.calls[0][0].data).not.toHaveProperty('expiryDate');
+  });
+
+  it('uses the stored expiry when omitted and preserves AI evidence and confidence', async () => {
+    const detected = { ...doc(), expiryStatus: 'AWAITING_REMINDER', expiryDateText: 'Valid until October 6, 2026' };
+    prisma.document.findFirst.mockResolvedValue(detected);
+    prisma.document.update.mockImplementation(async ({ data }) => ({ ...detected, ...data }));
+    const result = await service.saveReminders([{ id: 1, reminderValue: 2, reminderUnit: 'months' }], 'Olten');
+    expect(result.reminders[0]).toMatchObject({ expiryDate: detected.expiryDate, reminderUnit: 'months', reminderValue: 2 });
+    expect(prisma.document.update.mock.calls[0][0].data).toEqual({ expiryStatus: 'EXPIRING_SOON', lastExpiryCheck: expect.any(Date) });
+    expect(prisma.document.update.mock.calls[0][0].where).toMatchObject({ expiryDate: detected.expiryDate,
+      expiryStatus: 'AWAITING_REMINDER', expiryDetectionMethod: 'GEMINI', expiryConfidence: 0.95 });
+  });
+
+  it('rejects human expiry changes through both scheduling endpoints', async () => {
+    await expect(service.saveReminders([{ id: 1, expiryDate: '2027-01-01', reminderDays: 2 }], 'Olten')).rejects.toThrow('cannot be edited');
+    await expect(service.updateManualExpiry(1, 'Olten', '2027-01-01', { reminderDays: 2 })).rejects.toThrow('cannot be edited');
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { expiryDate: null, expiryStatus: 'AWAITING_REMINDER' },
+    { expiryStatus: 'AWAITING_REMINDER_REVIEW' },
+  ])('keeps reminders inactive when no reliable source expiry exists: %j', async overrides => {
+    prisma.document.findFirst.mockResolvedValue({ ...doc(), ...overrides });
+    await expect(service.saveReminders([{ id: 1, reminderDays: 2 }], 'Olten')).rejects.toThrow('reliable expiry');
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it('reads the current detected date inside the scheduling transaction', async () => {
+    prisma.$transaction.mockImplementation(async callback => {
+      prisma.document.findFirst.mockResolvedValue({ ...doc(), expiryDate: date('2026-11-06') });
+      return callback(prisma);
+    });
+    await expect(service.saveReminders([{ id: 1, expiryDate: '2026-10-06', reminderDays: 2 }], 'Olten')).rejects.toThrow('current detected date');
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
+  it('preserves analysis that changes the date after scheduling validation', async () => {
+    prisma.document.update.mockRejectedValue(Object.assign(new Error('Detected expiry changed'), { code: 'P2025' }));
+    await expect(service.saveReminders([{ id: 1, reminderDays: 2 }], 'Olten')).rejects.toThrow('detected expiry changed while saving');
+    expect(prisma.document.update.mock.calls[0][0].where).toMatchObject({ expiryDate: date('2026-10-06'),
+      expiryDetectionMethod: 'GEMINI', expiryConfidence: 0.95 });
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
   });
 
   it('reanalyzes the durable Drive copy after a Gemini URI has expired', async () => {
@@ -251,5 +317,78 @@ describe('document expiry and user reminders', () => {
     const result = await service.getActiveNotifications('Olten');
     expect(result[0]).toMatchObject({ documentId: 1, driveFileId: 'drive-permit', sourceUrl: doc().googleDriveLink, daysRemaining: 1 });
     expect(result[1]).toMatchObject({ documentId: 2, driveFileId: 'other-permit', sourceUrl: 'https://drive.google.com/file/d/other-permit/view' });
+  });
+
+  it('deletes all exact source rows without touching duplicate filenames or partial Drive IDs', async () => {
+    const original = { ...doc(), geminiFileId: 'files/permit' };
+    const sameSource = { ...original, id: 2, geminiFileId: 'files/permit-copy' };
+    const similarId = { ...original, id: 3, googleDriveLink: 'https://drive.google.com/file/d/drive-permit-copy/view' };
+    prisma.document.findMany.mockResolvedValue([original, sameSource, similarId]);
+    (service as any).companyCache.set('Olten', { cacheName: 'old-cache' });
+    await service.deleteDocument('drive-permit', 'Olten');
+    expect(drive.deleteFile).toHaveBeenCalledWith('drive-permit');
+    expect(prisma.document.deleteMany).toHaveBeenCalledWith({ where: { company: 'Olten', id: { in: [1, 2] } } });
+    expect(gemini.deleteGeminiFile.mock.calls).toEqual([['files/permit'], ['files/permit-copy']]);
+    expect((service as any).companyCache.has('Olten')).toBe(false);
+  });
+
+  it('supports an exact database document ID when deleting its Drive source', async () => {
+    prisma.document.findMany.mockResolvedValue([doc()]);
+    await service.deleteDocument(1, 'Olten');
+    expect(prisma.document.findFirst).toHaveBeenCalledWith({ where: { id: 1, company: 'Olten' } });
+    expect(drive.deleteFile).toHaveBeenCalledWith('drive-permit');
+    expect(prisma.document.deleteMany).toHaveBeenCalledWith({ where: { company: 'Olten', id: { in: [1] } } });
+  });
+
+  it('rejects deletion outside the requested company before any remote or database mutation', async () => {
+    prisma.document.findFirst.mockResolvedValue(null);
+    await expect(service.deleteDocument(1, 'Other')).rejects.toThrow('not found in this company');
+    expect(prisma.document.findMany).toHaveBeenCalledWith({ where: { company: 'Other', googleDriveLink: { contains: '1' } } });
+    expect(drive.getCompanyDirectory).toHaveBeenCalledWith('Other');
+    expect(drive.deleteFile).not.toHaveBeenCalled();
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
+    expect(gemini.deleteGeminiFile).not.toHaveBeenCalled();
+  });
+
+  it('allows a Drive-only document only after exact membership in the company directory', async () => {
+    drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [],
+      files: [{ id: 'unindexed', name: 'permit.pdf', parents: ['company-root'] }] });
+    await service.deleteDocument('unindexed', 'Olten');
+    expect(drive.deleteFile).toHaveBeenCalledWith('unindexed');
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('cleans reminders for exact indexed descendants when deleting a company folder', async () => {
+    const first = { ...doc(), geminiFileId: 'files/permit' };
+    const nested = { ...first, id: 2, googleDriveLink: 'https://drive.google.com/file/d/nested-file/view', geminiFileId: 'files/nested' };
+    const outside = { ...first, id: 3, googleDriveLink: 'https://drive.google.com/file/d/outside-file/view' };
+    prisma.document.findMany.mockImplementation(async ({ where }) => where.googleDriveLink ? [] : [first, nested, outside]);
+    drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [
+      { id: 'folder', mimeType: 'application/vnd.google-apps.folder', parents: ['company-root'] },
+      { id: 'nested-folder', mimeType: 'application/vnd.google-apps.folder', parents: ['folder'] },
+    ], files: [
+      { id: 'drive-permit', parents: ['folder'] }, { id: 'nested-file', parents: ['nested-folder'] },
+      { id: 'outside-file', parents: ['company-root'] },
+    ] });
+    await service.deleteDocument('folder', 'Olten');
+    expect(drive.deleteFile).toHaveBeenCalledWith('folder');
+    expect(prisma.document.deleteMany).toHaveBeenCalledWith({ where: { company: 'Olten', id: { in: [1, 2] } } });
+    expect(gemini.deleteGeminiFile.mock.calls).toEqual([['files/permit'], ['files/nested']]);
+  });
+
+  it('keeps indexed documents and reminders when Drive deletion fails', async () => {
+    prisma.document.findMany.mockResolvedValue([doc()]);
+    drive.deleteFile.mockRejectedValue(new Error('Drive permission denied'));
+    (service as any).companyCache.set('Olten', { cacheName: 'old-cache' });
+    await expect(service.deleteDocument(1, 'Olten')).rejects.toThrow('Drive permission denied');
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
+    expect(gemini.deleteGeminiFile).not.toHaveBeenCalled();
+    expect((service as any).companyCache.has('Olten')).toBe(true);
+  });
+
+  it('requires company context before deleting a document', async () => {
+    await expect(service.deleteDocument('drive-permit', '')).rejects.toThrow('Company header missing');
+    expect(drive.deleteFile).not.toHaveBeenCalled();
+    expect(prisma.document.deleteMany).not.toHaveBeenCalled();
   });
 });

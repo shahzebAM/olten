@@ -87,8 +87,8 @@ export class DocumentService {
   }
 
   private reminderWarning(doc: any) {
-    if (this.needsExpiryReview(doc)) return 'Confirm the expiry date to activate your reminder.';
-    if (!doc.expiryDate) return 'No expiry date was detected. Enter a date to activate your reminder.';
+    if (this.needsExpiryReview(doc)) return 'The detected expiry is uncertain. Re-analyze a clearer document before setting a reminder.';
+    if (!doc.expiryDate) return 'No expiry date was detected. Re-analyze or upload a clearer document to activate a reminder.';
     if (this.isReminderSetupPending(doc)) return 'Choose and save your reminder after upload.';
     return undefined;
   }
@@ -156,10 +156,11 @@ export class DocumentService {
     let indexingWarning: string | undefined;
     try {
       await fs.promises.writeFile(tempFilePath, file.buffer);
+      const indexedFile = this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname);
       const [driveResult, geminiResult, expiryResult] = await Promise.allSettled([
         this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, targetFolderId),
-        this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname),
-        this.geminiService.extractStructuredExpiry(file.buffer, safeMimeType, file.originalname),
+        indexedFile,
+        this.geminiService.extractStructuredExpiry(file.buffer, safeMimeType, file.originalname, indexedFile),
       ]);
       if (geminiResult.status === 'fulfilled') geminiData = geminiResult.value;
       else indexingWarning = 'The file was saved, but Gemini search indexing failed.';
@@ -170,7 +171,7 @@ export class DocumentService {
       driveLink = driveResult.value;
       if (expiryResult.status === 'fulfilled') finalExpiryData = expiryResult.value;
       else {
-        detectionWarning = `Expiry detection failed: ${expiryResult.reason?.message || 'Gemini could not analyze this file'}. Enter or confirm the expiry date manually.`;
+        detectionWarning = `Expiry detection failed: ${expiryResult.reason?.message || 'Gemini could not analyze this file'}. Re-analyze or upload a clearer document.`;
         this.logger.warn(`Expiry analysis failed for ${file.originalname}`);
         if (safeMimeType.startsWith('text/')) {
           finalExpiryData = this.expiryExtractor.extractViaRegex(file.buffer.toString('utf8'));
@@ -211,21 +212,42 @@ export class DocumentService {
     }
   }
 
-  async updateManualExpiry(documentId: string | number, company: string, newDate: string, options: ReminderOptions = {}) {
-    const parsedDate = parseIsoDate(newDate);
-    if (!parsedDate) throw new BadRequestException('Expiry date must be a valid YYYY-MM-DD calendar date');
-    const doc = await this.findDocument(documentId, company);
+  // Retain the old endpoint for reminder settings, but the source date is immutable.
+  async updateManualExpiry(documentId: string | number, company: string, newDate: string | undefined, options: ReminderOptions = {}) {
+    this.requireCompany(company);
     return prisma.$transaction(async client => {
-      const updated = await client.document.update({ where: { id: doc.id }, data: {
-        expiryDate: parsedDate, expiryDateText: newDate, expiryDetectionMethod: 'MANUAL',
-        expiryStatus: expiryStatus(parsedDate), expiryConfidence: 1, lastExpiryCheck: new Date(),
-      } });
-      const reminders = await client.documentReminder.findMany({ where: { documentId: doc.id } });
-      const existing = this.configuredReminder(reminders) || reminders[0];
-      const choice = readReminderChoice(options, existing ? choiceFromReminder(existing) : undefined);
-      const reminder = await this.persistReminder(client, updated, choice, this.needsExpiryReview(doc) || !doc.expiryDate);
+      const doc = await this.findDocument(documentId, company, client);
+      const { updated, reminder } = await this.saveStoredReminder(client, doc, options, newDate);
       return { ...this.expiryPayload(updated), reminder };
     }, { timeout: 15000 });
+  }
+
+  private async saveStoredReminder(client: any, doc: any, options: ReminderOptions, submittedDate?: unknown) {
+    const date = parseIsoDate(doc.expiryDate);
+    if (doc.status !== 'ACTIVE' || !date || this.needsExpiryReview(doc)) {
+      throw new BadRequestException('A reliable expiry date must be detected from the document before a reminder can be saved. Re-analyze or upload a clearer document.');
+    }
+    if (submittedDate !== undefined && parseIsoDate(submittedDate)?.getTime() !== date.getTime()) {
+      throw new BadRequestException('Expiry dates are detected from the document and cannot be edited. Refresh to use the current detected date.');
+    }
+    const reminders = await client.documentReminder.findMany({ where: { documentId: doc.id } });
+    const previous = this.configuredReminder(reminders) || reminders[0];
+    const choice = readReminderChoice(options, previous ? choiceFromReminder(previous) : undefined);
+    let updated: any;
+    try {
+      // This guarded update locks the document before writing its schedule. An
+      // analysis that changed the date or trust since validation must win.
+      updated = await client.document.update({ where: {
+        id: doc.id, company: doc.company, status: doc.status,
+        expiryDate: doc.expiryDate, expiryStatus: doc.expiryStatus,
+        expiryDetectionMethod: doc.expiryDetectionMethod, expiryConfidence: doc.expiryConfidence,
+      }, data: { expiryStatus: expiryStatus(date), lastExpiryCheck: new Date() } });
+    } catch (error: any) {
+      if (error.code === 'P2025') throw new BadRequestException('The detected expiry changed while saving. Refresh the document and choose your reminder again.');
+      throw error;
+    }
+    const reminder = await this.persistReminder(client, updated, choice, this.isReminderSetupPending(doc));
+    return { updated, reminder };
   }
 
   private async extractStoredDocument(doc: any) {
@@ -301,26 +323,16 @@ export class DocumentService {
   async saveReminders(reminders: any[], company: string) {
     this.requireCompany(company);
     if (!reminders.length) throw new BadRequestException('No reminders were provided');
-    const seen = new Set<number>();
-    const validated = await Promise.all(reminders.map(async rem => {
-      if (!rem || typeof rem !== 'object') throw new BadRequestException('Invalid reminder');
-      const date = parseIsoDate(rem.expiryDate);
-      if (!date) throw new BadRequestException('Every reminder needs a valid YYYY-MM-DD expiry date');
-      const choice = readReminderChoice(rem);
-      const doc = await this.findDocument(rem.id, company);
-      if (seen.has(doc.id)) throw new BadRequestException('Duplicate document in reminders');
-      seen.add(doc.id);
-      return { doc, date, choice };
-    }));
     const saved = await prisma.$transaction(async client => {
+      const seen = new Set<number>();
       const results: any[] = [];
-      for (const { doc, date, choice } of validated) {
-        const manual = this.needsExpiryReview(doc) || parseIsoDate(doc.expiryDate)?.getTime() !== date.getTime();
-        const updated = await client.document.update({ where: { id: doc.id }, data: {
-          expiryDate: date, expiryStatus: expiryStatus(date), lastExpiryCheck: new Date(),
-          ...(manual ? { expiryDetectionMethod: 'MANUAL', expiryConfidence: 1, expiryDateText: date.toISOString().slice(0, 10) } : {}),
-        } });
-        results.push(await this.persistReminder(client, updated, choice, this.needsExpiryReview(doc) || !doc.expiryDate));
+      for (const rem of reminders) {
+        if (!rem || typeof rem !== 'object') throw new BadRequestException('Invalid reminder');
+        const doc = await this.findDocument(rem.id, company, client);
+        if (seen.has(doc.id)) throw new BadRequestException('Duplicate document in reminders');
+        seen.add(doc.id);
+        const { reminder } = await this.saveStoredReminder(client, doc, rem, rem.expiryDate);
+        results.push(reminder);
       }
       return results;
     }, { timeout: 15000 });
@@ -409,23 +421,49 @@ export class DocumentService {
     }
   }
 
-  async deleteDocument(driveId: string) {
-    try {
-      await this.driveService.deleteFile(driveId);
-    } catch (e) {}
+  async deleteDocument(id: string | number, company: string) {
+    this.requireCompany(company);
+    const textId = String(id);
+    if (!/^[\w-]+$/.test(textId)) throw new BadRequestException('Invalid document ID');
+    let indexed: any = null;
+    try { indexed = await this.findDocument(id, company); }
+    catch (error) { if (!(error instanceof NotFoundException)) throw error; }
 
-    const docs = await (prisma as any).document.findMany({
-      where: { googleDriveLink: { contains: driveId } }
-    });
-
-    if (docs && docs.length > 0) {
-      const doc = docs[0];
-      if (doc.geminiFileId) {
-        try { await this.geminiService.deleteGeminiFile(doc.geminiFileId); } catch (e) {}
+    const driveIds = new Set<string>();
+    let targetDriveId = indexed ? this.driveId(indexed.googleDriveLink) : null;
+    if (targetDriveId) {
+      driveIds.add(targetDriveId);
+    } else if (!indexed) {
+      // Drive-only files and folders are authorized by exact membership beneath
+      // this company's root, never by a filename or a partial link match.
+      const directory = await this.driveService.getCompanyDirectory(company);
+      const items = [...directory.folders, ...directory.files];
+      const target = items.find(item => item.id === textId);
+      if (!target) throw new NotFoundException('Document not found in this company');
+      targetDriveId = target.id;
+      driveIds.add(target.id);
+      if (target.mimeType === 'application/vnd.google-apps.folder') {
+        const pending = [target.id];
+        for (let i = 0; i < pending.length; i++) {
+          for (const item of items.filter(item => item.parents?.includes(pending[i]))) {
+            if (driveIds.has(item.id)) continue;
+            driveIds.add(item.id);
+            if (item.mimeType === 'application/vnd.google-apps.folder') pending.push(item.id);
+          }
+        }
       }
-      await (prisma as any).document.delete({ where: { id: doc.id } });
     }
-    
+
+    const candidates = await prisma.document.findMany({ where: { company } });
+    const docs = candidates.filter(doc => doc.id === indexed?.id || driveIds.has(this.driveId(doc.googleDriveLink) || ''));
+    if (indexed && !docs.some(doc => doc.id === indexed.id)) docs.push(indexed);
+    if (targetDriveId) await this.driveService.deleteFile(targetDriveId);
+    // Deleting the exact document rows cascades their reminders/notifications.
+    if (docs.length > 0) await prisma.document.deleteMany({ where: { company, id: { in: docs.map(doc => doc.id) } } });
+    this.companyCache.delete(company);
+    await Promise.allSettled(docs.filter(doc => doc.geminiFileId)
+      .map(doc => this.geminiService.deleteGeminiFile(doc.geminiFileId!)));
+
     return { success: true, message: 'Item permanently deleted' };
   }
 }

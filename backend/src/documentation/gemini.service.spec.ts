@@ -59,7 +59,7 @@ describe('GeminiService expiry analysis', () => {
     jest.mocked(GoogleGenAI).mockImplementation(() => client as unknown as GoogleGenAI);
     process.env.GEMINI_EXPIRY_MODEL = 'configured-expiry-model';
     service = new GeminiService();
-    jest.mocked(readPdfExpiryText).mockResolvedValue('');
+    jest.mocked(readPdfExpiryText).mockReset().mockResolvedValue('');
   });
 
   afterEach(() => {
@@ -172,7 +172,7 @@ describe('GeminiService expiry analysis', () => {
     expect(parts[1].inlineData).toEqual({ data: Buffer.from('embedded scan').toString('base64'), mimeType: 'image/png' });
   });
 
-  it('requires manual review when Word conversion discards unsupported source content', async () => {
+  it('requires a clearer upload when Word conversion discards unsupported source content', async () => {
     await expect(service.extractStructuredExpiry(await docxBuffer(false, true), 'application/octet-stream', 'permit.docx')).rejects.toThrow('contents could not be read');
     expect(client.models.generateContent).not.toHaveBeenCalled();
   });
@@ -227,5 +227,90 @@ describe('GeminiService expiry analysis', () => {
     const request = client.models.generateContent.mock.calls[0][0];
     expect(request.contents[0].parts[0].fileData).toEqual({ fileUri: 'uri/temp', mimeType: 'application/pdf' });
     expect(client.files.delete).toHaveBeenCalledWith(expect.objectContaining({ name: 'files/temp' }));
+  });
+
+  it('shares one ACTIVE indexing upload with large-file expiry analysis and keeps it for search', async () => {
+    client.files.upload.mockResolvedValue({ name: 'files/index', uri: 'uri/index', state: 'ACTIVE' });
+    const indexing = service.uploadFileToGemini('large.pdf', 'application/pdf', 'large.pdf');
+    const result = await service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'application/pdf', 'large.pdf', indexing);
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.files.upload).toHaveBeenCalledTimes(1);
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].fileData).toEqual({ fileUri: 'uri/index', mimeType: 'application/pdf' });
+    expect(client.files.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not delete the indexed file when expiry analysis fails', async () => {
+    client.models.generateContent.mockRejectedValue(new Error('Analysis unavailable'));
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'application/pdf' });
+    await expect(service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'application/pdf', 'large.pdf', indexing)).rejects.toThrow('Analysis unavailable');
+    expect(client.files.upload).not.toHaveBeenCalled();
+    expect(client.files.delete).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a temporary expiry upload when indexing fails', async () => {
+    client.files.upload.mockRejectedValueOnce(new Error('Index upload failed'))
+      .mockResolvedValueOnce({ name: 'files/temp', uri: 'uri/temp', state: 'ACTIVE' });
+    const indexing = service.uploadFileToGemini('large.pdf', 'application/pdf', 'large.pdf');
+    const result = await service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'application/pdf', 'large.pdf', indexing);
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.files.upload).toHaveBeenCalledTimes(2);
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].fileData.fileUri).toBe('uri/temp');
+    expect(client.files.delete).toHaveBeenCalledTimes(1);
+    expect(client.files.delete).toHaveBeenCalledWith(expect.objectContaining({ name: 'files/temp' }));
+  });
+
+  it('uses the temporary path for an incompatible indexed MIME type', async () => {
+    client.files.upload.mockResolvedValue({ name: 'files/temp', uri: 'uri/temp', state: 'ACTIVE' });
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'text/plain' });
+    await service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'application/pdf', 'large.pdf', indexing);
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].fileData.fileUri).toBe('uri/temp');
+    expect(client.files.delete).toHaveBeenCalledWith(expect.objectContaining({ name: 'files/temp' }));
+    expect(client.files.delete).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'files/index' }));
+  });
+
+  it('falls back when indexing returns an unusable file reference', async () => {
+    client.files.upload.mockResolvedValue({ name: 'files/temp', uri: 'uri/temp', state: 'ACTIVE' });
+    const indexing = Promise.resolve({ fileId: 'files/index', fileUri: '', mimeType: 'application/pdf' });
+    await service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'application/pdf', 'large.pdf', indexing);
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].fileData.fileUri).toBe('uri/temp');
+    expect(client.files.upload).toHaveBeenCalledTimes(1);
+    expect(client.files.delete).toHaveBeenCalledWith(expect.objectContaining({ name: 'files/temp' }));
+  });
+
+  it('keeps small files inline without waiting for a pending indexing upload', async () => {
+    const indexing = new Promise<{ fileId: string; fileUri: string }>(() => undefined);
+    const result = await service.extractStructuredExpiry(Buffer.from('small PDF'), 'application/pdf', 'small.pdf', indexing);
+    expect(result?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].inlineData.mimeType).toBe('application/pdf');
+    expect(client.files.upload).not.toHaveBeenCalled();
+  });
+
+  it('overlaps PDF label parsing with the model request and still validates those labels', async () => {
+    let resolveText!: (text: string) => void;
+    jest.mocked(readPdfExpiryText).mockReturnValue(new Promise(resolve => { resolveText = resolve; }));
+    client.models.generateContent.mockResolvedValueOnce(expiryResponse({ expiryDateText: 'Validity of License:06October2026' }));
+    const extraction = service.extractStructuredExpiry(Buffer.from('small PDF'), 'application/pdf', 'small.pdf');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    resolveText('Validity of License:06October2026\nQualified Personnel\nExpiry Date16June2025');
+    expect((await extraction)?.expiryDate?.toISOString().slice(0, 10)).toBe('2026-10-06');
+    expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a shared indexed native image without invoking PDF text parsing', async () => {
+    const indexing = Promise.resolve({ fileId: 'files/image', fileUri: 'uri/image', mimeType: 'image/jpeg' });
+    await service.extractStructuredExpiry(Buffer.alloc(10 * 1024 * 1024 + 1), 'image/jpeg', 'large.jpg', indexing);
+    expect(client.models.generateContent.mock.calls[0][0].contents[0].parts[0].fileData).toEqual({ fileUri: 'uri/image', mimeType: 'image/jpeg' });
+    expect(readPdfExpiryText).not.toHaveBeenCalled();
+    expect(client.files.upload).not.toHaveBeenCalled();
+    expect(client.files.delete).not.toHaveBeenCalled();
+  });
+
+  it('checks the first processing status immediately so already-ready uploads avoid the polling delay', async () => {
+    jest.useFakeTimers();
+    client.files.upload.mockResolvedValue({ name: 'files/index', uri: 'uri/index', state: 'PROCESSING' });
+    client.files.get.mockResolvedValue({ state: 'ACTIVE' });
+    await expect(service.uploadFileToGemini('large.pdf', 'application/pdf', 'large.pdf')).resolves.toEqual({ fileId: 'files/index', fileUri: 'uri/index', mimeType: 'application/pdf' });
+    expect(client.files.get).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

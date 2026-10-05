@@ -9,6 +9,7 @@ dotenv.config();
 export class DriveService {
   private readonly logger = new Logger(DriveService.name);
   private drive: any;
+  private readonly companyFolderRequests = new Map<string, Promise<string>>();
 
   constructor() {
     const oauth2Client = new google.auth.OAuth2(
@@ -25,6 +26,21 @@ export class DriveService {
   }
 
   async getOrCreateCompanyFolder(companyName: string): Promise<string> {
+    let request = this.companyFolderRequests.get(companyName);
+    if (!request) {
+      request = this.findOrCreateCompanyFolder(companyName);
+      this.companyFolderRequests.set(companyName, request);
+    }
+    try {
+      return await request;
+    } finally {
+      // Concurrent uploads share the lookup and cannot create duplicate roots.
+      // Keep no lasting cache, so externally moved/deleted folders are refreshed.
+      if (this.companyFolderRequests.get(companyName) === request) this.companyFolderRequests.delete(companyName);
+    }
+  }
+
+  private async findOrCreateCompanyFolder(companyName: string): Promise<string> {
     const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
     if (!rootFolderId) throw new HttpException("Missing GOOGLE_DRIVE_FOLDER_ID in .env", HttpStatus.BAD_REQUEST);
 
@@ -168,7 +184,9 @@ export class DriveService {
         supportsAllDrives: true 
       });
     } catch (error: any) {
+      if (Number(error.code) === 404 || error.response?.status === 404 || error.response?.data?.error?.code === 404) return;
       this.logger.warn(`Could not delete file ${fileId} from Drive: ${error.message}`);
+      throw new HttpException('Google Drive could not delete the document. Please retry.', HttpStatus.BAD_GATEWAY);
     }
   }
 

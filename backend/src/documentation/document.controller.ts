@@ -42,8 +42,7 @@ export class DocumentController {
 
   // --- NEW PHASE 8 ENDPOINTS ---
   @Patch(':id/manual-expiry')
-  async updateManualExpiry(@Param('id') id: string, @Headers('x-company') company: string, @Body() body: ReminderOptions & { expiryDate: string }) {
-    if (!body.expiryDate) throw new BadRequestException('Expiry Date is required');
+  async updateManualExpiry(@Param('id') id: string, @Headers('x-company') company: string, @Body() body: ReminderOptions & { expiryDate?: string }) {
     return this.documentService.updateManualExpiry(id, company, body.expiryDate, body);
   }
 
@@ -82,7 +81,7 @@ export class DocumentController {
   }
 
   @Delete(':id')
-  async deleteDocument(@Param('id') id: string) {
-    return this.documentService.deleteDocument(id);
+  async deleteDocument(@Param('id') id: string, @Headers('x-company') company: string) {
+    return this.documentService.deleteDocument(id, company);
   }
 }
