@@ -19,11 +19,24 @@ interface DriveFile {
   documentId?: number;
   reminder?: DocumentReminder | null;
   reminderWarning?: string;
+  expiryDateText?: string;
+  expiryEvidence?: string;
+  evidence?: string;
+  daysRemaining?: number | null;
+  expires?: { daysRemaining?: number | null };
+  reminderSetupPending?: boolean;
 }
 
 type ReminderUnit = 'days' | 'months';
 
-interface DocumentReminder {
+interface DocumentSource {
+  documentId?: number;
+  driveFileId?: string;
+  sourceUrl?: string;
+  googleDriveLink?: string;
+}
+
+interface DocumentReminder extends DocumentSource {
   id: number;
   fileName: string;
   expiryDate: string;
@@ -35,9 +48,11 @@ interface DocumentReminder {
   message?: string;
   reminderValue?: number;
   reminderUnit?: ReminderUnit;
+  daysRemaining?: number | null;
+  expires?: { daysRemaining?: number | null };
 }
 
-interface ExpiryReviewFile {
+interface ExpiryReviewFile extends DocumentSource {
   id: number;
   name: string;
   expiryDate: string;
@@ -46,9 +61,11 @@ interface ExpiryReviewFile {
   expiryStatus?: string;
   warning?: string;
   hasReminder: boolean;
+  expiryDateText?: string;
+  expiryEvidence?: string;
 }
 
-interface UploadedDocument {
+interface UploadedDocument extends DocumentSource {
   id: number;
   originalName?: string;
   filename?: string;
@@ -58,6 +75,53 @@ interface UploadedDocument {
   reminderWarning?: string;
   detectionWarning?: string;
   indexingWarning?: string;
+  expiryDateText?: string;
+  expiryEvidence?: string;
+  evidence?: string;
+}
+
+interface UploadProgress {
+  current: number;
+  total: number;
+  filename: string;
+  progressPct: number;
+  phase: 'uploading' | 'analyzing';
+  phaseStartedAt: number;
+  elapsedMs: number;
+  remainingMs: number | null;
+  analysisEstimateMs: number;
+  estimateBasedOnHistory: boolean;
+}
+
+interface ProcessingEstimate { averageMs: number; samples: number }
+const PROCESSING_ESTIMATES_KEY = 'olten-document-processing-estimates';
+const processingCategory = (file: File) => file.type.startsWith('image/') ? 'image' : file.type === 'application/pdf' ? 'pdf' : 'document';
+const processingEstimate = (category: string): ProcessingEstimate => {
+  try {
+    const estimates = JSON.parse(localStorage.getItem(PROCESSING_ESTIMATES_KEY) || '{}');
+    const estimate = estimates[category] as ProcessingEstimate | undefined;
+    if (estimate && Number.isFinite(estimate.averageMs) && estimate.averageMs > 0 && estimate.samples > 0) return estimate;
+  } catch { /* Storage may be disabled. A rough estimate is still available. */ }
+  return { averageMs: category === 'image' ? 20000 : 30000, samples: 0 };
+};
+const recordProcessingDuration = (category: string, durationMs: number) => {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+  try {
+    const estimates = JSON.parse(localStorage.getItem(PROCESSING_ESTIMATES_KEY) || '{}');
+    const previous = processingEstimate(category);
+    const samples = Math.min(previous.samples + 1, 10);
+    estimates[category] = { averageMs: previous.samples ? previous.averageMs + (durationMs - previous.averageMs) / samples : durationMs, samples };
+    localStorage.setItem(PROCESSING_ESTIMATES_KEY, JSON.stringify(estimates));
+  } catch { /* Uploads also work when browser storage is unavailable. */ }
+};
+const approximateDuration = (milliseconds: number) => {
+  const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
+  return seconds >= 60 ? `${Math.ceil(seconds / 60)} min` : `${seconds} sec`;
+};
+const expiryCountdownText = (days: number) => days < 0 ? `Expired ${Math.abs(days)} ${days === -1 ? 'day' : 'days'} ago` : days === 0 ? 'Expires today' : `${days} ${days === 1 ? 'day' : 'days'} remaining`;
+
+function SourceEyeIcon() {
+  return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z" /><circle cx="12" cy="12" r="3" strokeWidth="2" /></svg>;
 }
 
 const dateInputValue = (date?: string) => date?.slice(0, 10) || '';
@@ -106,7 +170,17 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ current: number, total: number, filename: string, progressPct: number, startTime: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+
+  useEffect(() => {
+    if (!isUploading) return;
+    const timer = setInterval(() => setUploadProgress(prev => {
+      if (!prev) return prev;
+      const elapsedMs = Date.now() - prev.phaseStartedAt;
+      return { ...prev, elapsedMs, remainingMs: prev.phase === 'analyzing' ? Math.max(0, prev.analysisEstimateMs - elapsedMs) : prev.remainingMs };
+    }), 1000);
+    return () => clearInterval(timer);
+  }, [isUploading]);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -123,6 +197,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [sourcePreview, setSourcePreview] = useState<{ name: string; url: string; previewUrl: string } | null>(null);
   
   // --- EXPIRY REMINDER STATES ---
   const [expiryReviewModal, setExpiryReviewModal] = useState({
@@ -130,9 +205,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     isAnalyzing: false,
     files: [] as ExpiryReviewFile[]
   });
-  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
-  const [uploadReminderValue, setUploadReminderValue] = useState('30');
-  const [uploadReminderUnit, setUploadReminderUnit] = useState<ReminderUnit>('days');
   const [uploadError, setUploadError] = useState('');
   const [reviewError, setReviewError] = useState('');
   
@@ -223,6 +295,33 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const handlePreviewSource = (source: DocumentSource, name: string) => {
+    const matchingFile = files.find(file => source.documentId !== undefined && file.documentId === source.documentId)
+      || files.find(file => !!source.driveFileId && file.id === source.driveFileId);
+    const sourceUrl = matchingFile?.webViewLink || source.sourceUrl || source.googleDriveLink
+      || (source.driveFileId ? `https://drive.google.com/file/d/${encodeURIComponent(source.driveFileId)}/view` : '');
+    try {
+      const url = new URL(sourceUrl);
+      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) throw new Error('Unsupported document link');
+      if (matchingFile) {
+        setSelectedFile(matchingFile);
+        setIsEditingExpiry(false);
+        setActiveFolderId(matchingFile.parents?.[0] || rootFolderId);
+        setExpandedFolders(prev => new Set([...prev, ...(matchingFile.parents || [])]));
+      }
+      setIsNotifOpen(false);
+      const driveMatch = url.hostname === 'drive.google.com' ? url.pathname.match(/\/file\/d\/([^/]+)/) : null;
+      if (driveMatch || url.hostname === 'docs.google.com') {
+        const previewUrl = driveMatch ? `https://drive.google.com/file/d/${encodeURIComponent(decodeURIComponent(driveMatch[1]))}/preview` : url.href;
+        setSourcePreview({ name: matchingFile?.name || name, url: url.href, previewUrl });
+      } else {
+        window.open(url.href, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      showToast('The source document link is unavailable. Refresh the directory and try again.', 'error');
+    }
   };
 
   const startResizing = useCallback((e: React.MouseEvent) => {
@@ -342,22 +441,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesArray = Array.from(e.target.files || []);
     e.target.value = '';
-    if (filesArray.length === 0 || isUploading) return;
-    setUploadError('');
-    setPendingUploadFiles(filesArray);
-  };
-
-  const uploadPendingFiles = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isUploading || pendingUploadFiles.length === 0) return;
-    if (!isValidReminder(uploadReminderValue, uploadReminderUnit)) {
-      setUploadError(`Enter a whole number from 0 to ${uploadReminderUnit === 'months' ? 1200 : 36500}.`);
-      return;
-    }
-    const filesArray = pendingUploadFiles;
-    const reminderValue = uploadReminderValue;
-    const reminderUnit = uploadReminderUnit;
-    setPendingUploadFiles([]);
+    if (filesArray.length === 0 || isUploading || isProcessing) return;
     setUploadError('');
     setIsUploading(true);
     setIsProcessing(true);
@@ -367,12 +451,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     for (let i = 0; i < filesArray.length; i++) {
        const file = filesArray[i];
        const uploadStart = Date.now();
-       
-       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0, startTime: uploadStart });
+       const category = processingCategory(file);
+       const estimate = processingEstimate(category);
+       let analysisStartedAt: number | null = null;
+       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 0, phase: 'uploading', phaseStartedAt: uploadStart, elapsedMs: 0, remainingMs: null, analysisEstimateMs: estimate.averageMs, estimateBasedOnHistory: estimate.samples > 0 });
        const formData = new FormData();
        formData.append('file', file);
-       formData.append('reminderValue', reminderValue);
-       formData.append('reminderUnit', reminderUnit);
+       formData.append('reminderSetup', 'after-upload');
        if (activeFolderId && activeFolderId !== rootFolderId) {
          formData.append('targetFolderId', activeFolderId); 
        }
@@ -387,14 +472,25 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
              xhr.upload.onprogress = (event) => {
                  if (event.lengthComputable) {
                      const actualPct = (event.loaded / event.total) * 100;
-                     setUploadProgress(prev => prev ? { ...prev, progressPct: Math.min(actualPct, 99.9) } : prev);
+                     const elapsedMs = Date.now() - uploadStart;
+                     const remainingMs = event.loaded > 0 && elapsedMs > 0 ? (event.total - event.loaded) * elapsedMs / event.loaded : null;
+                     setUploadProgress(prev => prev ? { ...prev, progressPct: Math.min(actualPct, 100), elapsedMs, remainingMs } : prev);
                  }
+             };
+
+             xhr.upload.onload = () => {
+               const startedAt = Date.now();
+               analysisStartedAt = startedAt;
+               setUploadProgress(prev => prev ? { ...prev, phase: 'analyzing', progressPct: 100, phaseStartedAt: startedAt, elapsedMs: 0, remainingMs: estimate.averageMs } : prev);
              };
 
              xhr.onload = () => {
                  try {
                    const response = JSON.parse(xhr.responseText);
-                   if (xhr.status >= 200 && xhr.status < 300) resolve(response);
+                   if (xhr.status >= 200 && xhr.status < 300) {
+                     if (analysisStartedAt !== null) recordProcessingDuration(category, Date.now() - analysisStartedAt);
+                     resolve(response);
+                   }
                    else reject(new Error(response.message || 'Upload failed'));
                  } catch {
                    reject(new Error('The upload returned an invalid response'));
@@ -408,7 +504,6 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
          failedFiles.push(`${file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`);
        }
 
-       setUploadProgress({ current: i + 1, total: filesArray.length, filename: file.name, progressPct: 100, startTime: uploadStart });
     }
 
     setUploadProgress(null);
@@ -419,13 +514,19 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     if (uploadedDocs.length > 0) {
        const reviewFiles: ExpiryReviewFile[] = uploadedDocs.map(doc => ({
          id: doc.id,
+         documentId: doc.id,
+         driveFileId: doc.driveFileId,
+         sourceUrl: doc.sourceUrl,
+         googleDriveLink: doc.googleDriveLink,
          name: doc.originalName || doc.filename || 'Document',
          expiryDate: dateInputValue(doc.expiryDate),
-         reminderValue,
-         reminderUnit,
+         reminderValue: String(doc.reminder?.reminderValue ?? doc.reminder?.reminderDays ?? 30),
+         reminderUnit: doc.reminder?.reminderUnit || 'days',
          expiryStatus: doc.expiryStatus,
          warning: [doc.detectionWarning, doc.reminderWarning, doc.indexingWarning].filter(Boolean).join(' '),
-         hasReminder: Boolean(doc.reminder)
+         hasReminder: Boolean(doc.reminder),
+         expiryDateText: doc.expiryDateText,
+         expiryEvidence: doc.expiryEvidence || doc.evidence,
        }));
        setReviewError('');
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: reviewFiles });
@@ -532,13 +633,15 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   };
 
   // --- EXPIRY & REMINDER LOGIC ---
-  const calculateDaysRemaining = (expiryStr?: string) => {
+  const calculateDaysRemaining = (expiryStr?: string, serverDays?: number | null) => {
+    if (typeof serverDays === 'number' && Number.isFinite(serverDays)) return serverDays;
     if (!expiryStr) return null;
-    const today = new Date();
-    const todayDate = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const todayDate = Date.UTC(Number(parts.find(part => part.type === 'year')?.value), Number(parts.find(part => part.type === 'month')?.value) - 1, Number(parts.find(part => part.type === 'day')?.value));
     const expiryDate = new Date(`${dateInputValue(expiryStr)}T00:00:00Z`).getTime();
     return Number.isFinite(expiryDate) ? Math.round((expiryDate - todayDate) / 86400000) : null;
   };
+  const selectedDaysRemaining = selectedFile ? calculateDaysRemaining(selectedFile.expiryDate, selectedFile.daysRemaining ?? selectedFile.expires?.daysRemaining) : null;
 
   const handleManualExpiryUpdate = async () => {
     if (!selectedFile || isSavingExpiry) return;
@@ -827,14 +930,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <div className="flex justify-between items-end mb-2 px-1">
                   <div className="flex flex-col min-w-0 pr-4">
                     <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-2">
-                      {uploadProgress.progressPct === 100 ? 'Finalizing...' : `Uploading (${uploadProgress.current}/${uploadProgress.total})`}
+                      {uploadProgress.phase === 'analyzing' ? 'Reading expiry & saving' : 'Uploading'} ({uploadProgress.current}/{uploadProgress.total})
                     </span>
                     <span className="text-xs font-bold text-slate-600 truncate mt-0.5">
                       {uploadProgress.filename}
                     </span>
                   </div>
                   <span className="text-xl font-black text-indigo-600 shrink-0 tabular-nums">
-                    {Math.round(uploadProgress.progressPct)}%
+                    {uploadProgress.phase === 'analyzing' ? <span className="block w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : `${Math.round(uploadProgress.progressPct)}%`}
                   </span>
                 </div>
                 <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner relative border border-slate-200">
@@ -842,6 +945,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <div className="absolute inset-0 bg-white/20" style={{ backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }}></div>
                   </div>
                 </div>
+                <p className="mt-2 text-[11px] font-medium text-indigo-700" aria-live="polite">
+                  {uploadProgress.phase === 'uploading'
+                    ? uploadProgress.remainingMs === null ? 'Estimating transfer time…' : `About ${approximateDuration(uploadProgress.remainingMs + uploadProgress.analysisEstimateMs)} remaining for this file`
+                    : uploadProgress.remainingMs && uploadProgress.remainingMs > 0 ? `About ${approximateDuration(uploadProgress.remainingMs)} remaining · ${approximateDuration(uploadProgress.elapsedMs)} elapsed` : `Taking longer than estimated · ${approximateDuration(uploadProgress.elapsedMs)} elapsed`}
+                </p>
+                <p className="mt-1 text-[10px] text-slate-400">
+                  {uploadProgress.estimateBasedOnHistory ? 'Estimate uses recent processing times; completion time may vary.' : 'Rough processing estimate; completion time may vary.'}
+                </p>
               </div>
             )}
             
@@ -854,7 +965,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <button onClick={() => setIsNewFolderModalOpen(true)} className="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg> Folder
                 </button>
-                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isProcessing || pendingUploadFiles.length > 0} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50">
+                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isProcessing} className="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg> Upload
                 </button>
               </div>
@@ -1004,9 +1115,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                       {selectedFile.expiryDate && (
                         <span className="text-xs font-medium text-slate-600">
                           Expires: <span className="font-bold">{displayDate(selectedFile.expiryDate)}</span>
-                          {calculateDaysRemaining(selectedFile.expiryDate) !== null && (
-                            <span className={`ml-2 ${calculateDaysRemaining(selectedFile.expiryDate)! < 30 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
-                              ({calculateDaysRemaining(selectedFile.expiryDate)} days remaining)
+                          {selectedDaysRemaining !== null && (
+                            <span className={`ml-2 ${selectedDaysRemaining < 30 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
+                              ({expiryCountdownText(selectedDaysRemaining)})
                             </span>
                           )}
                         </span>
@@ -1018,6 +1129,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         </span>
                       )}
                     </div>
+                    {selectedFile.expiryDateText && <p className="text-xs font-medium text-slate-500 mt-2 max-w-lg">Detected on document: {selectedFile.expiryDateText}</p>}
                     {selectedFile.reminder && (
                       <p className="text-xs font-medium text-indigo-700 mt-2">
                         Reminder: {selectedFile.reminder.reminderValue ?? selectedFile.reminder.reminderDays} {selectedFile.reminder.reminderUnit || 'days'} before expiry
@@ -1101,28 +1213,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
       {/* --- MODALS --- */}
 
-      {pendingUploadFiles.length > 0 && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[200]">
-          <form onSubmit={uploadPendingFiles} role="dialog" aria-modal="true" aria-labelledby="upload-reminder-title" className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
-            <div>
-              <h3 id="upload-reminder-title" className="text-lg font-black text-slate-800">Set your expiry reminder</h3>
-              <p className="text-sm text-slate-500 mt-2">Gemini will read the expiry date from each document or picture. Choose when to be reminded before uploading.</p>
-            </div>
-            <ul className="max-h-32 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-              {pendingUploadFiles.map((file, index) => <li key={`${file.name}-${index}`} className="truncate">{file.name}</li>)}
-            </ul>
-            <ReminderLeadTimeInput value={uploadReminderValue} unit={uploadReminderUnit} onChange={(value, unit) => { setUploadReminderValue(value); setUploadReminderUnit(unit); }} />
-            <p className="text-xs text-slate-500">This applies to all selected files; you can edit each after upload. Months use calendar dates. Enter 0 for the expiry day. If the reminder date has already passed, the reminder becomes due immediately.</p>
-            {uploadError && <p role="alert" className="text-xs font-medium text-rose-700">{uploadError}</p>}
-            <div className="flex justify-end gap-3">
-              <button type="button" onClick={() => setPendingUploadFiles([])} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-lg">Cancel</button>
-              <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg">Upload & Detect Expiry</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {uploadError && pendingUploadFiles.length === 0 && !expiryReviewModal.isOpen && (
+      {uploadError && !expiryReviewModal.isOpen && (
         <div role="alert" className="fixed top-20 right-4 z-[160] max-w-md bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 shadow-lg">
           <div className="flex justify-between gap-4 items-start">
             <p className="text-xs whitespace-pre-line">Some files could not be uploaded. Select them again to retry.{`\n${uploadError}`}</p>
@@ -1181,23 +1272,27 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
               <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-4">
                  <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-                    Check the detected dates against your documents. Reminders are already scheduled for confirmed dates. Add or confirm a date where Gemini needs your review, then save. Files without an expiry date have no reminder.
+                    Check the detected dates against your documents using the eye icon. Choose days or calendar months before expiry, then save to activate your reminders. Enter 0 for the expiry day; a reminder whose date has already passed becomes due immediately.
                  </div>
                  {uploadError && <p role="alert" className="text-xs text-rose-700 whitespace-pre-line">Some uploads failed:{`\n${uploadError}`}</p>}
                  
                  {expiryReviewModal.files.map((file, index) => (
                     <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
-                       <div className="flex-1 min-w-0 pr-4">
-                          <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                       <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start gap-3">
+                            <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
+                            <button type="button" title="Compare with original document" aria-label={`View source document for ${file.name}`} onClick={() => handlePreviewSource(file, file.name)} className="shrink-0 p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg"><SourceEyeIcon /></button>
+                          </div>
                           {file.hasReminder ? (
                              <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
                                 Reminder scheduled
                              </div>
                           ) : (
-                             <div className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
-                                {file.expiryDate || file.expiryStatus === 'NEEDS_REVIEW' ? 'Confirm expiry to schedule' : 'No expiry detected'}
+                             <div className={`text-[10px] font-bold px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider ${file.expiryDate && file.expiryStatus !== 'NEEDS_REVIEW' ? 'text-emerald-700 bg-emerald-100' : 'text-amber-700 bg-amber-100'}`}>
+                                {file.expiryStatus === 'NEEDS_REVIEW' ? 'Confirm expiry date' : file.expiryDate ? 'Expiry detected' : 'No expiry detected'}
                              </div>
                           )}
+                          {(file.expiryDateText || file.expiryEvidence) && <p className="text-xs text-slate-600 mt-2">Detected on document: {file.expiryDateText || file.expiryEvidence}</p>}
                           {file.warning && <p className="text-xs text-amber-700 mt-2">{file.warning}</p>}
                        </div>
                        
@@ -1212,11 +1307,26 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                  
                  {reviewError && <p role="alert" className="text-xs font-medium text-rose-700">{reviewError}</p>}
                  <div className="mt-2 pt-4 border-t border-slate-200 flex flex-wrap justify-end gap-3 sticky bottom-0 bg-slate-50 pb-2">
-                    <button type="button" disabled={isProcessing} onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-5 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors text-xs shadow-sm disabled:opacity-50">Keep Uploaded Settings</button>
+                    <button type="button" disabled={isProcessing} onClick={() => setExpiryReviewModal({ isOpen: false, files: [], isAnalyzing: false })} className="px-5 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-colors text-xs shadow-sm disabled:opacity-50">Close Without Reminder</button>
                     <button type="submit" disabled={isProcessing} className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50 text-xs">{isProcessing ? 'Saving...' : 'Confirm Dates & Save Reminders'}</button>
                  </div>
               </div>
            </form>
+        </div>
+      )}
+
+      {sourcePreview && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[220] flex justify-center items-center p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="source-preview-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
+              <h3 id="source-preview-title" className="text-sm font-bold text-slate-800 truncate">{sourcePreview.name}</h3>
+              <div className="flex items-center gap-3 shrink-0">
+                <a href={sourcePreview.url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-indigo-600 hover:underline">Open in Drive</a>
+                <button type="button" aria-label="Close source preview" onClick={() => setSourcePreview(null)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-100">×</button>
+              </div>
+            </div>
+            <iframe src={sourcePreview.previewUrl} title={`Original document: ${sourcePreview.name}`} className="w-full flex-1 border-0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads" />
+          </div>
         </div>
       )}
 
@@ -1241,10 +1351,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               {notifications.length === 0 ? (
                 <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders scheduled.</div>
               ) : (
-                notifications.map(n => (
+                notifications.map(n => {
+                  const daysRemaining = calculateDaysRemaining(n.expiryDate, n.daysRemaining ?? n.expires?.daysRemaining);
+                  return (
                   <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered && n.status !== 'FULFILLED' ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
                     <div className="flex justify-between items-start mb-1.5">
-                       <div className="text-xs font-black text-slate-800 pr-2 leading-tight">{n.title || n.fileName || 'Expiry reminder'}</div>
+                       <div className="text-xs font-black text-slate-800 pr-2 leading-tight flex-1">{n.title || n.fileName || 'Expiry reminder'}</div>
+                       <button type="button" title="View source document" aria-label={`View source document for ${n.fileName}`} onClick={() => handlePreviewSource(n, n.fileName)} className="shrink-0 p-1 text-indigo-600 hover:bg-indigo-50 rounded mr-1"><SourceEyeIcon /></button>
                        {n.status === 'FULFILLED' ? (
                           <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Handled</span>
                        ) : !n.isTriggered ? (
@@ -1255,6 +1368,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     </div>
                     {n.message && <div className="text-[10px] text-slate-600 mb-2">{n.message}</div>}
                     <div className="text-[10px] text-slate-600 mb-2">Expires: {displayDate(n.expiryDate)} · {n.reminderValue ?? n.reminderDays} {n.reminderUnit || 'days'} before</div>
+                    {daysRemaining !== null && <div className={`text-[10px] font-bold mb-2 ${daysRemaining <= 0 ? 'text-rose-600' : 'text-indigo-600'}`}>{expiryCountdownText(daysRemaining)}</div>}
                     
                     {!n.isTriggered ? (
                         <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
@@ -1266,7 +1380,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                         </div>
                     ) : null}
                   </div>
-                ))
+                ); })
               )}
             </div>
           </div>
