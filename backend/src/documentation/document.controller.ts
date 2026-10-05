@@ -73,6 +73,16 @@ export class DocumentController {
     return this.documentService.saveReminders(body.reminders, company);
   }
 
+  @Get('notifications')
+  async getNotifications(@Headers('x-company') company: string) {
+    return this.documentService.getActiveNotifications(company);
+  }
+
+  @Patch('notifications/:id/status')
+  async updateNotificationStatus(@Param('id') id: string, @Body('status') status: string) {
+    return this.documentService.updateNotificationStatus(Number(id), status);
+  }
+
   @Post('search')
   async search(
     @Body('query') query: string,

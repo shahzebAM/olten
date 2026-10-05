@@ -104,12 +104,12 @@ async processNewDocument(file: any, company: string, username: string, targetFol
     return results;
   }
 
-  async saveReminders(reminders: any[], company: string) {
+async saveReminders(reminders: any[], company: string) {
     const savedReminders: any[] = []; 
     
     for (const rem of reminders) {
       const docId = Number(rem.id); 
-      
+      // Skip if no valid date was found by the AI
       if (isNaN(docId) || !rem.expiryDate) continue;
 
       const saved = await (prisma as any).documentReminder.create({
@@ -118,13 +118,42 @@ async processNewDocument(file: any, company: string, username: string, targetFol
           documentId: docId,
           fileName: rem.name,
           expiryDate: new Date(rem.expiryDate), 
-          reminderDays: Number(rem.reminderDays) || 30
+          reminderDays: Number(rem.reminderDays) || 30,
+          status: 'PENDING'
         }
       });
       savedReminders.push(saved); 
     }
     
     return { success: true, count: savedReminders.length };
+  }
+
+  // --- NEW: FETCH NOTIFICATIONS ---
+  async getActiveNotifications(company: string) {
+    const today = new Date();
+    
+    // Find all pending/processing reminders for this company
+    const reminders = await (prisma as any).documentReminder.findMany({
+      where: { 
+        company: company,
+        status: { in: ['PENDING', 'PROCESSING'] }
+      }
+    });
+
+    // Filter to only show those where the reminder date has actually arrived
+    return reminders.filter(rem => {
+       const triggerDate = new Date(rem.expiryDate);
+       triggerDate.setDate(triggerDate.getDate() - rem.reminderDays);
+       return today >= triggerDate;
+    });
+  }
+
+  // --- NEW: UPDATE NOTIFICATION STATUS ---
+  async updateNotificationStatus(reminderId: number, newStatus: string) {
+    return await (prisma as any).documentReminder.update({
+      where: { id: Number(reminderId) },
+      data: { status: newStatus }
+    });
   }
 
   async searchDocuments(query: string, company: string, username: string, requestedModel?: string) {

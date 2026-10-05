@@ -401,12 +401,12 @@ model DocumentReminder {
   company      String
   documentId   Int
   fileName     String
-  expiryDate   String   
+  expiryDate   DateTime
   reminderDays Int      @default(30)
-  isResolved   Boolean  @default(false)
+  status       String   @default("PENDING")
   createdAt    DateTime @default(now())
 
   document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  
+
   @@index([company])
 }
