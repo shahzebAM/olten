@@ -335,6 +335,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     fetchDirectory(true);
 
     // 2. Wait for the AI to securely extract the date in the background
+  // 2. Wait for the AI to securely extract the date in the background
     try {
        const dbFileIds = uploadedDocs.map((d: any) => d.id);
        
@@ -348,13 +349,22 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
        const expiryData = await analysisRes.json();
 
-       // 3. Silently inject the dates and turn off the spinner
+       // 3. AGGRESSIVELY extract the date from the AI's conversational text
        const finalReviewFiles = initialReviewFiles.map((file: any) => {
-          const foundExpiry = expiryData[file.id] || expiryData[String(file.id)] || '';
-          
+          const rawAiText = expiryData[file.id] || expiryData[String(file.id)] || '';
           let finalDateStr = '';
-          if (foundExpiry) {
-             const pd = new Date(foundExpiry);
+          
+          if (rawAiText) {
+             // Look for standard YYYY-MM-DD or conversational dates (e.g. "06 October 2026")
+             const strictMatch = rawAiText.match(/\d{4}-\d{2}-\d{2}/);
+             const conversationalMatch = rawAiText.match(/\d{1,2}\s+[a-zA-Z]+\s+\d{4}/);
+             
+             let cleanDateText = '';
+             if (strictMatch) cleanDateText = strictMatch[0];
+             else if (conversationalMatch) cleanDateText = conversationalMatch[0];
+             else cleanDateText = rawAiText; // Fallback
+
+             const pd = new Date(cleanDateText);
              if (!isNaN(pd.getTime())) finalDateStr = pd.toISOString();
           }
           
@@ -366,7 +376,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
        showToast("Failed to auto-analyze dates.", "error");
        setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: initialReviewFiles });
     }
-  };
+  }; // <-- Closes handleFileUpload
 
   // --- API: SAVE REMINDERS ---
   const handleSaveReminders = async () => {
