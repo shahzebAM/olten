@@ -999,14 +999,13 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     Set how many days before the AI-detected expiry date you want to be reminded.
                  </div>
                  
-          {expiryReviewModal.files.map((file, index) => (
+     {expiryReviewModal.files.map((file, index) => (
                     <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                        <div className="flex-1 min-w-0 pr-4">
                           <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
                        </div>
                        
                        <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
-                          {/* The input box is now permanently visible for every document! */}
                           <div className="flex flex-col gap-1.5 w-36">
                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Remind Me Before</label>
                              <div className="relative">
