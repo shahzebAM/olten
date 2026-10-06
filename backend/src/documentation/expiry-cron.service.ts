@@ -78,6 +78,7 @@ export class ExpiryCronService implements OnModuleInit {
         status: 'ACTIVE',
         expiryDate: doc.expiryDate,
         expiryStatus: doc.expiryStatus,
+        ...(doc.googleDriveLink !== undefined ? { googleDriveLink: doc.googleDriveLink } : {}),
         ...(doc.updatedAt ? { updatedAt: doc.updatedAt } : {}),
       },
       data: {

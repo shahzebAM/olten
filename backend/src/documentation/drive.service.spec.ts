@@ -207,6 +207,22 @@ describe('Drive upload folder coordination and deletion', () => {
     content.stream.destroy();
   });
 
+  it('returns fresh exact metadata for replacement without downloading or restricting analysis-supported types', async () => {
+    const metadata: any = source('nested', { mimeType: 'text/plain', modifiedTime: '2026-10-06', md5Checksum: 'abc', version: '3' });
+    mockAncestry({ file: metadata, nested: folder('Permits', 'company-folder'), 'company-folder': folder('Olten', 'test-root') });
+    expect(await service.getCompanyFileMetadata('file', 'Olten')).toEqual(metadata);
+    expect(files.get.mock.calls.some(([options]) => options.alt === 'media')).toBe(false);
+    metadata.version = '4';
+    expect(await service.getCompanyFileMetadata('file', 'Olten')).toMatchObject({ version: '4' });
+    expect(files.get).toHaveBeenCalledTimes(6);
+  });
+
+  it('never treats a company folder as a replaceable document source', async () => {
+    mockAncestry({ 'company-folder': folder('Olten', 'test-root') });
+    await expect(service.getCompanyFileMetadata('company-folder', 'Olten')).rejects.toMatchObject({ status: 404 });
+    expect(files.get).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     { file: source(), 'company-folder': folder('Other', 'test-root') },
     { file: source('nested'), nested: folder('Olten', 'other-root'), 'other-root': folder('Elsewhere', 'root') },

@@ -29,7 +29,7 @@ const PREVIEW_MIME_TYPES = new Set([
 ]);
 const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
 const MAX_PREVIEW_DEPTH = 64;
-const FILE_METADATA_FIELDS = 'name,mimeType,size,trashed,parents,modifiedTime,md5Checksum,version';
+const FILE_METADATA_FIELDS = 'id,name,mimeType,size,trashed,parents,modifiedTime,md5Checksum,version';
 
 const driveQueryLiteral = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
@@ -266,10 +266,9 @@ export class DriveService {
     throw new HttpException('The document could not be loaded. Please retry.', HttpStatus.BAD_GATEWAY);
   }
 
-  // Only previews use this direct ancestry check. Directory/search mutations
-  // continue to enumerate live company contents. No ownership result is cached:
-  // a later request rechecks files moved, renamed or trashed outside the app.
-  async downloadCompanyFileStream(fileId: string, companyName: string, range?: string, ifRange?: string): Promise<DriveFileContent> {
+  // Preview and replacement verify the exact current source. No ownership
+  // result is cached, so external moves, renames and trash changes are checked.
+  async getCompanyFileMetadata(fileId: string, companyName: string): Promise<any> {
     this.validateFileId(fileId);
     const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
     if (!rootFolderId) throw new HttpException('Document storage is not configured', HttpStatus.SERVICE_UNAVAILABLE);
@@ -278,6 +277,9 @@ export class DriveService {
       const metadata = await this.drive.files.get({
         fileId, fields: FILE_METADATA_FIELDS, supportsAllDrives: true,
       });
+      if (metadata.data.mimeType === 'application/vnd.google-apps.folder') {
+        throw new HttpException('Document not found in this company', HttpStatus.NOT_FOUND);
+      }
       let item = metadata.data;
       const visited = new Set<string>([fileId]);
       let owned = false;
@@ -297,10 +299,16 @@ export class DriveService {
         if (item.mimeType !== 'application/vnd.google-apps.folder') break;
       }
       if (!owned) throw new HttpException('Document not found in this company', HttpStatus.NOT_FOUND);
-      return await this.streamPreview(fileId, metadata.data, range, ifRange);
+      return metadata.data;
     } catch (error: any) {
       this.previewError(error);
     }
+  }
+
+  async downloadCompanyFileStream(fileId: string, companyName: string, range?: string, ifRange?: string): Promise<DriveFileContent> {
+    const metadata = await this.getCompanyFileMetadata(fileId, companyName);
+    try { return await this.streamPreview(fileId, metadata, range, ifRange); }
+    catch (error: any) { this.previewError(error); }
   }
 
   // Kept for callers which already authorize the original source themselves.

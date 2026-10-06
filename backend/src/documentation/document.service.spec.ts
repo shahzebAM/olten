@@ -188,6 +188,24 @@ describe('document expiry and user reminders', () => {
     expect(prisma.documentReminder.deleteMany).toHaveBeenCalledTimes(1);
   });
 
+  it('does not let old reanalysis overwrite a same-date replacement source', async () => {
+    let current = doc();
+    prisma.document.findFirst.mockImplementation(async () => ({ ...current }));
+    prisma.document.update.mockImplementation(async ({ where, data }) => {
+      if (where.googleDriveLink !== current.googleDriveLink) throw Object.assign(new Error('Source replaced'), { code: 'P2025' });
+      current = { ...current, ...data };
+      return { ...current };
+    });
+    gemini.extractStructuredExpiry.mockImplementation(async () => {
+      current = { ...current, googleDriveLink: 'https://drive.google.com/file/d/renewed-source/view' };
+      return { expiryDate: date('2026-10-06'), confidence: 0.95, method: 'GEMINI' };
+    });
+    await expect(service.reanalyzeDocument(1, 'Olten')).rejects.toThrow('current expiry and reminder were preserved');
+    expect(current.googleDriveLink).toContain('renewed-source');
+    expect(prisma.document.update.mock.calls[0][0].where.googleDriveLink).toContain('drive-permit');
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+  });
+
   it('returns null values and no notification for disabled documents even with a stale alert row', async () => {
     prisma.document.findMany.mockResolvedValue([{ ...doc(), expiryStatus: 'REMINDER_DISABLED', reminders: [
       { id: 10, reminderType: 'MANUAL', reminderDays: 2, expiryDate: date('2026-10-06'), status: 'PENDING' },

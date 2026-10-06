@@ -21,6 +21,8 @@ describe('document HTTP limits and secure source responses', () => {
   const docs = {
     searchDocuments: jest.fn(async () => ({ answer: 'mock answer' })),
     processNewDocument: jest.fn(async () => ({ id: 1 })),
+    replaceDocument: jest.fn(async () => ({ id: 42, driveFileId: 'new-source' })),
+    updateNotificationStatus: jest.fn(async () => ({ success: true })),
     clearReminder: jest.fn(async () => ({ id: 42, reminder: null, reminderValue: null,
       reminderUnit: null, reminderDays: null, reminderDisabled: true })),
     getDocumentContent: jest.fn(async () => ({ stream: Readable.from(Buffer.from('%PDF mock source')),
@@ -100,6 +102,13 @@ describe('document HTTP limits and secure source responses', () => {
     expect(docs.clearReminder).toHaveBeenCalledWith('42', 'Olten');
   });
 
+  it('passes the displayed expiry and exact source to the guarded reminder status mutation', async () => {
+    await authorized(request(app.getHttpServer()).patch('/api/docs/notifications/9/status'))
+      .send({ status: 'FULFILLED', expectedExpiryDate: '2026-10-12', expectedDriveFileId: 'old-source' }).expect(200);
+    expect(docs.updateNotificationStatus).toHaveBeenCalledWith(9, 'FULFILLED', 'Olten',
+      { expectedExpiryDate: '2026-10-12', expectedDriveFileId: 'old-source' });
+  });
+
   it('streams source content privately with safe MIME and filename headers', async () => {
     const response = await authorized(request(app.getHttpServer()).get('/api/docs/42/content?source=document')).expect(200);
     expect(docs.getDocumentContent).toHaveBeenCalledWith('42', 'Olten', 'document', undefined, undefined);
@@ -156,6 +165,28 @@ describe('document HTTP limits and secure source responses', () => {
       authorized(request(app.getHttpServer()).post('/api/docs/upload'))
         .field('reminderSetup', 'after-upload').attach('file', Buffer.from('PDF'), filename).expect(201)));
     expect(docs.processNewDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('replaces one exact authorized source using authenticated identity', async () => {
+    const response = await authorized(request(app.getHttpServer()).post('/api/docs/42/replace'))
+      .set('x-username', 'spoofed').field('expectedDriveFileId', 'old-source')
+      .attach('file', Buffer.from('%PDF replacement'), 'renewed.pdf').expect(201);
+    expect(response.body).toMatchObject({ id: 42, driveFileId: 'new-source' });
+    expect(docs.replaceDocument).toHaveBeenCalledWith('42', expect.objectContaining({ originalname: 'renewed.pdf' }),
+      'Olten', 'authenticated-user', 'old-source');
+  });
+
+  it('rejects unauthenticated, unauthorized, missing, multiple and oversized replacement files before processing', async () => {
+    await request(app.getHttpServer()).post('/api/docs/42/replace').set('x-company', 'Olten')
+      .attach('file', Buffer.from('PDF'), 'renewed.pdf').expect(401);
+    await authorized(request(app.getHttpServer()).post('/api/docs/42/replace'), 'Other')
+      .attach('file', Buffer.from('PDF'), 'renewed.pdf').expect(403);
+    await authorized(request(app.getHttpServer()).post('/api/docs/42/replace')).expect(400);
+    await authorized(request(app.getHttpServer()).post('/api/docs/42/replace'))
+      .attach('file', Buffer.from('PDF'), 'one.pdf').attach('file', Buffer.from('PDF'), 'two.pdf').expect(400);
+    await authorized(request(app.getHttpServer()).post('/api/docs/42/replace'))
+      .attach('file', Buffer.alloc(50 * 1024 * 1024 + 1), 'large.pdf').expect(413);
+    expect(docs.replaceDocument).not.toHaveBeenCalled();
   });
 
   it('rejects multiple files in one multipart request before document processing', async () => {

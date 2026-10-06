@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
@@ -224,17 +224,169 @@ export class DocumentService {
     return this.driveService.downloadCompanyFileStream(fileId, company, range, ifRange);
   }
 
-  async processNewDocument(file: any, company: string, username: string, targetFolderId?: string, options: ReminderOptions = {}) {
-    this.requireCompany(company);
+  private validateUpload(file: any) {
     if (!Buffer.isBuffer(file?.buffer) || !file.buffer.length) throw new BadRequestException('An empty file cannot be uploaded');
     if (file.buffer.length > 50 * 1024 * 1024) throw new BadRequestException('Files must be 50 MiB or smaller');
     if (typeof file.originalname !== 'string' || !file.originalname.trim() || file.originalname.length > 255 ||
       /[\u0000-\u001f\u007f\\/]/.test(file.originalname)) throw new BadRequestException('Invalid filename');
+    return this.geminiService.normalizeMimeType(file.mimetype, file.originalname);
+  }
+
+  private sourceFingerprint(metadata: any) {
+    return JSON.stringify([metadata.name, metadata.mimeType, metadata.size,
+      [...(metadata.parents || [])].sort(), metadata.modifiedTime, metadata.md5Checksum, metadata.version]);
+  }
+
+  private replacementState(doc: any) {
+    // Cron advances updatedAt/lastExpiryCheck and normalizes the display status.
+    // Those bookkeeping writes must not cancel a long upload. Source evidence
+    // and explicit disabled/pending choices still have to match the start.
+    return JSON.stringify([doc.status, doc.googleDriveLink, doc.filename, doc.originalName,
+      doc.mimeType, doc.sizeBytes, doc.geminiFileUri, doc.geminiFileId, doc.documentType,
+      doc.documentNumber, doc.issueDate, doc.expiryDate, doc.renewalDate, doc.renewalDaysBeforeExpiry,
+      doc.expiryDateText, doc.expiryConfidence, doc.expiryDetectionMethod,
+      this.isReminderDisabled(doc), this.isReminderSetupPending(doc), this.needsExpiryReview(doc)]);
+  }
+
+  async replaceDocument(documentId: string | number, file: any, company: string, username: string, expectedDriveFileId?: string) {
+    this.requireCompany(company);
+    const safeMimeType = this.validateUpload(file);
+    const original = await this.findDocument(documentId, company);
+    if (original.status !== 'ACTIVE') throw new NotFoundException('Document not found in this company');
+    const oldDriveId = this.driveId(original.googleDriveLink);
+    if (!oldDriveId) throw new NotFoundException('The original document is unavailable.');
+    if (expectedDriveFileId !== undefined && (typeof expectedDriveFileId !== 'string'
+      || !/^[A-Za-z0-9_-]{1,200}$/.test(expectedDriveFileId))) throw new BadRequestException('Invalid original source ID');
+    if (expectedDriveFileId !== undefined && expectedDriveFileId !== oldDriveId) {
+      throw new ConflictException('The document changed. Refresh it before replacing its source.');
+    }
+    const originalMetadata = await this.driveService.getCompanyFileMetadata(oldDriveId, company);
+    const parentId = originalMetadata.parents?.[0];
+    if (!parentId || !Array.isArray(originalMetadata.parents) || originalMetadata.parents.length !== 1) {
+      throw new NotFoundException('The original document folder is unavailable.');
+    }
+    const fingerprint = this.sourceFingerprint(originalMetadata);
+    const tempDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'olten-replace-'));
+    const tempFilePath = path.join(tempDirectory, `upload${path.extname(file.originalname).slice(0, 20)}`);
+    let driveLink: string | undefined;
+    let geminiData: { fileUri?: string; fileId?: string; mimeType?: string } = {};
+    let committed = false;
+    try {
+      await fs.promises.writeFile(tempFilePath, file.buffer);
+      const indexedFile = this.geminiService.uploadFileToGemini(tempFilePath, safeMimeType, file.originalname);
+      const [driveResult, indexResult, analysisResult] = await Promise.allSettled([
+        this.driveService.uploadFileToDrive(file.buffer, safeMimeType, file.originalname, company, parentId),
+        indexedFile,
+        this.geminiService.extractStructuredExpiry(file.buffer, safeMimeType, file.originalname, indexedFile),
+      ]);
+      if (driveResult.status === 'fulfilled') driveLink = driveResult.value;
+      if (indexResult.status === 'fulfilled') geminiData = indexResult.value;
+      if (driveResult.status === 'rejected') throw new BadRequestException('The replacement could not be uploaded. Your original document was preserved.');
+      if (indexResult.status === 'rejected' || !geminiData.fileId || !geminiData.fileUri) {
+        throw new BadRequestException('The replacement could not be indexed for search. Your original document was preserved. Please retry.');
+      }
+      const analysis = analysisResult.status === 'fulfilled' ? analysisResult.value : null;
+      const expiry = parseIsoDate(analysis?.expiryDate);
+      if (!analysis || !expiry || !Number.isFinite(analysis.confidence) || analysis.confidence < 0.85 || analysis.confidence > 1) {
+        throw new BadRequestException('A reliable expiry date could not be detected in the replacement. Your original document and reminder were preserved. Upload a clearer document.');
+      }
+      const newDriveId = this.driveId(driveLink);
+      if (!newDriveId || newDriveId === oldDriveId) throw new BadRequestException('The replacement source could not be verified. Your original document was preserved.');
+      // Both sources must still be in this company and the original folder.
+      // A folder moved outside the workspace during analysis must not be used.
+      const [currentOriginal, replacementMetadata] = await Promise.all([
+        this.driveService.getCompanyFileMetadata(oldDriveId, company),
+        this.driveService.getCompanyFileMetadata(newDriveId, company),
+      ]);
+      if (this.sourceFingerprint(currentOriginal) !== fingerprint || replacementMetadata.parents?.length !== 1
+        || replacementMetadata.parents[0] !== parentId || replacementMetadata.mimeType !== safeMimeType
+        || replacementMetadata.size !== undefined && Number(replacementMetadata.size) !== file.buffer.length
+        || replacementMetadata.md5Checksum && replacementMetadata.md5Checksum !== createHash('md5').update(file.buffer).digest('hex')) {
+        throw new ConflictException('The source or its folder changed while the replacement was analyzed. Your original document was preserved. Refresh and retry.');
+      }
+      const result = await prisma.$transaction(async client => {
+        const current = await client.document.findFirst({ where: { id: original.id, company } });
+        if (!current || this.replacementState(current) !== this.replacementState(original)) {
+          throw new ConflictException('The document or reminder changed while the replacement was analyzed. Your current settings were preserved. Refresh and retry.');
+        }
+        const updated = await client.document.update({ where: { id: original.id, company, status: 'ACTIVE',
+          googleDriveLink: current.googleDriveLink, updatedAt: current.updatedAt }, data: {
+          filename: file.originalname, originalName: file.originalname, mimeType: geminiData.mimeType || safeMimeType,
+          sizeBytes: file.buffer.length, uploadedBy: username || 'Anonymous', googleDriveLink: driveLink,
+          geminiFileUri: geminiData.fileUri, geminiFileId: geminiData.fileId,
+          documentType: analysis.documentType || null, documentNumber: analysis.documentNumber || null,
+          issueDate: analysis.issueDate || null, expiryDate: expiry,
+          renewalDate: analysis.renewalDate || null, renewalDaysBeforeExpiry: analysis.renewalDaysBeforeExpiry ?? null,
+          expiryDateText: analysis.expiryDateText || null, expiryConfidence: analysis.confidence,
+          expiryDetectionMethod: analysis.method,
+          expiryStatus: this.isReminderDisabled(current) ? 'REMINDER_DISABLED'
+            : this.isReminderSetupPending(current) ? 'AWAITING_REMINDER' : expiryStatus(expiry),
+          lastExpiryCheck: new Date(),
+        } });
+        const reminders = await client.documentReminder.findMany({ where: { documentId: original.id } });
+        const previous = this.configuredReminder(reminders) || reminders[0];
+        // Clear the old expiry's legacy notifications in the same transaction.
+        await client.expiryNotification.deleteMany({ where: { documentId: original.id, company } });
+        let reminder: any = null;
+        if (!this.isReminderInactive(updated) && previous) {
+          reminder = await this.persistReminder(client, updated, choiceFromReminder(previous), true);
+        } else {
+          await client.documentReminder.deleteMany({ where: { documentId: original.id, company } });
+          if (!this.isReminderInactive(updated)) {
+            // A missing schedule does not authorize creating a default alert.
+            const pending = await client.document.update({ where: { id: original.id, company },
+              data: { expiryStatus: 'AWAITING_REMINDER' } });
+            Object.assign(updated, pending);
+          }
+        }
+        return { ...this.expiryPayload(updated), ...this.reminderPayload(reminder), driveFileId: newDriveId,
+          sourceUrl: driveLink, modifiedTime: replacementMetadata.modifiedTime,
+          md5Checksum: replacementMetadata.md5Checksum, reminderWarning: this.reminderWarning(updated) };
+      }, { timeout: 15000 });
+      committed = true;
+      this.invalidateSearch(company);
+      const cleanupWarnings: string[] = [];
+      // Cleanup is after commit. Never delete a source edited or moved externally
+      // since staging, and never tell the user the replacement failed after save.
+      try {
+        const current = await this.driveService.getCompanyFileMetadata(oldDriveId, company);
+        if (this.sourceFingerprint(current) !== fingerprint) throw new Error('Original source changed');
+        await this.driveService.deleteFile(oldDriveId);
+      } catch {
+        cleanupWarnings.push('The new document was saved, but the previous Drive copy was retained because it changed or could not be removed.');
+      }
+      if (original.geminiFileId && original.geminiFileId !== geminiData.fileId) {
+        await this.geminiService.deleteGeminiFile(original.geminiFileId).catch(() => {
+          cleanupWarnings.push('The new document was saved, but its previous Gemini index could not be removed.');
+        });
+      }
+      if (cleanupWarnings.length) this.logger.warn(`Replacement cleanup incomplete for document ${original.id}`);
+      return { ...result, ...(cleanupWarnings.length ? { cleanupWarning: cleanupWarnings.join(' ') } : {}) };
+    } catch (error: any) {
+      if (!committed) {
+        const stagedId = this.driveId(driveLink);
+        await Promise.allSettled([
+          ...(stagedId && stagedId !== oldDriveId ? [this.driveService.deleteFile(stagedId)] : []),
+          ...(geminiData.fileId && geminiData.fileId !== original.geminiFileId
+            ? [this.geminiService.deleteGeminiFile(geminiData.fileId)] : []),
+        ]);
+      }
+      if (error.code === 'P2025') throw new ConflictException('The document or reminder changed while the replacement was analyzed. Your current settings were preserved. Refresh and retry.');
+      if (error instanceof BadRequestException || error instanceof ConflictException || error instanceof NotFoundException) throw error;
+      throw new BadRequestException('The replacement could not be saved. Your original document and reminder were preserved. Please retry.');
+    } finally {
+      await fs.promises.unlink(tempFilePath).catch(() => undefined);
+      await fs.promises.rmdir(tempDirectory).catch(() => undefined);
+    }
+  }
+
+  async processNewDocument(file: any, company: string, username: string, targetFolderId?: string, options: ReminderOptions = {}) {
+    this.requireCompany(company);
+    const safeMimeType = this.validateUpload(file);
     const choice = readReminderChoice(options);
     if (options.reminderSetup !== undefined && options.reminderSetup !== 'after-upload') throw new BadRequestException('Invalid reminder setup mode');
     const setupAfterUpload = options.reminderSetup === 'after-upload';
     if (targetFolderId) await this.verifyCompanyFolder(company, targetFolderId);
-    const safeMimeType = this.geminiService.normalizeMimeType(file.mimetype, file.originalname);
     const tempDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'olten-doc-'));
     const tempFilePath = path.join(tempDirectory, `upload${path.extname(file.originalname).slice(0, 20)}`);
     let driveLink: string | undefined;
@@ -380,7 +532,8 @@ export class DocumentService {
       // A date confirmed while Gemini was working must win. Ignore harmless cron
       // timestamps, but require the original expiry and trust values to match.
       const updated = await client.document.update({ where: { id: doc.id, company: doc.company,
-        status: doc.status, expiryDate: doc.expiryDate, expiryDetectionMethod: doc.expiryDetectionMethod,
+        status: doc.status, googleDriveLink: doc.googleDriveLink,
+        expiryDate: doc.expiryDate, expiryDetectionMethod: doc.expiryDetectionMethod,
         expiryConfidence: doc.expiryConfidence,
         // Reminder save/disable can keep date and confidence unchanged. Their
         // explicit choice must still beat an analysis started before that choice.
@@ -484,12 +637,33 @@ export class DocumentService {
       .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
   }
 
-  async updateNotificationStatus(reminderId: number, newStatus: string, company: string) {
+  async updateNotificationStatus(reminderId: number, newStatus: string, company: string,
+    options: { expectedExpiryDate?: string; expectedDriveFileId?: string } = {}) {
     this.requireCompany(company);
     if (!Number.isSafeInteger(reminderId) || reminderId <= 0 || reminderId > 2147483647) throw new BadRequestException('Invalid reminder ID');
     if (!['PENDING', 'PROCESSING', 'FULFILLED'].includes(newStatus)) throw new BadRequestException('Invalid reminder status');
-    const result = await prisma.documentReminder.updateMany({ where: { id: reminderId, company }, data: { status: newStatus } });
-    if (!result.count) throw new NotFoundException('Reminder not found in this company');
+    const expectedExpiry = options.expectedExpiryDate === undefined ? undefined : parseIsoDate(options.expectedExpiryDate);
+    if (options.expectedExpiryDate !== undefined && (typeof options.expectedExpiryDate !== 'string' || !expectedExpiry)) {
+      throw new BadRequestException('Invalid expected reminder expiry');
+    }
+    const sourceId = options.expectedDriveFileId;
+    if (sourceId !== undefined && (typeof sourceId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(sourceId))) {
+      throw new BadRequestException('Invalid expected document source');
+    }
+    const sourceDocs = sourceId === undefined ? undefined : (await prisma.document.findMany({
+      where: { company, status: 'ACTIVE', googleDriveLink: { contains: sourceId } },
+      select: { id: true, googleDriveLink: true },
+    })).filter(doc => this.driveId(doc.googleDriveLink) === sourceId);
+    if (sourceDocs && !sourceDocs.length) throw new ConflictException('This reminder belongs to an older document. Refresh the reminders and try again.');
+    const result = await prisma.documentReminder.updateMany({ where: { id: reminderId, company,
+      ...(expectedExpiry ? { expiryDate: expectedExpiry } : {}),
+      ...(sourceDocs ? { document: { company, status: 'ACTIVE',
+        OR: sourceDocs.map(doc => ({ id: doc.id, googleDriveLink: doc.googleDriveLink })) } } : {}),
+    }, data: { status: newStatus } });
+    if (!result.count) {
+      if (expectedExpiry || sourceId !== undefined) throw new ConflictException('This reminder belongs to an older document. Refresh the reminders and try again.');
+      throw new NotFoundException('Reminder not found in this company');
+    }
     return { success: true };
   }
 

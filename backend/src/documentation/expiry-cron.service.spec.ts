@@ -119,6 +119,21 @@ describe('ExpiryCronService', () => {
     }));
   });
 
+  it('does not reconcile the old source after a same-date replacement', async () => {
+    const originalLink = 'https://drive.google.com/file/d/old-source/view';
+    const original = document({ googleDriveLink: originalLink });
+    prisma.document.findMany.mockResolvedValue([original]);
+    prisma.document.updateMany.mockImplementation(async ({ where }) => {
+      expect(where).toMatchObject({ id: original.id, googleDriveLink: originalLink,
+        updatedAt: original.updatedAt, expiryDate: original.expiryDate });
+      // The ID and expiry can remain the same while its source has changed.
+      return { count: 0 };
+    });
+    await service.checkExpirations();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.updateMany).not.toHaveBeenCalled();
+  });
+
   it('uses Manila today and still creates an overdue reminder for an expired legacy document', async () => {
     prisma.document.findMany.mockResolvedValue([
       document({ expiryDate: date('2026-10-05') }),

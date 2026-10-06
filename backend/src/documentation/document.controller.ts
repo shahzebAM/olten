@@ -60,6 +60,15 @@ export class DocumentController {
     return this.documentService.reanalyzeDocument(id, company);
   }
 
+  @Post(':id/replace')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1 } }))
+  async replaceDocument(@Param('id') id: string, @UploadedFile() file: any,
+    @Headers('x-company') company: string, @Headers('x-username') username: string,
+    @Body('expectedDriveFileId') expectedDriveFileId?: string) {
+    if (!file) throw new BadRequestException('No replacement file uploaded');
+    return this.documentService.replaceDocument(id, file, company, username, expectedDriveFileId);
+  }
+
   @Delete(':id/reminder')
   async clearReminder(@Param('id') id: string, @Headers('x-company') company: string) {
     return this.documentService.clearReminder(id, company);
@@ -118,8 +127,10 @@ export class DocumentController {
   }
 
   @Patch('notifications/:id/status')
-  async updateNotificationStatus(@Param('id') id: string, @Headers('x-company') company: string, @Body('status') status: string) {
-    return this.documentService.updateNotificationStatus(Number(id), status, company);
+  async updateNotificationStatus(@Param('id') id: string, @Headers('x-company') company: string,
+    @Body() body: { status: string; expectedExpiryDate?: string; expectedDriveFileId?: string }) {
+    return this.documentService.updateNotificationStatus(Number(id), body?.status, company,
+      { expectedExpiryDate: body?.expectedExpiryDate, expectedDriveFileId: body?.expectedDriveFileId });
   }
 
   @Post('search')
