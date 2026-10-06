@@ -31,4 +31,12 @@ describe('CORS allowlist', () => {
     expect(options.allowedHeaders).toContain('Authorization');
     expect(options.maxAge).toBe(600);
   });
+
+  it('permits authenticated progressive PDF requests and exposes their byte-range headers', () => {
+    const options = createCorsOptions({ NODE_ENV: 'production' });
+    expect(options.allowedHeaders).toEqual(expect.arrayContaining(['Authorization', 'x-company', 'Range', 'If-Range']));
+    expect(options.exposedHeaders).toEqual(expect.arrayContaining(['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Encoding', 'ETag']));
+    expect(options.credentials).toBe(false);
+    expect(isAllowed('https://evil.example')).toBe(false);
+  });
 });

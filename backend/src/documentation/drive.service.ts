@@ -1,6 +1,7 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+import { createHash } from 'crypto';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -10,6 +11,16 @@ export interface DriveFileContent {
   mimeType: string;
   size?: number;
   name?: string;
+  totalSize?: number;
+  statusCode?: 206;
+  contentRange?: string;
+  etag?: string;
+}
+
+export class DocumentRangeException extends HttpException {
+  constructor(readonly totalSize?: number) {
+    super('The requested document range is not available', HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE);
+  }
 }
 
 const PREVIEW_MIME_TYPES = new Set([
@@ -17,6 +28,8 @@ const PREVIEW_MIME_TYPES = new Set([
   'image/webp', 'image/bmp', 'image/avif',
 ]);
 const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
+const MAX_PREVIEW_DEPTH = 64;
+const FILE_METADATA_FIELDS = 'name,mimeType,size,trashed,parents,modifiedTime,md5Checksum,version';
 
 const driveQueryLiteral = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
@@ -239,44 +252,135 @@ export class DriveService {
     return Buffer.from(response.data);
   }
 
-  // The document service checks company ownership before calling this method.
-  // Stream the durable original without Gemini or a third-party viewer page.
-  async downloadFileStream(fileId: string): Promise<DriveFileContent> {
-    if (!/^[A-Za-z0-9_-]+$/.test(fileId)) {
+  private validateFileId(fileId: string) {
+    if (typeof fileId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(fileId)) {
       throw new HttpException('Invalid document source ID', HttpStatus.BAD_REQUEST);
     }
+  }
+
+  private previewError(error: any): never {
+    if (error instanceof HttpException) throw error;
+    const code = Number(error.code || error.response?.status || error.response?.data?.error?.code);
+    if (code === 404) throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
+    // Do not expose account details or Google API error payloads to clients.
+    throw new HttpException('The document could not be loaded. Please retry.', HttpStatus.BAD_GATEWAY);
+  }
+
+  // Only previews use this direct ancestry check. Directory/search mutations
+  // continue to enumerate live company contents. No ownership result is cached:
+  // a later request rechecks files moved, renamed or trashed outside the app.
+  async downloadCompanyFileStream(fileId: string, companyName: string, range?: string, ifRange?: string): Promise<DriveFileContent> {
+    this.validateFileId(fileId);
+    const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
+    if (!rootFolderId) throw new HttpException('Document storage is not configured', HttpStatus.SERVICE_UNAVAILABLE);
+    this.validateFileId(rootFolderId);
     try {
       const metadata = await this.drive.files.get({
-        fileId, fields: 'name,mimeType,size,trashed', supportsAllDrives: true,
+        fileId, fields: FILE_METADATA_FIELDS, supportsAllDrives: true,
       });
-      if (metadata.data.trashed) {
-        throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
+      let item = metadata.data;
+      const visited = new Set<string>([fileId]);
+      let owned = false;
+      for (let depth = 0; depth < MAX_PREVIEW_DEPTH; depth += 1) {
+        if (item.trashed || !Array.isArray(item.parents) || item.parents.length !== 1) break;
+        const parentId = item.parents[0];
+        if (parentId === rootFolderId) {
+          owned = item.mimeType === 'application/vnd.google-apps.folder' && item.name === companyName;
+          break;
+        }
+        if (typeof parentId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(parentId) || visited.has(parentId)) break;
+        visited.add(parentId);
+        const parent = await this.drive.files.get({
+          fileId: parentId, fields: 'name,mimeType,trashed,parents', supportsAllDrives: true,
+        });
+        item = parent.data;
+        if (item.mimeType !== 'application/vnd.google-apps.folder') break;
       }
-      const mimeType = String(metadata.data.mimeType || '').split(';')[0].trim().toLowerCase();
-      // Active HTML and SVG are deliberately never served as inline previews.
-      if (!PREVIEW_MIME_TYPES.has(mimeType)) {
-        throw new HttpException('This file type must be opened in Drive', HttpStatus.UNSUPPORTED_MEDIA_TYPE);
-      }
-      const size = Number(metadata.data.size);
-      if (Number.isFinite(size) && size > MAX_PREVIEW_BYTES) {
-        throw new HttpException('This file is too large for an inline preview. Open it in Drive.', HttpStatus.PAYLOAD_TOO_LARGE);
-      }
-      const response = await this.drive.files.get({
-        fileId, alt: 'media', supportsAllDrives: true,
-      }, { responseType: 'stream' });
-      return {
-        stream: response.data,
-        mimeType,
-        ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}),
-        ...(typeof metadata.data.name === 'string' ? { name: metadata.data.name } : {}),
-      };
+      if (!owned) throw new HttpException('Document not found in this company', HttpStatus.NOT_FOUND);
+      return await this.streamPreview(fileId, metadata.data, range, ifRange);
     } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      const code = Number(error.code || error.response?.status || error.response?.data?.error?.code);
-      if (code === 404) throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
-      // Do not expose account details or Google API error payloads to clients.
-      throw new HttpException('The document could not be loaded. Please retry.', HttpStatus.BAD_GATEWAY);
+      this.previewError(error);
     }
+  }
+
+  // Kept for callers which already authorize the original source themselves.
+  async downloadFileStream(fileId: string, range?: string, ifRange?: string): Promise<DriveFileContent> {
+    this.validateFileId(fileId);
+    try {
+      const metadata = await this.drive.files.get({
+        fileId, fields: FILE_METADATA_FIELDS, supportsAllDrives: true,
+      });
+      return await this.streamPreview(fileId, metadata.data, range, ifRange);
+    } catch (error: any) {
+      this.previewError(error);
+    }
+  }
+
+  private previewRange(range: string | undefined, size: number | undefined): { start: number; end: number } | undefined {
+    if (range === undefined) return undefined;
+    const match = typeof range === 'string' && range.length <= 200 ? /^bytes=(\d*)-(\d*)$/i.exec(range.trim()) : null;
+    if (!match || (!match[1] && !match[2])) throw new DocumentRangeException(size);
+    const first = match[1] ? Number(match[1]) : undefined;
+    const last = match[2] ? Number(match[2]) : undefined;
+    if ((first !== undefined && !Number.isSafeInteger(first)) || (last !== undefined && !Number.isSafeInteger(last))
+      || (first !== undefined && last !== undefined && last < first) || (first === undefined && last === 0)) {
+      throw new DocumentRangeException(size);
+    }
+    // Drive binary objects normally have a known length. An unknown length
+    // keeps the ordinary full stream; it cannot be advertised as a partial one.
+    if (size === undefined) return undefined;
+    if (!size || (first !== undefined && first >= size)) throw new DocumentRangeException(size);
+    return first === undefined
+      ? { start: Math.max(0, size - last!), end: size - 1 }
+      : { start: first, end: Math.min(last ?? size - 1, size - 1) };
+  }
+
+  private async streamPreview(fileId: string, metadata: any, range?: string, ifRange?: string): Promise<DriveFileContent> {
+    if (metadata.trashed) {
+      throw new HttpException('Document source is no longer available', HttpStatus.NOT_FOUND);
+    }
+    const mimeType = String(metadata.mimeType || '').split(';')[0].trim().toLowerCase();
+    // Active HTML and SVG are deliberately never served as inline previews.
+    if (!PREVIEW_MIME_TYPES.has(mimeType)) {
+      throw new HttpException('This file type must be opened in Drive', HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+    }
+    const rawSize = Number(metadata.size);
+    const size = metadata.size !== undefined && Number.isSafeInteger(rawSize) && rawSize >= 0 ? rawSize : undefined;
+    if (size !== undefined && size > MAX_PREVIEW_BYTES) {
+      throw new HttpException('This file is too large for an inline preview. Open it in Drive.', HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+    const etag = metadata.md5Checksum || metadata.version ? `"${createHash('sha256')
+      .update(JSON.stringify([fileId, metadata.md5Checksum, metadata.version, metadata.modifiedTime, size])).digest('hex')}"` : undefined;
+    let partial = this.previewRange(range, size);
+    if (ifRange !== undefined && ifRange !== etag) partial = undefined;
+    const expectedContentRange = partial ? `bytes ${partial.start}-${partial.end}/${size}` : undefined;
+    const response = await this.drive.files.get({
+      fileId, alt: 'media', supportsAllDrives: true,
+    }, { responseType: 'stream', headers: { 'Accept-Encoding': 'identity',
+      ...(partial ? { Range: `bytes=${partial.start}-${partial.end}` } : {}) } });
+    const header = (name: string): string => String(response.headers?.get?.(name) ?? response.headers?.[name] ?? '');
+    const servedPartial = response.status === 206 ? partial : undefined;
+    const upstreamSize = header('content-length') ? Number(header('content-length')) : undefined;
+    const fullSize = size ?? (Number.isSafeInteger(upstreamSize) && upstreamSize! >= 0 ? upstreamSize : undefined);
+    if (!servedPartial && fullSize !== undefined && fullSize > MAX_PREVIEW_BYTES) {
+      response.data.destroy();
+      throw new HttpException('This file is too large for an inline preview. Open it in Drive.', HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+    const contentLength = servedPartial ? servedPartial.end - servedPartial.start + 1 : fullSize;
+    if ((response.status === 206 && !servedPartial)
+      || (servedPartial && header('content-range') !== expectedContentRange)
+      || (upstreamSize !== undefined && upstreamSize !== contentLength)) {
+      response.data.destroy();
+      throw new HttpException('The document changed while loading. Please retry.', HttpStatus.BAD_GATEWAY);
+    }
+    return {
+      stream: response.data,
+      mimeType,
+      ...(contentLength !== undefined ? { size: contentLength, totalSize: fullSize } : {}),
+      ...(servedPartial ? { statusCode: 206 as const, contentRange: expectedContentRange } : {}),
+      ...(typeof metadata.name === 'string' ? { name: metadata.name } : {}),
+      ...(etag ? { etag } : {}),
+    };
   }
 
   // Method to rename folders (or files)

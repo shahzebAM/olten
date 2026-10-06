@@ -18,7 +18,8 @@ export function createCorsOptions(environment: NodeJS.ProcessEnv = process.env):
   return {
     origin: (origin, callback) => callback(null, !origin || origins.has(origin)),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-company', 'x-username', 'Cache-Control'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-company', 'x-username', 'Cache-Control', 'Range', 'If-Range'],
+    exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Disposition', 'Content-Encoding', 'ETag'],
     credentials: false,
     maxAge: 600,
   };

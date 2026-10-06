@@ -200,13 +200,17 @@ export class DocumentService {
     return this.driveService.renameFolder(id, name);
   }
 
-  async getDocumentContent(id: string | number, company: string, source?: string) {
+  async getDocumentContent(id: string | number, company: string, source?: string, range?: string, ifRange?: string) {
     this.requireCompany(company);
     if (source !== undefined && !['document', 'drive'].includes(source)) throw new BadRequestException('Invalid document source');
     let fileId: string;
     if (source === 'drive') {
       fileId = String(id);
       if (!/^[A-Za-z0-9_-]{1,200}$/.test(fileId)) throw new BadRequestException('Invalid document ID');
+      const indexed = await prisma.document.findMany({ where: { company, googleDriveLink: { contains: fileId } },
+        select: { googleDriveLink: true, status: true } });
+      const exact = indexed.filter(doc => this.driveId(doc.googleDriveLink) === fileId);
+      if (exact.length && !exact.some(doc => doc.status === 'ACTIVE')) throw new NotFoundException('Document not found in this company');
     } else {
       const doc = await this.findDocument(id, company);
       if (doc.status !== 'ACTIVE') throw new NotFoundException('Document not found in this company');
@@ -214,11 +218,10 @@ export class DocumentService {
       if (!driveId) throw new NotFoundException('The original document is unavailable');
       fileId = driveId;
     }
-    // Current Drive membership also rejects moved-out/trashed sources retained
-    // in an old index row. A guessed ID never authorizes downloading a file.
-    const directory = await this.driveService.getCompanyDirectory(company);
-    if (!directory.files.some(file => file.id === fileId)) throw new NotFoundException('Document not found in this company');
-    return this.driveService.downloadFileStream(fileId);
+    // Fresh ancestry metadata checks the exact file rather than walking every
+    // company folder before each PDF range. A guessed or moved ID never grants
+    // ownership, and no authorization result is retained between requests.
+    return this.driveService.downloadCompanyFileStream(fileId, company, range, ifRange);
   }
 
   async processNewDocument(file: any, company: string, username: string, targetFolderId?: string, options: ReminderOptions = {}) {
@@ -460,13 +463,8 @@ export class DocumentService {
   async getActiveNotifications(company: string) {
     this.requireCompany(company);
     const today = companyToday();
-    const [docs, directory] = await Promise.all([
-      prisma.document.findMany({ where: { company, status: 'ACTIVE' }, include: { reminders: true } }),
-      this.driveService.getCompanyDirectory(company),
-    ]);
-    const currentDriveIds = new Set(directory.files.map(file => file.id));
-    return docs.flatMap(doc => {
-      if (!currentDriveIds.has(this.driveId(doc.googleDriveLink))) return [];
+    const docs = await prisma.document.findMany({ where: { company, status: 'ACTIVE' }, include: { reminders: true } });
+    const due = docs.flatMap(doc => {
       if (this.isReminderInactive(doc) || this.needsExpiryReview(doc) || !doc.expiryDate) return [];
       const configured = this.configuredReminder(doc.reminders);
       return doc.reminders.filter(rem => ['PENDING', 'PROCESSING'].includes(rem.status)
@@ -474,8 +472,16 @@ export class DocumentService {
         && (!configured || !this.isAutomaticReminder(rem.reminderType)))
         .map(rem => ({ ...this.serializeReminder(rem, today), documentId: doc.id,
           driveFileId: this.driveId(doc.googleDriveLink), sourceUrl: doc.googleDriveLink,
-          expiryDateText: doc.expiryDateText }));
-    }).sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+          expiryDateText: doc.expiryDateText }))
+        .filter(rem => rem.isTriggered);
+    });
+    // An empty bell cannot expose a stale source. Avoid walking every Drive
+    // folder when reminders are disabled, handled, pending setup or not due.
+    if (!due.length) return [];
+    const directory = await this.driveService.getCompanyDirectory(company);
+    const currentDriveIds = new Set(directory.files.map(file => file.id));
+    return due.filter(rem => currentDriveIds.has(rem.driveFileId))
+      .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
   }
 
   async updateNotificationStatus(reminderId: number, newStatus: string, company: string) {

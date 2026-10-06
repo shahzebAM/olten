@@ -4,7 +4,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { DocumentService } from './document.service';
 import type { ReminderOptions } from './expiry-date.utils';
-import { DriveService } from './drive.service';
+import { DriveService, DocumentRangeException } from './drive.service';
 import { DocsAuthGuard } from '../auth/docs-auth.guard';
 
 @Controller('api/docs')
@@ -67,8 +67,17 @@ export class DocumentController {
 
   @Get(':id/content')
   async getContent(@Param('id') id: string, @Headers('x-company') company: string,
-    @Query('source') source: string | undefined, @Res({ passthrough: true }) response: Response) {
-    const content = await this.documentService.getDocumentContent(id, company, source);
+    @Query('source') source: string | undefined, @Res({ passthrough: true }) response: Response,
+    @Headers('range') range?: string, @Headers('if-range') ifRange?: string) {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, no-store');
+    const content = await this.documentService.getDocumentContent(id, company, source, range, ifRange).catch(error => {
+      if (error instanceof DocumentRangeException && error.totalSize !== undefined) {
+        response.setHeader('Content-Range', `bytes */${error.totalSize}`);
+        response.setHeader('Accept-Ranges', 'bytes');
+      }
+      throw error;
+    });
     const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp',
       'image/gif', 'image/bmp', 'image/avif']);
     const mime = String(content.mimeType || '').toLowerCase().split(';')[0].trim();
@@ -77,10 +86,15 @@ export class DocumentController {
       .slice(0, 180).replace(/[\uD800-\uDFFF]/gu, '_') || 'document';
     const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     response.setHeader('Content-Type', inline ? mime : 'application/octet-stream');
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Content-Encoding', 'identity');
     response.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="document"; filename*=UTF-8''${encodedFilename}`);
     if (Number.isSafeInteger(content.size) && content.size! >= 0) response.setHeader('Content-Length', content.size!);
+    if (Number.isSafeInteger(content.totalSize) && content.totalSize! >= 0) response.setHeader('Accept-Ranges', 'bytes');
+    if (content.etag) response.setHeader('ETag', content.etag);
+    if (content.statusCode === 206 && content.contentRange) {
+      response.status(206);
+      response.setHeader('Content-Range', content.contentRange);
+    }
     response.on('close', () => content.stream.destroy());
     return new StreamableFile(content.stream);
   }

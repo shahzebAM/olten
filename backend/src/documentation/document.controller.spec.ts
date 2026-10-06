@@ -1,15 +1,17 @@
 import { INestApplication, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Readable } from 'stream';
+import { request as httpRequest } from 'http';
 import request from 'supertest';
 import { DocumentController } from './document.controller';
 import { DocumentService } from './document.service';
-import { DriveService } from './drive.service';
+import { DriveService, DocumentRangeException } from './drive.service';
 import { DocsAuthGuard } from '../auth/docs-auth.guard';
 import { AuthSessionService } from '../auth/auth-session.service';
 
 jest.mock('./document.service', () => ({ DocumentService: jest.fn() }));
-jest.mock('./drive.service', () => ({ DriveService: jest.fn() }));
+jest.mock('./drive.service', () => ({ ...jest.requireActual('./drive.service'), DriveService: jest.fn() }));
+jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('../auth/auth-session.service', () => ({ AuthSessionService: jest.fn() }));
 
 describe('document HTTP limits and secure source responses', () => {
@@ -22,7 +24,7 @@ describe('document HTTP limits and secure source responses', () => {
     clearReminder: jest.fn(async () => ({ id: 42, reminder: null, reminderValue: null,
       reminderUnit: null, reminderDays: null, reminderDisabled: true })),
     getDocumentContent: jest.fn(async () => ({ stream: Readable.from(Buffer.from('%PDF mock source')),
-      mimeType: 'application/pdf', name: 'unsafe"\r\nfolder/permit.pdf', size: 16 })),
+      mimeType: 'application/pdf', name: 'unsafe"\r\nfolder/permit.pdf', size: 16, totalSize: 16 } as any)),
   };
   const sessions = {
     authenticate: jest.fn(async (authorization: string) => {
@@ -40,7 +42,7 @@ describe('document HTTP limits and secure source responses', () => {
         { provide: DriveService, useValue: {} }, { provide: AuthSessionService, useValue: sessions }],
     }).compile();
     app = module.createNestApplication();
-    await app.init();
+    await app.listen(0, '127.0.0.1');
   });
   beforeEach(() => {
     jest.clearAllMocks();
@@ -100,13 +102,53 @@ describe('document HTTP limits and secure source responses', () => {
 
   it('streams source content privately with safe MIME and filename headers', async () => {
     const response = await authorized(request(app.getHttpServer()).get('/api/docs/42/content?source=document')).expect(200);
-    expect(docs.getDocumentContent).toHaveBeenCalledWith('42', 'Olten', 'document');
+    expect(docs.getDocumentContent).toHaveBeenCalledWith('42', 'Olten', 'document', undefined, undefined);
     expect(response.headers['content-type']).toContain('application/pdf');
     expect(response.headers['x-content-type-options']).toBe('nosniff');
     expect(response.headers['cache-control']).toBe('private, no-store');
+    expect(response.headers['accept-ranges']).toBe('bytes');
+    expect(response.headers['content-length']).toBe('16');
+    expect(response.headers['content-encoding']).toBe('identity');
     expect(response.headers['content-disposition']).toContain("inline; filename=\"document\"; filename*=UTF-8''unsafe___folder_permit.pdf");
     expect(response.headers['content-disposition']).not.toMatch(/[\r\n]/);
     expect(response.body).toEqual(Buffer.from('%PDF mock source'));
+  });
+
+  it('passes authenticated range requests and emits exact partial status and headers', async () => {
+    docs.getDocumentContent.mockResolvedValueOnce({ stream: Readable.from(Buffer.from('%PDF')),
+      mimeType: 'application/pdf', name: 'permit.pdf', size: 4, totalSize: 16, statusCode: 206,
+      contentRange: 'bytes 0-3/16', etag: '"source-version"' });
+    const response = await authorized(request(app.getHttpServer()).get('/api/docs/42/content?source=document'))
+      .set('Range', 'bytes=0-3').set('If-Range', '"source-version"').expect(206);
+    expect(docs.getDocumentContent).toHaveBeenCalledWith('42', 'Olten', 'document', 'bytes=0-3', '"source-version"');
+    expect(response.headers['accept-ranges']).toBe('bytes');
+    expect(response.headers['content-range']).toBe('bytes 0-3/16');
+    expect(response.headers['content-length']).toBe('4');
+    expect(response.headers.etag).toBe('"source-version"');
+    expect(response.body).toEqual(Buffer.from('%PDF'));
+  });
+
+  it('returns the current document size with an unsatisfiable range after authorization', async () => {
+    docs.getDocumentContent.mockRejectedValueOnce(new DocumentRangeException(16));
+    const response = await authorized(request(app.getHttpServer()).get('/api/docs/42/content'))
+      .set('Range', 'bytes=50-').expect(416);
+    expect(response.headers['content-range']).toBe('bytes */16');
+    expect(response.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('destroys the upstream stream when a progressive client cancels after headers', async () => {
+    const stream = new Readable({ read() { this.push(Buffer.alloc(8192)); } });
+    const destroyed = new Promise<void>(resolve => stream.once('close', resolve));
+    docs.getDocumentContent.mockResolvedValueOnce({ stream, mimeType: 'application/pdf', size: 100 * 1024 * 1024, totalSize: 100 * 1024 * 1024 });
+    const address = app.getHttpServer().address();
+    const pending = httpRequest({ hostname: '127.0.0.1', port: address.port, path: '/api/docs/42/content',
+      headers: { Authorization: 'Bearer valid-test-session', 'x-company': 'Olten' } }, response => {
+      response.once('data', () => { response.destroy(); pending.destroy(); });
+    });
+    pending.on('error', () => undefined);
+    pending.end();
+    await destroyed;
+    expect(stream.destroyed).toBe(true);
   });
 
   it('accepts separate valid uploads without imposing a bulk-upload quota', async () => {

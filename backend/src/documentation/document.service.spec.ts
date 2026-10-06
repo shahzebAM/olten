@@ -50,6 +50,7 @@ describe('document expiry and user reminders', () => {
         files: [{ id: 'drive-permit', name: 'permit.pdf' }] })),
       deleteFile: jest.fn(async () => undefined),
       downloadFileStream: jest.fn(async () => ({ stream: Readable.from(Buffer.from('PDF')), mimeType: 'application/pdf', name: 'permit.pdf' })),
+      downloadCompanyFileStream: jest.fn(async () => ({ stream: Readable.from(Buffer.from('PDF')), mimeType: 'application/pdf', name: 'permit.pdf' })),
       createSubFolder: jest.fn(async () => ({ id: 'created-folder' })),
       renameFolder: jest.fn(async () => ({ id: 'renamed-folder' })) };
     service = new DocumentService(gemini, drive, new ExpiryExtractorService());
@@ -204,19 +205,19 @@ describe('document expiry and user reminders', () => {
       files: [{ id: 'drive-permit', name: 'permit.pdf' }] });
     const result = await service.getDocumentContent(1, 'Olten', 'document');
     expect(result.mimeType).toBe('application/pdf');
-    expect(drive.downloadFileStream).toHaveBeenCalledWith('drive-permit');
+    expect(drive.downloadCompanyFileStream).toHaveBeenCalledWith('drive-permit', 'Olten', undefined, undefined);
+    expect(drive.getCompanyDirectory).not.toHaveBeenCalled();
     expect(gemini.extractStructuredExpiry).not.toHaveBeenCalled();
   });
 
   it('requires current company membership for Drive-only and indexed preview sources', async () => {
-    drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [], files: [] });
+    drive.downloadCompanyFileStream.mockRejectedValueOnce(new Error('Document not found in this company'))
+      .mockRejectedValueOnce(new Error('Document not found in this company'));
     await expect(service.getDocumentContent('drive-permit', 'Olten', 'drive')).rejects.toThrow('not found in this company');
     await expect(service.getDocumentContent(1, 'Olten', 'document')).rejects.toThrow('not found in this company');
-    expect(drive.downloadFileStream).not.toHaveBeenCalled();
-    drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [],
-      files: [{ id: 'unindexed', name: 'permit.pdf' }] });
     await service.getDocumentContent('unindexed', 'Olten', 'drive');
-    expect(drive.downloadFileStream).toHaveBeenCalledWith('unindexed');
+    expect(drive.downloadCompanyFileStream).toHaveBeenCalledWith('unindexed', 'Olten', undefined, undefined);
+    expect(drive.getCompanyDirectory).not.toHaveBeenCalled();
   });
 
   it('rejects invalid preview IDs and disallowed source modes without downloading', async () => {
@@ -224,7 +225,25 @@ describe('document expiry and user reminders', () => {
     await expect(service.getDocumentContent(1, 'Olten', 'external')).rejects.toThrow('Invalid document source');
     prisma.document.findFirst.mockResolvedValue({ ...doc(), status: 'DELETED' });
     await expect(service.getDocumentContent(1, 'Olten', 'document')).rejects.toThrow('not found in this company');
-    expect(drive.downloadFileStream).not.toHaveBeenCalled();
+    expect(drive.downloadCompanyFileStream).not.toHaveBeenCalled();
+  });
+
+  it('forwards range validators after document identity checks without rescanning the company', async () => {
+    await service.getDocumentContent(1, 'Olten', 'document', 'bytes=0-1023', '"current-version"');
+    expect(drive.downloadCompanyFileStream).toHaveBeenCalledWith('drive-permit', 'Olten', 'bytes=0-1023', '"current-version"');
+    expect(drive.getCompanyDirectory).not.toHaveBeenCalled();
+  });
+
+  it('rejects inactive indexed files even when a Drive ID is used instead of its database ID', async () => {
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), status: 'DELETED' }]);
+    await expect(service.getDocumentContent('drive-permit', 'Olten', 'drive')).rejects.toThrow('not found in this company');
+    expect(drive.downloadCompanyFileStream).not.toHaveBeenCalled();
+  });
+
+  it('checks exact IDs when considering inactive indexed rows with a similar Drive ID', async () => {
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), googleDriveLink: 'https://drive.google.com/file/d/drive-permit-copy/view', status: 'DELETED' }]);
+    await service.getDocumentContent('drive-permit', 'Olten', 'drive');
+    expect(drive.downloadCompanyFileStream).toHaveBeenCalledWith('drive-permit', 'Olten', undefined, undefined);
   });
 
   it('restricts folder creation parents and rename targets to the current company', async () => {
@@ -479,6 +498,65 @@ describe('document expiry and user reminders', () => {
     expect(await service.getActiveNotifications('Olten')).toEqual([]);
   });
 
+  it.each(['PENDING', 'PROCESSING'])('keeps a future %s 30-day reminder out of the bell until its selected trigger date', async status => {
+    const expiry = date('2026-11-05');
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), expiryDate: expiry, reminders: [
+      { id: 10, fileName: 'permit.pdf', expiryDate: expiry, triggerDate: date('2026-10-06'),
+        reminderDays: 30, reminderType: 'MANUAL', status },
+    ] }]);
+    expect(await service.getActiveNotifications('Olten')).toEqual([]);
+    expect(drive.getCompanyDirectory).not.toHaveBeenCalled();
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+    expect(gemini.extractStructuredExpiry).not.toHaveBeenCalled();
+  });
+
+  it('shows the reminder on its trigger day at Manila midnight', async () => {
+    jest.setSystemTime(new Date('2026-10-05T16:00:00.000Z'));
+    const expiry = date('2026-11-05');
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), expiryDate: expiry, reminders: [
+      { id: 10, fileName: 'permit.pdf', expiryDate: expiry, triggerDate: date('2026-10-06'),
+        reminderDays: 30, reminderType: 'MANUAL', status: 'PENDING' },
+    ] }]);
+    const notifications = await service.getActiveNotifications('Olten');
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({ id: 10, documentId: 1, driveFileId: 'drive-permit',
+      isTriggered: true, daysRemaining: 30, reminderValue: 30 });
+  });
+
+  it('does not restore automatic or expiry-day alerts after Close Without Reminder', async () => {
+    jest.setSystemTime(new Date('2026-10-05T16:00:00.000Z'));
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), expiryStatus: 'REMINDER_DISABLED', reminders: [
+      { id: 10, fileName: 'permit.pdf', expiryDate: doc().expiryDate, triggerDate: date('2026-10-06'),
+        reminderDays: 0, reminderType: 'EXPIRED', status: 'PENDING' },
+      { id: 11, fileName: 'permit.pdf', expiryDate: doc().expiryDate, triggerDate: date('2026-09-06'),
+        reminderDays: 30, reminderType: 'AUTO_DEFAULT_30', status: 'PROCESSING' },
+    ] }]);
+    expect(await service.getActiveNotifications('Olten')).toEqual([]);
+    const directory = await service.getCompanyDirectory('Olten');
+    expect(directory.files[0]).toMatchObject({ reminderDisabled: true, reminder: null,
+      reminderValue: null, reminderUnit: null, reminderDays: null });
+    expect(prisma.documentReminder.upsert).not.toHaveBeenCalled();
+    expect(gemini.extractStructuredExpiry).not.toHaveBeenCalled();
+  });
+
+  it('shows only the due enabled source when duplicate filenames have different reminder choices', async () => {
+    drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [],
+      files: ['drive-permit', 'disabled-copy', 'future-copy'].map(id => ({ id, name: 'permit.pdf' })) });
+    const due = { id: 10, fileName: 'permit.pdf', expiryDate: doc().expiryDate,
+      triggerDate: date('2026-10-05'), reminderDays: 1, reminderType: 'MANUAL', status: 'PENDING' };
+    const futureExpiry = date('2026-11-05');
+    prisma.document.findMany.mockResolvedValue([
+      { ...doc(), reminders: [due] },
+      { ...doc(), id: 2, googleDriveLink: 'https://drive.google.com/file/d/disabled-copy/view',
+        expiryStatus: 'REMINDER_DISABLED', reminders: [{ ...due, id: 11 }] },
+      { ...doc(), id: 3, googleDriveLink: 'https://drive.google.com/file/d/future-copy/view', expiryDate: futureExpiry,
+        reminders: [{ ...due, id: 12, expiryDate: futureExpiry, triggerDate: date('2026-10-06'), reminderDays: 30 }] },
+    ]);
+    const result = await service.getActiveNotifications('Olten');
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ documentId: 1, driveFileId: 'drive-permit', isTriggered: true });
+  });
+
   it('returns exact document and Drive IDs with source links for duplicate filenames', async () => {
     drive.getCompanyDirectory.mockResolvedValue({ companyFolderId: 'company-root', folders: [],
       files: [{ id: 'drive-permit', name: 'permit.pdf' }, { id: 'other-permit', name: 'permit.pdf' }] });
@@ -507,7 +585,10 @@ describe('document expiry and user reminders', () => {
   });
 
   it('fails closed on unavailable Drive inventory rather than returning stale reminders', async () => {
-    prisma.document.findMany.mockResolvedValue([{ ...doc(), reminders: [] }]);
+    prisma.document.findMany.mockResolvedValue([{ ...doc(), reminders: [
+      { id: 10, fileName: 'permit.pdf', expiryDate: doc().expiryDate, triggerDate: date('2026-10-05'),
+        reminderDays: 1, reminderType: 'MANUAL', status: 'PENDING' },
+    ] }]);
     drive.getCompanyDirectory.mockRejectedValue(new Error('Drive unavailable'));
     await expect(service.getActiveNotifications('Olten')).rejects.toThrow('Drive unavailable');
     expect(gemini.extractStructuredExpiry).not.toHaveBeenCalled();

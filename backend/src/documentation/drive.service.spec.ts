@@ -138,9 +138,9 @@ describe('Drive upload folder coordination and deletion', () => {
     files.get.mockResolvedValueOnce({ data: { name: 'license.pdf', mimeType: 'application/pdf', size: '8' } });
     files.get.mockResolvedValueOnce({ data: stream });
     const result = await service.downloadFileStream('exact-source');
-    expect(result).toEqual({ stream, name: 'license.pdf', mimeType: 'application/pdf', size: 8 });
+    expect(result).toEqual({ stream, name: 'license.pdf', mimeType: 'application/pdf', size: 8, totalSize: 8 });
     expect(result.stream).toBe(stream);
-    expect(files.get).toHaveBeenNthCalledWith(2, { fileId: 'exact-source', alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
+    expect(files.get).toHaveBeenNthCalledWith(2, { fileId: 'exact-source', alt: 'media', supportsAllDrives: true }, { responseType: 'stream', headers: { 'Accept-Encoding': 'identity' } });
     stream.destroy();
   });
 
@@ -172,5 +172,124 @@ describe('Drive upload folder coordination and deletion', () => {
   it('does not expose Google account details in download errors', async () => {
     files.get.mockRejectedValueOnce({ code: 403, message: 'Private OAuth account details' });
     await expect(service.downloadFileStream('denied-source')).rejects.toThrow('The document could not be loaded. Please retry.');
+  });
+
+  const folder = (name: string, parent: string, overrides = {}) => ({
+    name, mimeType: 'application/vnd.google-apps.folder', parents: [parent], trashed: false, ...overrides,
+  });
+  const source = (parent = 'company-folder', overrides = {}) => ({
+    name: 'license.pdf', mimeType: 'application/pdf', size: '10', parents: [parent], trashed: false, ...overrides,
+  });
+  const mockAncestry = (entries: Record<string, any>) => {
+    files.get.mockImplementation(async ({ fileId, alt }) => {
+      if (alt === 'media') return { data: Readable.from(Buffer.from('0123456789')), status: 200 };
+      if (!entries[fileId]) throw { code: 404 };
+      return { data: entries[fileId] };
+    });
+  };
+
+  it('loads direct company sources with two metadata calls and no directory scan or folder creation', async () => {
+    mockAncestry({ file: source(), 'company-folder': folder('Olten', 'test-root') });
+    const content = await service.downloadCompanyFileStream('file', 'Olten');
+    expect(content).toMatchObject({ mimeType: 'application/pdf', size: 10, totalSize: 10 });
+    expect(files.get.mock.calls.map(([options]) => options.fileId)).toEqual(['file', 'company-folder', 'file']);
+    expect(files.list).not.toHaveBeenCalled();
+    expect(files.create).not.toHaveBeenCalled();
+    content.stream.destroy();
+  });
+
+  it('authorizes nested files by actual folder ancestry instead of names of unrelated folders', async () => {
+    mockAncestry({ file: source('nested'), nested: folder('Permits', 'company-folder'),
+      'company-folder': folder('Olten', 'test-root') });
+    const content = await service.downloadCompanyFileStream('file', 'Olten');
+    expect(files.get).toHaveBeenCalledTimes(4);
+    expect(files.list).not.toHaveBeenCalled();
+    content.stream.destroy();
+  });
+
+  it.each([
+    { file: source(), 'company-folder': folder('Other', 'test-root') },
+    { file: source('nested'), nested: folder('Olten', 'other-root'), 'other-root': folder('Elsewhere', 'root') },
+    { file: source(), 'company-folder': folder('Olten', 'test-root', { trashed: true }) },
+    { file: source('nested'), nested: folder('Other', 'company-folder', { trashed: true }), 'company-folder': folder('Olten', 'test-root') },
+    { file: source('nested'), nested: { name: 'Olten', mimeType: 'application/pdf', parents: ['test-root'] } },
+    { file: source('test-root', { name: 'Olten' }) },
+    { file: source('company-folder', { trashed: true }), 'company-folder': folder('Olten', 'test-root') },
+    { file: source('company-folder', { parents: ['company-folder', 'other-folder'] }), 'company-folder': folder('Olten', 'test-root') },
+    { file: source('cycle'), cycle: folder('Cycle', 'cycle') },
+  ])('rejects moved, trashed, malformed or ambiguous ancestry without downloading: %j', async entries => {
+    mockAncestry(entries);
+    await expect(service.downloadCompanyFileStream('file', 'Olten')).rejects.toMatchObject({ status: 404 });
+    expect(files.get.mock.calls.some(([options]) => options.alt === 'media')).toBe(false);
+  });
+
+  it('rechecks ownership on each request so moving a previously opened file revokes its preview', async () => {
+    const entries = { file: source(), 'company-folder': folder('Olten', 'test-root') };
+    mockAncestry(entries);
+    (await service.downloadCompanyFileStream('file', 'Olten')).stream.destroy();
+    entries['company-folder'].name = 'Other';
+    await expect(service.downloadCompanyFileStream('file', 'Olten')).rejects.toMatchObject({ status: 404 });
+    expect(files.get.mock.calls.filter(([options]) => options.alt === 'media')).toHaveLength(1);
+  });
+
+  it('bounds malformed deep ancestries instead of looping indefinitely', async () => {
+    const entries: Record<string, any> = { file: source('folder-0') };
+    for (let depth = 0; depth < 70; depth += 1) entries[`folder-${depth}`] = folder('Nested', `folder-${depth + 1}`);
+    mockAncestry(entries);
+    await expect(service.downloadCompanyFileStream('file', 'Olten')).rejects.toMatchObject({ status: 404 });
+    expect(files.get).toHaveBeenCalledTimes(65);
+  });
+
+  it.each([
+    ['bytes=0-3', 'bytes=0-3', 'bytes 0-3/10', 4],
+    ['bytes=7-', 'bytes=7-9', 'bytes 7-9/10', 3],
+    ['bytes=-3', 'bytes=7-9', 'bytes 7-9/10', 3],
+    ['bytes=-30', 'bytes=0-9', 'bytes 0-9/10', 10],
+    ['bytes=4-100', 'bytes=4-9', 'bytes 4-9/10', 6],
+  ])('streams a validated single %s range with truthful partial lengths', async (input, normalized, contentRange, size) => {
+    const stream = Readable.from(Buffer.from('partial'));
+    files.get.mockResolvedValueOnce({ data: source() }).mockResolvedValueOnce({ data: stream, status: 206,
+      headers: { 'content-range': contentRange, 'content-length': String(size) } });
+    const content = await service.downloadFileStream('file', input as string);
+    expect(content).toMatchObject({ size, totalSize: 10, statusCode: 206, contentRange });
+    expect(files.get.mock.calls[1][1]).toEqual({ responseType: 'stream', headers: { 'Accept-Encoding': 'identity', Range: normalized } });
+    stream.destroy();
+  });
+
+  it.each(['bytes=10-', 'bytes=4-2', 'bytes=-0', 'bytes=', 'items=0-2', 'bytes=0-1,4-5', 'bytes=9007199254740992-'])
+    ('rejects unsatisfiable or unsupported %s ranges before requesting bytes', async range => {
+      files.get.mockResolvedValueOnce({ data: source() });
+      await expect(service.downloadFileStream('file', range)).rejects.toMatchObject({ status: 416, totalSize: 10 });
+      expect(files.get).toHaveBeenCalledTimes(1);
+    });
+
+  it('returns a full 200-sized stream if Drive ignores a supported range', async () => {
+    files.get.mockResolvedValueOnce({ data: source() }).mockResolvedValueOnce({ data: Readable.from(Buffer.from('0123456789')),
+      status: 200, headers: { 'content-length': '10' } });
+    const result = await service.downloadFileStream('file', 'bytes=0-3');
+    expect(result).toMatchObject({ size: 10, totalSize: 10 });
+    expect(result.statusCode).toBeUndefined();
+    expect(result.contentRange).toBeUndefined();
+    result.stream.destroy();
+  });
+
+  it('destroys an inconsistent upstream slice instead of mislabeling or mixing changed content', async () => {
+    const stream = Readable.from(Buffer.from('partial'));
+    files.get.mockResolvedValueOnce({ data: source() }).mockResolvedValueOnce({ data: stream, status: 206,
+      headers: { 'content-range': 'bytes 0-3/12', 'content-length': '4' } });
+    await expect(service.downloadFileStream('file', 'bytes=0-3')).rejects.toThrow('changed while loading');
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it('uses a fresh stable validator and returns full content when If-Range no longer matches', async () => {
+    mockAncestry({ file: source('company-folder', { md5Checksum: 'content-v1', version: '1' }),
+      'company-folder': folder('Olten', 'test-root') });
+    const first = await service.downloadCompanyFileStream('file', 'Olten');
+    expect(first.etag).toMatch(/^"[a-f0-9]{64}"$/);
+    first.stream.destroy();
+    const next = await service.downloadCompanyFileStream('file', 'Olten', 'bytes=0-3', '"old-version"');
+    expect(next.statusCode).toBeUndefined();
+    expect(files.get.mock.calls.at(-1)?.[1]).toEqual({ responseType: 'stream', headers: { 'Accept-Encoding': 'identity' } });
+    next.stream.destroy();
   });
 });
