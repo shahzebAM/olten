@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import DocumentPreview from '../components/DocumentPreview';
 import { getApiAuthHeaders, expireApiSession } from '../lib/apiSession';
 import { safeDocumentLink } from '../lib/documentLinks';
+import { clearDocumentPreviews, invalidateDocumentPreviews } from '../lib/previewSource';
 
 // --- INTERFACES ---
 interface DriveFile {
@@ -10,6 +11,8 @@ interface DriveFile {
   mimeType: string;
   webViewLink?: string;
   createdTime?: string;
+  modifiedTime?: string;
+  md5Checksum?: string;
   size?: string;
   parents?: string[];
   // --- NEW EXPIRY FIELDS ---
@@ -133,6 +136,7 @@ const dateInputValue = (date?: string) => date?.slice(0, 10) || '';
 const displayDate = (date: string) => new Date(`${dateInputValue(date)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const isValidReminder = (value: string, unit: ReminderUnit) => value.trim() !== '' && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= (unit === 'months' ? 1200 : 36500);
 const canScheduleReminder = (file: { expiryDate?: string; expiryStatus?: string }) => Boolean(file.expiryDate) && file.expiryStatus !== 'NEEDS_REVIEW';
+const previewVersion = (file: DriveFile) => [file.modifiedTime, file.md5Checksum].filter(Boolean).join('|') || undefined;
 
 function ReminderLeadTimeInput({ value, unit, onChange, disabled = false }: {
   value: string;
@@ -188,7 +192,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const notificationRetryRef = useRef({ failures: 0, retryAt: 0 });
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); directoryAbortRef.current?.abort(); notificationAbortRef.current?.abort(); };
+    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); directoryAbortRef.current?.abort(); notificationAbortRef.current?.abort(); clearDocumentPreviews(); };
   }, []);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -225,7 +229,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [sourcePreview, setSourcePreview] = useState<({ name: string; url: string } & DocumentSource) | null>(null);
+  const [sourcePreview, setSourcePreview] = useState<({ name: string; url: string; version?: string } & DocumentSource) | null>(null);
   const [isDeletingSource, setIsDeletingSource] = useState(false);
   
   // --- EXPIRY REMINDER STATES ---
@@ -248,7 +252,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   // --- NOTIFICATION STATES ---
   const [notificationState, setNotificationState] = useState<{ company: string; items: DocumentReminder[]; error: string }>({ company: selectedCompany, items: [], error: '' });
-  const notifications = notificationState.company === selectedCompany ? notificationState.items : [];
+  const notifications = notificationState.company === selectedCompany ? notificationState.items.filter(reminder =>
+    reminder.isTriggered && ['PENDING', 'PROCESSING'].includes(reminder.status)
+    && !files.some(file => file.reminderDisabled && (file.documentId === reminder.documentId && reminder.documentId !== undefined || file.id === reminder.driveFileId))) : [];
   const notificationError = notificationState.company === selectedCompany ? notificationState.error : '';
   const [openNotificationCompany, setOpenNotificationCompany] = useState<string | null>(null);
   const isNotifOpen = openNotificationCompany === selectedCompany;
@@ -346,6 +352,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     mutationRevisionRef.current += 1;
     directoryAbortRef.current?.abort();
     notificationAbortRef.current?.abort();
+    clearDocumentPreviews();
     directoryAbortRef.current = null;
     notificationAbortRef.current = null;
     directoryRetryRef.current = { failures: 0, retryAt: 0 };
@@ -408,7 +415,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         setExpandedFolders(prev => new Set([...prev, ...(matchingFile.parents || [])]));
       }
       setIsNotifOpen(false);
-      setSourcePreview({ name: matchingFile?.name || name, url: link.href, documentId, driveFileId });
+      setSourcePreview({ name: matchingFile?.name || name, url: link.href, documentId, driveFileId, version: matchingFile ? previewVersion(matchingFile) : undefined });
     } catch {
       showToast('The source document link is unavailable. Refresh the directory and try again.', 'error');
     }
@@ -813,6 +820,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const removeDocumentsFromView = (driveIds: Set<string>, documentIds: Set<number>) => {
     if (driveIds.size === 0 && documentIds.size === 0) return;
+    invalidateDocumentPreviews(selectedCompany, documentIds, driveIds);
     mutationRevisionRef.current += 1;
     invalidateAiSearch();
     setReviewError('');
@@ -1102,8 +1110,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
             
             {/* Expiry dot indicator on file tree */}
-            {file.expiryStatus === 'EXPIRING_SOON' && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 ml-2 animate-pulse"></span>}
-            {(file.expiryStatus === 'EXPIRED' || file.expiryStatus === 'EXPIRES_TODAY') && <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 ml-2"></span>}
+            {!file.reminderDisabled && file.expiryStatus === 'EXPIRING_SOON' && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 ml-2 animate-pulse"></span>}
+            {!file.reminderDisabled && (file.expiryStatus === 'EXPIRED' || file.expiryStatus === 'EXPIRES_TODAY') && <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 ml-2"></span>}
             {file.expiryStatus === 'NEEDS_REVIEW' && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0 ml-2"></span>}
           </div>
         ))}
@@ -1394,12 +1402,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                       {selectedFile.documentType || 'Document'} {selectedFile.documentNumber ? `#${selectedFile.documentNumber}` : ''}
                     </h2>
                     <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                      {renderStatusBadge(selectedFile.expiryStatus)}
+                      {renderStatusBadge(selectedFile.reminderDisabled ? undefined : selectedFile.expiryStatus)}
                       
                       {selectedFile.expiryDate && (
                         <span className="text-xs font-medium text-slate-600">
                           Expires: <span className="font-bold">{displayDate(selectedFile.expiryDate)}</span>
-                          {selectedDaysRemaining !== null && (
+                          {!selectedFile.reminderDisabled && selectedDaysRemaining !== null && (
                             <span className={`ml-2 ${selectedDaysRemaining < 30 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
                               ({expiryCountdownText(selectedDaysRemaining)})
                             </span>
@@ -1459,10 +1467,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 </div>
               </div>
 
-              <div className="flex-1 bg-white flex flex-col w-full h-full">
-                <div className="flex-1 w-full flex flex-col h-full">
+              <div className="flex-1 min-h-0 bg-white flex flex-col w-full">
+                <div className="flex-1 min-h-0 w-full flex flex-col">
                   <div className="flex-1 bg-white overflow-hidden flex flex-col min-h-0">
-                    <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={selectedFile.documentId} driveFileId={selectedFile.id} sourceName={selectedFile.name} externalUrl={selectedFile.webViewLink} />
+                    <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={selectedFile.documentId} driveFileId={selectedFile.id} sourceName={selectedFile.name} sourceVersion={previewVersion(selectedFile)} externalUrl={selectedFile.webViewLink} />
                   </div>
                 </div>
               </div>
@@ -1596,7 +1604,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                 <button type="button" disabled={isDeletingSource} aria-label="Close source preview" onClick={() => setSourcePreview(null)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-50">×</button>
               </div>
             </div>
-            <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={sourcePreview.documentId} driveFileId={sourcePreview.driveFileId} sourceName={sourcePreview.name} externalUrl={sourcePreview.url} />
+            <DocumentPreview apiBaseUrl={API_BASE_URL} company={selectedCompany} username={loginUsername} documentId={sourcePreview.documentId} driveFileId={sourcePreview.driveFileId} sourceName={sourcePreview.name} sourceVersion={sourcePreview.version} externalUrl={sourcePreview.url} />
           </div>
         </div>
       )}
@@ -1620,36 +1628,24 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               )}
               <p className="px-2 py-2 text-sm text-slate-600 leading-5">Due reminders appear here while this workspace is open.</p>
               {notifications.length === 0 ? (
-                <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders scheduled.</div>
+                <div className="p-4 text-center text-xs font-bold text-slate-400">No reminders due.</div>
               ) : (
                 notifications.map(n => {
                   const daysRemaining = calculateDaysRemaining(n.expiryDate, n.daysRemaining ?? n.expires?.daysRemaining);
                   return (
-                  <div key={n.id} className={`p-3 mb-2 rounded-xl border shadow-sm transition-all ${n.isTriggered && n.status !== 'FULFILLED' ? 'bg-white border-rose-200' : 'bg-slate-100 border-slate-200 opacity-80'}`}>
+                  <div key={n.id} className="p-3 mb-2 rounded-xl border shadow-sm bg-white border-rose-200">
                     <div className="flex justify-between items-start mb-1.5">
                        <div className="text-sm font-extrabold text-slate-900 pr-2 leading-5 flex-1">{n.title || n.fileName || 'Expiry reminder'}</div>
                        <button type="button" title="View source document" aria-label={`View source document for ${n.fileName}`} onClick={() => handlePreviewSource(n, n.fileName)} className="shrink-0 p-1 text-indigo-600 hover:bg-indigo-50 rounded mr-1"><SourceEyeIcon /></button>
-                       {n.status === 'FULFILLED' ? (
-                          <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Handled</span>
-                       ) : !n.isTriggered ? (
-                          <span className="text-[9px] font-bold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0">Waiting</span>
-                       ) : (
-                          <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
-                       )}
+                       <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
                     </div>
                     {n.message && <div className="text-sm font-semibold text-slate-900 leading-6 mb-2 break-words">{n.message}</div>}
                     <div className="text-sm font-semibold text-slate-800 leading-6 mb-2">Expires: {displayDate(n.expiryDate)} · {n.reminderValue ?? n.reminderDays} {n.reminderUnit || 'days'} before</div>
                     {daysRemaining !== null && <div className={`text-sm font-bold mb-2 ${daysRemaining <= 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{expiryCountdownText(daysRemaining)}</div>}
                     
-                    {!n.isTriggered ? (
-                        <div className="text-[10px] font-bold text-indigo-600 mt-1 uppercase bg-indigo-50 inline-block px-1.5 py-0.5 rounded">
-                          Alert scheduled: {displayDate(n.triggerDate)}
-                        </div>
-                    ) : n.status !== 'FULFILLED' ? (
-                        <div className="flex gap-2 mt-3">
-                          <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Mark Handled</button>
-                        </div>
-                    ) : null}
+                    <div className="flex gap-2 mt-3">
+                      <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Mark Handled</button>
+                    </div>
                   </div>
                 ); })
               )}
