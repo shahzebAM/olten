@@ -112,11 +112,12 @@ export default function DocumentPreview({ apiBaseUrl, company, username = '', do
       showFailure(new PreviewError('This document source is unavailable.'));
       return;
     }
-    const lease = acquireDocumentPreview({ apiBaseUrl, company, username, id: sourceId, source: sourceType, version: sourceVersion }, showFailure);
+    const lease = acquireDocumentPreview({ apiBaseUrl, company, username, id: sourceId, source: sourceType, version: sourceVersion,
+      mimeType: /\.pdf$/i.test(sourceName) ? 'application/pdf' : 'unknown' }, showFailure);
     leaseRef.current = lease;
     void lease.promise.then(resource => { if (active) setPreview({ key: requestKey, status: 'ready', resource }); }).catch(showFailure);
     return () => { active = false; lease.release(); if (leaseRef.current === lease) leaseRef.current = null; };
-  }, [apiBaseUrl, company, username, sourceId, sourceType, sourceVersion, requestKey]);
+  }, [apiBaseUrl, company, username, sourceId, sourceType, sourceVersion, sourceName, requestKey]);
   const openOriginal = async () => {
     const lease = leaseRef.current;
     if (!lease || opening) return;
@@ -134,7 +135,13 @@ export default function DocumentPreview({ apiBaseUrl, company, username = '', do
     } finally { if (leaseRef.current === lease) setOpening(false); }
   };
   return <div className={`flex min-h-0 w-full flex-1 flex-col bg-slate-100 ${className}`}>
-    {visible.status === 'loading' && <div role="status" className="flex flex-1 items-center justify-center p-8 text-sm font-semibold text-slate-600">Loading document…</div>}
+    {visible.status === 'loading' && <div role="status" aria-label="Opening document preview" className="flex min-h-0 flex-1 flex-col items-center overflow-hidden p-4">
+      <p className="mb-3 shrink-0 text-sm font-semibold text-slate-700">Opening {/\.pdf$/i.test(sourceName) ? 'PDF' : 'document'} preview…</p>
+      <div aria-hidden="true" className="min-h-64 w-full max-w-2xl flex-1 border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="mb-8 h-5 w-2/3 rounded bg-slate-200 motion-safe:animate-pulse" />
+        {[75, 95, 85, 90, 70, 95].map((width, index) => <div key={index} style={{ width: `${width}%` }} className="mb-4 h-3 rounded bg-slate-100 motion-safe:animate-pulse" />)}
+      </div>
+    </div>}
     {(visible.status === 'error' || visible.status === 'unsupported') && <div role="status" className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
       <p className="max-w-md text-sm font-semibold leading-6 text-slate-700">{visible.message}</p>
       <div className="flex flex-wrap justify-center gap-3">

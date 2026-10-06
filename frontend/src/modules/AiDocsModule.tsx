@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import DocumentPreview from '../components/DocumentPreview';
 import { getApiAuthHeaders, expireApiSession } from '../lib/apiSession';
 import { safeDocumentLink } from '../lib/documentLinks';
-import { clearDocumentPreviews, invalidateDocumentPreviews } from '../lib/previewSource';
+import { clearDocumentPreviews, invalidateDocumentPreviews, prefetchDocumentPreview } from '../lib/previewSource';
 
 // --- INTERFACES ---
 interface DriveFile {
@@ -86,6 +86,22 @@ interface UploadedDocument extends DocumentSource {
   expiryDateText?: string;
   expiryEvidence?: string;
   evidence?: string;
+}
+
+interface ReplacedDocument extends UploadedDocument {
+  mimeType?: string;
+  size?: string;
+  modifiedTime?: string;
+  md5Checksum?: string;
+  documentType?: string;
+  documentNumber?: string;
+  expiryDetectionMethod?: string;
+  expiryConfidence?: number;
+  daysRemaining?: number | null;
+  reminderDisabled?: boolean;
+  reminderSetupPending?: boolean;
+  reminderValue?: number | null;
+  cleanupWarning?: string;
 }
 
 interface UploadProgress {
@@ -188,11 +204,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const searchAbortRef = useRef<AbortController | null>(null);
   const directoryAbortRef = useRef<AbortController | null>(null);
   const notificationAbortRef = useRef<AbortController | null>(null);
+  const replacementRequestRef = useRef<XMLHttpRequest | null>(null);
+  const replacementPickerTargetRef = useRef<{ file: DriveFile; generation: number } | null>(null);
+  const previewIntentRef = useRef<(() => void) | null>(null);
   const directoryRetryRef = useRef({ failures: 0, retryAt: 0 });
   const notificationRetryRef = useRef({ failures: 0, retryAt: 0 });
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); directoryAbortRef.current?.abort(); notificationAbortRef.current?.abort(); clearDocumentPreviews(); };
+    return () => { mountedRef.current = false; searchAbortRef.current?.abort(); directoryAbortRef.current?.abort(); notificationAbortRef.current?.abort(); replacementRequestRef.current?.abort(); previewIntentRef.current?.(); clearDocumentPreviews(); };
   }, []);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -204,6 +223,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [uploadBatch, setUploadBatch] = useState<{ completed: number; total: number } | null>(null);
+  const [replacementDraft, setReplacementDraft] = useState<{ target: DriveFile; file: File; generation: number } | null>(null);
+  const [replacementProgress, setReplacementProgress] = useState<UploadProgress | null>(null);
+  const [replacementError, setReplacementError] = useState('');
+  const [isReplacing, setIsReplacing] = useState(false);
 
   useEffect(() => {
     if (!isUploading) return;
@@ -213,6 +236,16 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     })), 1000);
     return () => clearInterval(timer);
   }, [isUploading]);
+
+  useEffect(() => {
+    if (!isReplacing) return;
+    const timer = setInterval(() => setReplacementProgress(progress => {
+      if (!progress) return null;
+      const elapsedMs = Date.now() - progress.phaseStartedAt;
+      return { ...progress, elapsedMs, remainingMs: progress.phase === 'analyzing' ? Math.max(0, progress.analysisEstimateMs - elapsedMs) : progress.remainingMs };
+    }), 1000);
+    return () => clearInterval(timer);
+  }, [isReplacing]);
 
   // --- RESPONSIVE STATES ---
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -319,16 +352,32 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   }, [fetchNotifications, selectedCompany]);
 
   const handleUpdateNotif = async (id: number, status: string) => {
+    if (isReplacing || isProcessing || isUploading || isSavingReminder || isReanalyzing || isDeletingSource) return;
+    const target = notifications.find(item => item.id === id);
+    const workspaceGeneration = workspaceRef.current.generation;
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
+    setIsProcessing(true);
     try {
       const res = await fetchDocApi(`${API_BASE_URL}/api/docs/notifications/${id}/status`, {
         method: 'PATCH',
         headers: { ...getApiAuthHeaders(), 'Content-Type': 'application/json', 'x-company': selectedCompany, 'x-username': loginUsername },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, expectedExpiryDate: target?.expiryDate, expectedDriveFileId: target?.driveFileId })
       });
       if (!res.ok) throw new Error('Could not update reminder');
-      await fetchNotifications(true);
+      if (!isCurrent()) return;
+      mutationRevisionRef.current += 1;
+      setNotificationState(previous => ({ ...previous, items: previous.items.filter(item => item.id !== id) }));
+      if (target) {
+        const matches = (file: DriveFile) => target.documentId !== undefined && file.documentId === target.documentId || !!target.driveFileId && file.id === target.driveFileId;
+        const patch = (file: DriveFile): DriveFile => ({ ...file, reminder: { ...(file.reminder || target), status, isTriggered: false } });
+        setFiles(previous => previous.map(file => matches(file) ? patch(file) : file));
+        setSelectedFile(previous => previous && matches(previous) ? patch(previous) : previous);
+      }
+      void fetchNotifications(true);
     } catch {
-      showToast("Failed to update status", "error");
+      if (isCurrent()) showToast("Failed to update status", "error");
+    } finally {
+      if (isCurrent()) setIsProcessing(false);
     }
   };
 
@@ -352,6 +401,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     mutationRevisionRef.current += 1;
     directoryAbortRef.current?.abort();
     notificationAbortRef.current?.abort();
+    replacementRequestRef.current?.abort();
+    replacementRequestRef.current = null;
+    replacementPickerTargetRef.current = null;
+    previewIntentRef.current?.();
+    previewIntentRef.current = null;
     clearDocumentPreviews();
     directoryAbortRef.current = null;
     notificationAbortRef.current = null;
@@ -376,6 +430,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     setIsProcessing(false);
     setIsSavingReminder(false);
     setIsReanalyzing(false);
+    setReplacementDraft(null);
+    setReplacementProgress(null);
+    setReplacementError('');
+    setIsReplacing(false);
     setUploadProgress([]);
     setUploadBatch(null);
     setNotificationState({ company: selectedCompany, items: [], error: '' });
@@ -391,6 +449,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const [newRenameValue, setNewRenameValue] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replacementInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ message: msg, type });
@@ -419,6 +478,22 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     } catch {
       showToast('The source document link is unavailable. Refresh the directory and try again.', 'error');
     }
+  };
+
+  const beginPreviewIntent = (file: DriveFile, immediate = false) => {
+    previewIntentRef.current = prefetchDocumentPreview({
+      apiBaseUrl: API_BASE_URL, company: selectedCompany, username: loginUsername,
+      id: file.documentId !== undefined ? String(file.documentId) : file.id,
+      source: file.documentId !== undefined ? 'document' : 'drive',
+      version: previewVersion(file), mimeType: file.mimeType,
+    }, immediate);
+  };
+  const endPreviewIntent = () => { previewIntentRef.current?.(); previewIntentRef.current = null; };
+  const sourceFile = (source: DocumentSource) => files.find(file => source.documentId !== undefined && file.documentId === source.documentId)
+    || files.find(file => !!source.driveFileId && file.id === source.driveFileId);
+  const beginSourcePreviewIntent = (source: DocumentSource, immediate = false) => {
+    const file = sourceFile(source);
+    if (file) beginPreviewIntent(file, immediate);
   };
 
   const startResizing = useCallback((e: React.MouseEvent) => {
@@ -709,6 +784,157 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     });
   };
 
+  const requestDocumentReplacement = (target: DriveFile) => {
+    if (target.documentId === undefined || !canScheduleReminder(target) || isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource || replacementDraft || expiryReviewModal.isOpen) return;
+    replacementPickerTargetRef.current = { file: target, generation: workspaceRef.current.generation };
+    replacementInputRef.current?.click();
+  };
+
+  const handleReplacementFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    const target = replacementPickerTargetRef.current;
+    replacementPickerTargetRef.current = null;
+    if (!file || !target || !mountedRef.current || target.generation !== workspaceRef.current.generation || isProcessing || isUploading) return;
+    if (file.size === 0 || file.size > 50 * 1024 * 1024) {
+      showToast('Choose a non-empty replacement file up to 50 MB.', 'error');
+      return;
+    }
+    setReplacementError('');
+    setReplacementProgress(null);
+    setReplacementDraft({ target: target.file, file, generation: target.generation });
+  };
+
+  const handleReplaceDocument = async () => {
+    const draft = replacementDraft;
+    if (!draft || isReplacing || isProcessing || isUploading || isSavingReminder || isReanalyzing || isDeletingSource) return;
+    const { target, file, generation } = draft;
+    if (generation !== workspaceRef.current.generation || target.documentId === undefined || !files.some(item => item.id === target.id && item.documentId === target.documentId)) {
+      setReplacementError('This document changed. Close this dialog, refresh the directory, and choose it again.');
+      return;
+    }
+    const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === generation;
+    const category = processingCategory(file);
+    const estimate = processingEstimate(category);
+    const uploadStart = Date.now();
+    let analysisStartedAt: number | null = null;
+    let request: XMLHttpRequest | null = null;
+    setIsReplacing(true);
+    setIsProcessing(true);
+    setReplacementError('');
+    setReplacementProgress({ current: 1, total: 1, filename: file.name, progressPct: 0, phase: 'uploading', phaseStartedAt: uploadStart, elapsedMs: 0, remainingMs: null, analysisEstimateMs: estimate.averageMs, estimateBasedOnHistory: estimate.samples > 0 });
+    try {
+      const document = await new Promise<ReplacedDocument>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        request = xhr;
+        replacementRequestRef.current = xhr;
+        xhr.open('POST', `${API_BASE_URL}/api/docs/${encodeURIComponent(String(target.documentId))}/replace`);
+        xhr.timeout = 300_000;
+        xhr.setRequestHeader('x-company', selectedCompany);
+        xhr.setRequestHeader('x-username', loginUsername);
+        for (const [name, value] of Object.entries(getApiAuthHeaders())) xhr.setRequestHeader(name, value);
+        xhr.upload.onprogress = event => {
+          if (!event.lengthComputable || !isCurrent()) return;
+          const elapsedMs = Date.now() - uploadStart;
+          setReplacementProgress(progress => progress ? { ...progress, progressPct: Math.min(100, event.loaded / event.total * 100), elapsedMs, remainingMs: event.loaded > 0 ? (event.total - event.loaded) * elapsedMs / event.loaded : null } : progress);
+        };
+        xhr.upload.onload = () => {
+          if (!isCurrent()) return;
+          analysisStartedAt = Date.now();
+          setReplacementProgress(progress => progress ? { ...progress, phase: 'analyzing', progressPct: 100, phaseStartedAt: analysisStartedAt!, elapsedMs: 0, remainingMs: estimate.averageMs } : progress);
+        };
+        xhr.onload = () => {
+          if (xhr.status === 401 && isCurrent()) expireApiSession();
+          try {
+            const response = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) resolve(response);
+            else reject(new Error(typeof response.message === 'string' ? response.message : 'The document could not be replaced.'));
+          } catch {
+            reject(new Error('The replacement returned an invalid response. Refresh the directory before trying again.'));
+          }
+        };
+        xhr.onerror = () => reject(new Error('The replacement connection failed. Refresh the directory before trying again.'));
+        xhr.ontimeout = () => reject(new Error('The replacement took too long. Refresh the directory before trying again.'));
+        xhr.onabort = () => reject(new Error('The replacement request was cancelled.'));
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('expectedDriveFileId', target.id);
+        xhr.send(formData);
+      });
+      if (!isCurrent()) return;
+      if (document.id !== target.documentId || !document.driveFileId || !/^[A-Za-z0-9_-]+$/.test(document.driveFileId)) {
+        throw new Error('The replacement returned an incomplete response. Refresh the directory before trying again.');
+      }
+      if (analysisStartedAt !== null) recordProcessingDuration(category, Date.now() - analysisStartedAt);
+      const warnings = [document.detectionWarning, document.reminderWarning, document.indexingWarning, document.cleanupWarning].filter(Boolean).join(' ');
+      const updated: DriveFile = {
+        ...target,
+        id: document.driveFileId,
+        name: document.originalName || document.filename || file.name,
+        mimeType: document.mimeType || file.type,
+        size: document.size || String(file.size),
+        webViewLink: document.sourceUrl || document.googleDriveLink || `https://drive.google.com/file/d/${encodeURIComponent(document.driveFileId)}/view`,
+        modifiedTime: document.modifiedTime || new Date().toISOString(),
+        md5Checksum: document.md5Checksum,
+        documentId: document.id,
+        documentType: document.documentType,
+        documentNumber: document.documentNumber,
+        expiryDate: document.expiryDate,
+        expiryStatus: document.expiryStatus,
+        expiryDetectionMethod: document.expiryDetectionMethod,
+        expiryConfidence: document.expiryConfidence,
+        expiryDateText: document.expiryDateText,
+        expiryEvidence: document.expiryEvidence || document.evidence,
+        daysRemaining: document.daysRemaining,
+        expires: undefined,
+        reminder: document.reminder || null,
+        reminderDisabled: document.reminderDisabled ?? target.reminderDisabled,
+        reminderSetupPending: document.reminderSetupPending ?? target.reminderSetupPending,
+        reminderValue: document.reminderValue ?? document.reminder?.reminderValue ?? document.reminder?.reminderDays ?? null,
+        reminderWarning: warnings || undefined,
+      };
+      mutationRevisionRef.current += 1;
+      directoryAbortRef.current?.abort();
+      notificationAbortRef.current?.abort();
+      invalidateDocumentPreviews(selectedCompany, new Set([document.id]), new Set([target.id]));
+      invalidateAiSearch();
+      setFiles(previous => previous.map(item => item.documentId === document.id || item.id === target.id ? updated : item));
+      setSelectedFile(previous => previous && (previous.documentId === document.id || previous.id === target.id) ? updated : previous);
+      setSelectedItems(previous => new Set([...previous].map(id => id === target.id ? updated.id : id)));
+      setSourcePreview(previous => previous && (previous.documentId === document.id || previous.driveFileId === target.id) ? null : previous);
+      setNotificationState(previous => ({ ...previous, items: previous.items.filter(item => item.documentId !== document.id && item.driveFileId !== target.id) }));
+      setIsEditingReminder(false);
+      setIsNotifOpen(false);
+      setReplacementDraft(null);
+      setReviewError('');
+      setReviewFileCount(1);
+      setExpiryReviewModal({ isOpen: true, isAnalyzing: false, files: [{
+        id: document.id, documentId: document.id, driveFileId: document.driveFileId,
+        sourceUrl: updated.webViewLink, googleDriveLink: document.googleDriveLink,
+        name: updated.name, expiryDate: dateInputValue(document.expiryDate), expiryStatus: document.expiryStatus,
+        expiryDateText: document.expiryDateText, expiryEvidence: document.expiryEvidence || document.evidence,
+        reminderValue: String(document.reminder?.reminderValue ?? document.reminder?.reminderDays ?? target.reminder?.reminderValue ?? target.reminder?.reminderDays ?? 30),
+        reminderUnit: document.reminder?.reminderUnit || target.reminder?.reminderUnit || 'days',
+        hasReminder: Boolean(document.reminder) && !updated.reminderDisabled,
+        warning: [warnings, updated.reminderDisabled ? 'Reminders are disabled. Save Reminder to enable one, or close without a reminder to keep all alerts disabled.' : !document.reminder ? 'No reminder is scheduled. Choose Save Reminder or Close Without Reminder for this replacement.' : undefined].filter(Boolean).join(' '),
+      }] });
+      showToast('Document replaced. Review its detected expiry and reminder choice.', 'success');
+      void Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
+    } catch (error) {
+      if (isCurrent()) {
+        setReplacementError(error instanceof Error ? error.message : 'The document could not be replaced.');
+        void Promise.all([fetchDirectory(true, true), fetchNotifications(true)]);
+      }
+    } finally {
+      if (replacementRequestRef.current === request) replacementRequestRef.current = null;
+      if (isCurrent()) {
+        setIsReplacing(false);
+        setIsProcessing(false);
+        setReplacementProgress(null);
+      }
+    }
+  };
+
   const handleSkipReminder = async () => {
     const file = currentReviewFile;
     if (!file || isProcessing || isReanalyzing || isDeletingSource) return;
@@ -777,7 +1003,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim() || isCreatingFolder) return;
+    if (!newFolderName.trim() || isCreatingFolder || isReplacing) return;
     setIsCreatingFolder(true);
     try {
       const targetId = activeFolderId && activeFolderId !== rootFolderId ? activeFolderId : undefined;
@@ -801,7 +1027,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!renameTarget || !newRenameValue.trim()) return;
+    if (!renameTarget || !newRenameValue.trim() || isReplacing) return;
     try {
       const res = await fetchDocApi(`${API_BASE_URL}/api/docs/folder/${renameTarget.id}/rename`, {
         method: 'PATCH',
@@ -913,7 +1139,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
   const selectedDaysRemaining = selectedFile ? calculateDaysRemaining(selectedFile.expiryDate, selectedFile.daysRemaining ?? selectedFile.expires?.daysRemaining) : null;
 
   const handleSaveSelectedReminder = async () => {
-    if (!selectedFile || isSavingReminder) return;
+    if (!selectedFile || isSavingReminder || isProcessing || isUploading || isReanalyzing || isDeletingSource) return;
     if (!canScheduleReminder(selectedFile) || !isValidReminder(manualReminderValue, manualReminderUnit)) {
       showToast('A trusted detected expiry date and a valid reminder amount are required.', 'error');
       return;
@@ -943,7 +1169,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
 
   const handleReanalyze = async (reviewFile?: ExpiryReviewFile) => {
     const id = reviewFile?.id ?? selectedFile?.documentId ?? selectedFile?.id;
-    if (id === undefined || isReanalyzing) return;
+    if (id === undefined || isReanalyzing || isProcessing || isUploading || isSavingReminder || isDeletingSource) return;
     const workspaceGeneration = workspaceRef.current.generation;
     const isCurrent = () => mountedRef.current && workspaceRef.current.key === workspaceKey && workspaceRef.current.generation === workspaceGeneration;
     setIsReanalyzing(true);
@@ -968,10 +1194,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
     }
   };
 
-  const renderStatusBadge = (status?: string) => {
+  const renderStatusBadge = (status?: string, pulse = true) => {
     switch (status) {
       case 'ACTIVE': return <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-[10px] font-bold">ACTIVE</span>;
-      case 'EXPIRING_SOON': return <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded text-[10px] font-bold animate-pulse">EXPIRING SOON</span>;
+      case 'EXPIRING_SOON': return <span className={`bg-amber-100 text-amber-800 px-2 py-1 rounded text-[10px] font-bold ${pulse ? 'animate-pulse' : ''}`}>EXPIRING SOON</span>;
       case 'EXPIRES_TODAY': return <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded text-[10px] font-bold">EXPIRES TODAY</span>;
       case 'EXPIRED': return <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded text-[10px] font-bold">EXPIRED</span>;
       case 'NEEDS_REVIEW': return <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded text-[10px] font-bold">NEEDS REVIEW</span>;
@@ -1054,6 +1280,9 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         if (!link || !foundFile) return <span key={i}>{linkText}</span>;
         return (
           <a key={i} href={link.href} target="_blank" rel="noopener noreferrer"
+            onPointerEnter={() => beginPreviewIntent(foundFile)} onPointerLeave={endPreviewIntent}
+            onFocus={() => beginPreviewIntent(foundFile, true)} onBlur={endPreviewIntent}
+            onPointerDown={() => beginPreviewIntent(foundFile, true)}
             onClick={(e) => {
               e.preventDefault();
               handlePreviewSource({ documentId: foundFile.documentId, driveFileId: foundFile.id }, foundFile.name);
@@ -1098,6 +1327,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
         {childFiles.map(file => (
           <div 
             key={file.id}
+            role="button" tabIndex={0} aria-label={`Open ${file.name}`}
+            onPointerEnter={() => beginPreviewIntent(file)} onPointerLeave={endPreviewIntent}
+            onFocus={() => beginPreviewIntent(file, true)} onBlur={endPreviewIntent}
+            onPointerDown={() => beginPreviewIntent(file, true)}
+            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedFile(file); setIsEditingReminder(false); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); } }}
             onClick={() => { setSelectedFile(file); setIsEditingReminder(false); setActiveFolderId(parentId); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
             className={`group flex items-center w-full px-2 py-1.5 cursor-pointer text-sm transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50/50 border-indigo-500' : 'border-transparent hover:bg-slate-100'}`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -1110,8 +1344,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
             <span className={`truncate flex-1 ${selectedFile?.id === file.id ? 'font-bold text-indigo-900' : 'font-medium text-slate-600'}`}>{file.name}</span>
             
             {/* Expiry dot indicator on file tree */}
-            {!file.reminderDisabled && file.expiryStatus === 'EXPIRING_SOON' && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 ml-2 animate-pulse"></span>}
-            {!file.reminderDisabled && (file.expiryStatus === 'EXPIRED' || file.expiryStatus === 'EXPIRES_TODAY') && <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 ml-2"></span>}
+            {!file.reminderDisabled && file.reminder?.status !== 'FULFILLED' && file.expiryStatus === 'EXPIRING_SOON' && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 ml-2 animate-pulse"></span>}
+            {!file.reminderDisabled && file.reminder?.status !== 'FULFILLED' && (file.expiryStatus === 'EXPIRED' || file.expiryStatus === 'EXPIRES_TODAY') && <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 ml-2"></span>}
             {file.expiryStatus === 'NEEDS_REVIEW' && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0 ml-2"></span>}
           </div>
         ))}
@@ -1287,6 +1521,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                   activeFiles.map(file => (
                     <div 
                       key={file.id}
+                      role="button" tabIndex={0} aria-label={`Open ${file.name}`}
+                      onPointerEnter={() => beginPreviewIntent(file)} onPointerLeave={endPreviewIntent}
+                      onFocus={() => beginPreviewIntent(file, true)} onBlur={endPreviewIntent}
+                      onPointerDown={() => beginPreviewIntent(file, true)}
+                      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedFile(file); setIsEditingReminder(false); if (window.innerWidth < 1024) setIsMobileNavOpen(false); } }}
                       onClick={() => { setSelectedFile(file); if (window.innerWidth < 1024) setIsMobileNavOpen(false); }}
                       className={`flex items-center w-full px-2 py-1.5 cursor-pointer text-sm rounded-lg transition-colors border-l-2 ${selectedFile?.id === file.id ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'border-transparent hover:bg-slate-100'}`}
                     >
@@ -1402,7 +1641,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                       {selectedFile.documentType || 'Document'} {selectedFile.documentNumber ? `#${selectedFile.documentNumber}` : ''}
                     </h2>
                     <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                      {renderStatusBadge(selectedFile.reminderDisabled ? undefined : selectedFile.expiryStatus)}
+                      {renderStatusBadge(selectedFile.reminderDisabled ? undefined : selectedFile.expiryStatus, selectedFile.reminder?.status !== 'FULFILLED')}
                       
                       {selectedFile.expiryDate && (
                         <span className="text-xs font-medium text-slate-600">
@@ -1450,10 +1689,10 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                           setManualReminderValue(selectedFile.reminder ? String(selectedFile.reminder.reminderValue ?? selectedFile.reminder.reminderDays) : '');
                           setManualReminderUnit(selectedFile.reminder?.reminderUnit || 'days');
                           setIsEditingReminder(true);
-                        }} disabled={!canScheduleReminder(selectedFile) || isReanalyzing} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50">
+                        }} disabled={!canScheduleReminder(selectedFile) || isReanalyzing || isProcessing || isUploading || isDeletingSource} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50">
                           Edit Reminder
                         </button>
-                        <button onClick={() => handleReanalyze()} disabled={isReanalyzing || isSavingReminder} className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-50 transition-colors flex items-center gap-1.5 disabled:opacity-50">
+                        <button onClick={() => handleReanalyze()} disabled={isReanalyzing || isSavingReminder || isProcessing || isUploading || isDeletingSource} className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-50 transition-colors flex items-center gap-1.5 disabled:opacity-50">
                           {isReanalyzing ? (
                              <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                           ) : (
@@ -1461,6 +1700,11 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                           )}
                           Re-analyze
                         </button>
+                        {selectedFile.documentId !== undefined && canScheduleReminder(selectedFile) && (
+                          <button type="button" onClick={() => requestDocumentReplacement(selectedFile)} disabled={isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                            Replace Document
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -1489,6 +1733,36 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       </main>
 
       {/* --- MODALS --- */}
+
+      {replacementDraft && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[230] flex justify-center items-center p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="document-replacement-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90dvh] overflow-y-auto p-6">
+            <h3 id="document-replacement-title" className="text-lg font-black text-slate-900">Replace Document</h3>
+            <p className="text-sm text-slate-700 mt-3 leading-6 break-words">Replace <strong>{replacementDraft.target.name}</strong> with <strong>{replacementDraft.file.name}</strong>?</p>
+            <p className="text-sm text-slate-600 mt-3 leading-6">The new file stays in the same folder. Gemini reads its expiry date, which remains read-only. Your current document stays available until the new expiry is verified and saved.</p>
+            <p className="text-sm font-semibold text-indigo-700 mt-3 leading-6">
+              {replacementDraft.target.reminderDisabled ? 'Reminders will remain disabled for the replacement.' : replacementDraft.target.reminder
+                ? `Your reminder of ${replacementDraft.target.reminder.reminderValue ?? replacementDraft.target.reminder.reminderDays} ${replacementDraft.target.reminder.reminderUnit || 'days'} before expiry will use the new expiry date.`
+                : 'No reminder will be added automatically. You can choose one after replacement.'}
+            </p>
+            {replacementProgress && (
+              <div role="status" aria-live="polite" className="mt-5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-sm font-bold text-slate-800">{replacementProgress.phase === 'uploading' ? `Uploading replacement · ${Math.round(replacementProgress.progressPct)}%` : 'Verifying the new expiry and saving replacement…'}</p>
+                <div role="progressbar" aria-label="Replacement upload" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(replacementProgress.progressPct)} className="h-2 rounded-full bg-slate-200 overflow-hidden mt-2"><div className="h-full bg-indigo-600 transition-all" style={{ width: `${replacementProgress.progressPct}%` }} /></div>
+                <p className="text-xs font-medium text-slate-600 mt-2">
+                  {replacementProgress.remainingMs !== null && replacementProgress.remainingMs > 0 ? `About ${approximateDuration(replacementProgress.remainingMs)} remaining` : replacementProgress.phase === 'analyzing' ? 'Finishing analysis and saving…' : 'Estimating time remaining…'}
+                  {replacementProgress.phase === 'analyzing' && !replacementProgress.estimateBasedOnHistory ? ' · Rough estimate' : ''}
+                </p>
+              </div>
+            )}
+            {replacementError && <p role="alert" className="text-sm font-medium text-rose-700 mt-4 leading-6">{replacementError}</p>}
+            <div className="flex flex-wrap justify-end gap-3 mt-6">
+              <button type="button" disabled={isReplacing} onClick={() => { setReplacementDraft(null); setReplacementError(''); }} className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={isReplacing} onClick={() => void handleReplaceDocument()} className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{isReplacing ? 'Replacing…' : 'Replace Document'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {uploadError && !expiryReviewModal.isOpen && (
         <div role="alert" className="fixed top-20 right-4 z-[160] max-w-md bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 shadow-lg">
@@ -1558,7 +1832,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                        <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-start gap-3">
                             <div className="text-sm font-black uppercase text-slate-900 truncate">{file.name}</div>
-                            <button type="button" title="Compare with original document" aria-label={`View source document for ${file.name}`} onClick={() => handlePreviewSource(file, file.name)} className="shrink-0 p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg"><SourceEyeIcon /></button>
+                            <button type="button" title="Compare with original document" aria-label={`View source document for ${file.name}`} onPointerEnter={() => beginSourcePreviewIntent(file)} onPointerLeave={endPreviewIntent} onFocus={() => beginSourcePreviewIntent(file, true)} onBlur={endPreviewIntent} onPointerDown={() => beginSourcePreviewIntent(file, true)} onClick={() => handlePreviewSource(file, file.name)} className="shrink-0 p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg"><SourceEyeIcon /></button>
                           </div>
                           {file.hasReminder ? (
                              <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded inline-block mt-1 uppercase tracking-wider">
@@ -1610,6 +1884,7 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
       )}
 
       <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+      <input type="file" ref={replacementInputRef} onChange={handleReplacementFile} accept=".pdf,.docx,.txt,.csv,.json,.html,.htm,.xml,.jpg,.jpeg,.png,.webp,.heic,.heif" aria-label="Choose replacement document" className="hidden" />
 
       {/* HEADER NOTIFICATION PANEL */}
       <div className="fixed top-20 right-4 lg:right-8 z-[150] flex flex-col items-end">
@@ -1632,11 +1907,12 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
               ) : (
                 notifications.map(n => {
                   const daysRemaining = calculateDaysRemaining(n.expiryDate, n.daysRemaining ?? n.expires?.daysRemaining);
+                  const replacementTarget = sourceFile(n);
                   return (
                   <div key={n.id} className="p-3 mb-2 rounded-xl border shadow-sm bg-white border-rose-200">
                     <div className="flex justify-between items-start mb-1.5">
                        <div className="text-sm font-extrabold text-slate-900 pr-2 leading-5 flex-1">{n.title || n.fileName || 'Expiry reminder'}</div>
-                       <button type="button" title="View source document" aria-label={`View source document for ${n.fileName}`} onClick={() => handlePreviewSource(n, n.fileName)} className="shrink-0 p-1 text-indigo-600 hover:bg-indigo-50 rounded mr-1"><SourceEyeIcon /></button>
+                       <button type="button" title="View source document" aria-label={`View source document for ${n.fileName}`} onPointerEnter={() => beginSourcePreviewIntent(n)} onPointerLeave={endPreviewIntent} onFocus={() => beginSourcePreviewIntent(n, true)} onBlur={endPreviewIntent} onPointerDown={() => beginSourcePreviewIntent(n, true)} onClick={() => handlePreviewSource(n, n.fileName)} className="shrink-0 p-1 text-indigo-600 hover:bg-indigo-50 rounded mr-1"><SourceEyeIcon /></button>
                        <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded uppercase tracking-widest shrink-0 animate-pulse">Active</span>
                     </div>
                     {n.message && <div className="text-sm font-semibold text-slate-900 leading-6 mb-2 break-words">{n.message}</div>}
@@ -1644,7 +1920,8 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     {daysRemaining !== null && <div className={`text-sm font-bold mb-2 ${daysRemaining <= 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{expiryCountdownText(daysRemaining)}</div>}
                     
                     <div className="flex gap-2 mt-3">
-                      <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors">Mark Handled</button>
+                      <button onClick={() => handleUpdateNotif(n.id, 'FULFILLED')} disabled={isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource} className="flex-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50">Mark Handled</button>
+                      {replacementTarget?.documentId !== undefined && canScheduleReminder(replacementTarget) && <button type="button" disabled={isUploading || isProcessing || isSavingReminder || isReanalyzing || isDeletingSource} onClick={() => requestDocumentReplacement(replacementTarget)} className="flex-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50">Replace Document</button>}
                     </div>
                   </div>
                 ); })
