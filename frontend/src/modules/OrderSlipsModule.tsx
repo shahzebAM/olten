@@ -332,6 +332,19 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFo ? 'Gen...' : 'Gen Final Order'}
                     </button>
+                    {/* NEW PL GENERATION BUTTON */}
+<button 
+  onClick={() => {
+    // Just reuse the handleGenerateFoFromLedger logic, but change the prefix!
+    const plNumber = foNumberInput.replace('FO-', 'PL-');
+    setFoNumberInput(plNumber);
+    handleGenerateFoFromLedger();
+  }} 
+  disabled={isGeneratingFo || !foNumberInput} 
+  className="px-5 py-2.5 bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-600 shadow-sm transition-colors ml-2"
+>
+  Gen Packing List
+</button>
                   </div>
                 )}
 

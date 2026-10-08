@@ -33,6 +33,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   
   // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
+  const [docType, setDocType] = useState<'OS' | 'QT'>('OS');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
   const [loadedOsStatus, setLoadedOsStatus] = useState<string>('Generated');
@@ -63,7 +64,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  const fetchNextOsNumber = useCallback(async () => {
+const fetchNextOsNumber = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
       const data = await res.json();
@@ -71,21 +72,22 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
       
       setAllSlips(slips);
 
-      const osSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith('OS'));
-      osSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
+      // Filter based on the selected docType ('OS' or 'QT')
+      const targetSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith(docType));
+      targetSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
 
-      const lastOs = osSlips.length > 0 ? osSlips[0] : null;
-      if (lastOs) {
-        const match = lastOs.osNumber.match(/(\d+)$/); 
+      const lastSlip = targetSlips.length > 0 ? targetSlips[0] : null;
+      if (lastSlip) {
+        const match = lastSlip.osNumber.match(/(\d+)$/); 
         if (match) {
           const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastOs.osNumber.substring(0, match.index);
+          const prefix = lastSlip.osNumber.substring(0, match.index);
           const padding = match[0].length;
           setOsNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else setOsNumber('OS-000001');
-      } else setOsNumber('OS-000001');
-    } catch (e) { setOsNumber('OS-000001'); }
-  }, [selectedCompany, API_BASE_URL]);
+        } else setOsNumber(`${docType}-000001`);
+      } else setOsNumber(`${docType}-000001`);
+    } catch (e) { setOsNumber(`${docType}-000001`); }
+  }, [selectedCompany, API_BASE_URL, docType]); // Make sure docType is in the dependency array
 
   const fetchNextFoNumber = useCallback(async () => {
     try {
@@ -326,22 +328,30 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const handleSubmit = async () => {
+const handleSubmit = async () => {
     if (!isFormValid) return showToast("Complete all required fields and item quantities.", "error");
     setIsProcessing(true);
     try {
+      const endpoint = docType === 'QT' ? `${API_BASE_URL}/sales/quotations` : `${API_BASE_URL}/sales/order-slips`;
+      
       const payload = {
-        osNumber: osNumber.trim(), company: selectedCompany, customerId: selectedCustomer?.id, isVatApplied, vatRate, 
+        // Use qtNumber if QT, otherwise osNumber
+        [docType === 'QT' ? 'qtNumber' : 'osNumber']: osNumber.trim(), 
+        company: selectedCompany, customerId: selectedCustomer?.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername, referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to create Order Slip.");
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error(`Failed to create ${docType}.`);
       
-      const newlyCreatedOs = await res.json();
-      showToast("Order Slip generated successfully.", "success");
-      setFinalizedOs(newlyCreatedOs); setFinalOrderGenerated(false); setLoadedOsId(null); setLoadedOsStatus('Generated');
+      const newlyCreatedDoc = await res.json();
+      
+      // Normalize the response so the UI components can read it consistently
+      if (docType === 'QT') newlyCreatedDoc.osNumber = newlyCreatedDoc.qtNumber; 
+      
+      showToast(`${docType} generated successfully.`, "success");
+      setFinalizedOs(newlyCreatedDoc); setFinalOrderGenerated(false); setLoadedOsId(null); setLoadedOsStatus('Generated');
       fetchNextOsNumber(); fetchNextFoNumber();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
@@ -462,6 +472,21 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
         <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
           <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
+            {/* NEW: DOCUMENT TYPE TOGGLE */}
+          <div className="flex bg-slate-100 p-1 mx-4 sm:mx-6 mt-4 rounded-xl shadow-inner w-full sm:w-80">
+            <button 
+              onClick={() => setDocType('OS')} 
+              className={`flex-1 px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${docType === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Order Slip
+            </button>
+            <button 
+              onClick={() => setDocType('QT')} 
+              className={`flex-1 px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${docType === 'QT' ? 'bg-white text-amber-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Quotation
+            </button>
+          </div>
             <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
               <input 
@@ -670,13 +695,13 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                 </>
               )}
 
-              {loadedOsId ? (
+        {loadedOsId ? (
                 <button onClick={handleUpdateOrder} disabled={!isFormValid || isProcessing || loadedOsStatus === 'Cancelled' || loadedOsStatus === 'Returned'} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                  {isProcessing ? 'Updating...' : (osNumber.startsWith('FO') ? 'Update F.O.' : 'Update O.S.')}
+                  {isProcessing ? 'Updating...' : (osNumber.startsWith('FO') ? 'Update F.O.' : `Update ${docType}`)}
                 </button>
               ) : (
-                <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm">
-                  {isProcessing ? 'Saving...' : 'Finalize O.S.'}
+                <button onClick={handleSubmit} disabled={!isFormValid || isProcessing} className={`px-8 py-3 disabled:bg-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-lg transition-colors shadow-sm ${docType === 'QT' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                  {isProcessing ? 'Saving...' : `Finalize ${docType === 'QT' ? 'Quotation' : 'O.S.'}`}
                 </button>
               )}
             </div>
@@ -693,23 +718,101 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
             
             <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
-                <h3 className="text-xl font-black text-emerald-900 tracking-tight">
-                  {loadedOsId ? (finalizedOs.osNumber.startsWith('FO') ? 'F.O. Updated Successfully!' : 'O.S. Updated Successfully!') : 'O.S. Generated Successfully!'}
-                </h3>
+             <h3 className="text-xl font-black text-emerald-900 tracking-tight">
+    {loadedOsId ? `${finalizedOs.osNumber.substring(0,2)} Updated Successfully!` : `${finalizedOs.osNumber.substring(0,2)} Generated Successfully!`}
+  </h3>
                 <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
               </div>
               <div className="flex gap-3">
-                {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
+               {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                    
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
                     </button>
+
+                    {/* NEW PL BUTTON FOR THE SUCCESS MODAL */}
+                  <button 
+                      onClick={async () => {
+                        const plNumber = finalOrderNumber.replace('FO-', 'PL-');
+                        setIsGeneratingFinalOrder(true);
+                        try {
+                          const payload = {
+                            plNumber, referenceOs: finalizedOs.osNumber, company: selectedCompany, customerId: finalizedOs.customerId,
+                            isVatApplied: finalizedOs.vatApplied, vatRate: finalizedOs.vatRate, subtotal: finalizedOs.subtotal, vatAmount: finalizedOs.vatAmount, grandTotal: finalizedOs.grandTotal, user: loginUsername,
+                            items: finalizedOs.items
+                          };
+
+                          const res = await fetch(`${API_BASE_URL}/sales/packing-lists`, { 
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+                          });
+                          
+                          if (!res.ok) throw new Error("Failed to create Packing List in Database.");
+                          const newPl = await res.json();
+                          newPl.osNumber = newPl.plNumber; // Normalize for the UI
+
+                          await handleRefreshStock(); 
+                          showToast("Packing List logged & Stock Deducted!", "success");
+                          setFinalizedOs({ ...newPl, customer: selectedCustomer || finalizedOs.customer }); 
+                          setFinalOrderGenerated(true); 
+                        } catch (e: any) { 
+                          showToast(e.message || "Failed to generate PL.", "error"); 
+                        } finally { 
+                          setIsGeneratingFinalOrder(false); 
+                        }
+                      }} 
+                      disabled={isGeneratingFinalOrder || !finalOrderNumber} 
+                      className="px-5 py-2.5 bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-600 shadow-sm transition-colors ml-2"
+                    >
+                      Gen Packing List
+                    </button>
+
                   </div>
                 ) : finalOrderGenerated ? (
                   <span className="px-5 py-2.5 bg-teal-200 text-teal-800 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-sm border border-teal-300 flex items-center">✓ FINAL ORDER LOGGED</span>
                 ) : null}
-                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">Print {finalizedOs.osNumber.startsWith('FO') ? 'F.O.' : 'O.S.'}</button>
+                <button onClick={handlePrint} className="px-5 py-2.5 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 shadow-sm transition-colors">
+    Print {finalizedOs.osNumber.startsWith('QT') ? 'Quotation' : finalizedOs.osNumber.startsWith('PL') ? 'Packing List' : finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
+  </button>
+                {finalizedOs.osNumber.startsWith('QT') && (
+  <>
+{(finalizedOs.osNumber.startsWith('QT') || finalizedOs.osNumber.startsWith('PL')) && (
+  <>
+    <button 
+      onClick={() => {
+        let msg = `${finalizedOs.osNumber.startsWith('QT') ? 'Quotation' : 'Packing List'} ${finalizedOs.osNumber} for ${finalizedOs.customer?.name}%0A%0A`;
+        msg += `ITEMS:%0A`;
+        finalizedOs.items.forEach((item: any) => {
+          msg += `- ${item.requestedQty}x ${item.productName} @ ₱${Number(item.unitPrice).toFixed(2)} = ₱${Number(item.lineTotal).toFixed(2)}%0A`;
+        });
+        msg += `%0A-------------------%0ATOTAL: ₱${Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}`;
+        window.open(`viber://forward?text=${msg}`);
+      }}
+      className="px-5 py-2.5 bg-[#7360f2] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#5e4bcf] shadow-sm transition-colors"
+    >
+      Send via Viber
+    </button>
+    
+    <button 
+      onClick={() => {
+        const subject = `${finalizedOs.osNumber.startsWith('QT') ? 'Quotation' : 'Packing List'} ${finalizedOs.osNumber} - ${selectedCompany}`;
+        let body = `Hello ${finalizedOs.customer?.name},\n\nHere are the details for your ${finalizedOs.osNumber.startsWith('QT') ? 'Quotation' : 'Packing List'}:\n\n`;
+        finalizedOs.items.forEach((item: any) => {
+          body += `${item.requestedQty}x ${item.productName} (₱${Number(item.unitPrice).toFixed(2)}) = ₱${Number(item.lineTotal).toFixed(2)}\n`;
+        });
+        body += `\nGRAND TOTAL: ₱${Number(finalizedOs.grandTotal).toLocaleString('en-PH', {minimumFractionDigits:2})}\n\nThank you for your business!`;
+        
+        window.open(`mailto:${finalizedOs.customer?.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+      }}
+      className="px-5 py-2.5 bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-600 shadow-sm transition-colors"
+    >
+      Send via Email
+    </button>
+  </>
+)}
+  </>
+)}
                 <button onClick={handleClosePrintModal} className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 shadow-sm transition-colors">Close & Start New</button>
               </div>
             </div>
@@ -729,9 +832,9 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
                   <h1 className="text-3xl print:text-2xl font-black text-slate-900 uppercase tracking-widest leading-none">
                     {selectedCompany}
                   </h1>
-                  <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest leading-none">
-                    {finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
-                  </h2>
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest leading-none">
+    {finalizedOs.osNumber.startsWith('QT') ? 'Quotation' : finalizedOs.osNumber.startsWith('PL') ? 'Packing List' : finalizedOs.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
+  </h2>
                 </div>
                 
                 {/* Billed To (Left) & OS Number (Right) */}
