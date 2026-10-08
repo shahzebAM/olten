@@ -738,10 +738,27 @@ const handleSubmit = async () => {
                         const plNumber = finalOrderNumber.replace('FO-', 'PL-');
                         setIsGeneratingFinalOrder(true);
                         try {
-                          const payload = {
-                            plNumber, referenceOs: finalizedOs.osNumber, company: selectedCompany, customerId: finalizedOs.customerId,
-                            isVatApplied: finalizedOs.vatApplied, vatRate: finalizedOs.vatRate, subtotal: finalizedOs.subtotal, vatAmount: finalizedOs.vatAmount, grandTotal: finalizedOs.grandTotal, user: loginUsername,
-                            items: finalizedOs.items
+                   const payload = {
+                            plNumber, 
+                            referenceOs: finalizedOs.osNumber, 
+                            company: selectedCompany, 
+                            customerId: finalizedOs.customerId,
+                            isVatApplied: finalizedOs.vatApplied, 
+                            vatRate: finalizedOs.vatRate, 
+                            subtotal: finalizedOs.subtotal, 
+                            vatAmount: finalizedOs.vatAmount, 
+                            grandTotal: finalizedOs.grandTotal, 
+                            user: loginUsername,
+                            
+                            // CLEAN THE ITEMS SO PRISMA ACCEPTS THEM!
+                            items: finalizedOs.items.map((i: any) => ({
+                              productId: i.productId,
+                              sku: i.sku,
+                              productName: i.productName,
+                              requestedQty: Number(i.requestedQty),
+                              unitPrice: Number(i.unitPrice),
+                              lineTotal: Number(i.lineTotal)
+                            }))
                           };
 
                           const res = await fetch(`${API_BASE_URL}/sales/packing-lists`, { 
