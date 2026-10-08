@@ -683,7 +683,22 @@ useEffect(() => {
 
                 <div className="flex flex-col gap-1.5">
   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">TIN Number</label>
-  <input type="text" placeholder="000-000-000-000" value={editModal.data.tin || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, tin: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+  <input 
+    type="text" 
+    placeholder="000-000-000-000" 
+    value={editModal.data.tin || ''} 
+    onChange={e => {
+      // 1. Strip all non-numeric characters and limit to 12 digits
+      let rawNumbers = e.target.value.replace(/\D/g, '').substring(0, 12);
+      
+      // 2. Automatically insert a hyphen after every 3rd digit
+      let formattedTin = rawNumbers.replace(/(\d{3})(?=\d)/g, '$1-');
+      
+      // 3. Save to state
+      setEditModal({ ...editModal, data: { ...editModal.data, tin: formattedTin } });
+    }} 
+    className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" 
+  />
 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Number</label>
