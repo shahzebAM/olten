@@ -10,6 +10,8 @@ import { SalesController } from './sales/sales.controller';
 import { OrderSlipsController } from './sales/order-slips.controller';
 import { ProcurementController } from './sales/purchase-orders.controller';
 import { AuthSessionModule } from './auth/auth-session.module';
+import { PackingListsController } from './sales/packing-lists.controller';
+import { QuotationsController } from './sales/quotations.controller';
 
 @Module({
   imports: [
@@ -24,7 +26,9 @@ import { AuthSessionModule } from './auth/auth-session.module';
     SettingsController,
     SalesController,
     OrderSlipsController,
-    ProcurementController
+    ProcurementController,
+    PackingListsController,
+    QuotationsController
   ],
   providers: [AppService],
 })

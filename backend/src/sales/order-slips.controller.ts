@@ -264,7 +264,7 @@ export class OrderSlipsController {
 
       if (items && Array.isArray(items)) {
         // RULE: Reconcile stock modifications if FO items are edited
-        if (existing.osNumber.startsWith('FO') && status !== 'Cancelled' && status !== 'Returned') {
+       if ((existing.osNumber.startsWith('FO') || existing.osNumber.startsWith('PL')) && status !== 'Cancelled' && status !== 'Returned') {
           for (const oldItem of existing.items) {
             await tx.product.update({ where: { id: oldItem.productId }, data: { currentStock: { increment: oldItem.requestedQty } } });
           }
@@ -290,7 +290,7 @@ export class OrderSlipsController {
         }
 
         // Apply new deductions if FO is edited
-        if (existing.osNumber.startsWith('FO') && status !== 'Cancelled' && status !== 'Returned') {
+        if ((existing.osNumber.startsWith('FO') || existing.osNumber.startsWith('PL')) && status !== 'Cancelled' && status !== 'Returned') {
           for (const newItem of cleanItems) {
             await tx.product.update({ where: { id: newItem.productId }, data: { currentStock: { decrement: newItem.requestedQty } } });
           }

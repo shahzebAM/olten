@@ -180,6 +180,9 @@ model Product {
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
 
+  quotationItems QuotationItem[]
+  packingListItems PackingListItem[]
+
   orderSlipItems OrderSlipItem[]
 
   @@index([company])
@@ -209,6 +212,93 @@ model InventoryMovement {
   
   employeeId     Int?
   employee       Employee?  @relation(fields: [employeeId], references: [id])
+}
+
+// ==========================================
+// QUOTATIONS
+// ==========================================
+model Quotation {
+  id              String          @id @default(uuid())
+  qtNumber        String          @unique
+  company         String
+  
+  customerId      String
+  customer        Customer        @relation(fields: [customerId], references: [id])
+  
+  status          String          @default("Draft")
+  subtotal        Float
+  vatApplied      Boolean         @default(false)
+  vatRate         Float           @default(0.12)
+  vatAmount       Float           @default(0)
+  grandTotal      Float
+  
+  createdBy       String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  items           QuotationItem[]
+
+  @@index([company])
+}
+
+model QuotationItem {
+  id              String     @id @default(uuid())
+  
+  quotationId     String
+  quotation       Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  
+  productId       Int
+  product         Product    @relation(fields: [productId], references: [id])
+  
+  sku             String
+  productName     String
+  requestedQty    Int
+  unitPrice       Float
+  lineTotal       Float
+}
+
+// ==========================================
+// PACKING LISTS
+// ==========================================
+model PackingList {
+  id              String            @id @default(uuid())
+  plNumber        String            @unique
+  referenceOs     String?           
+  company         String
+  
+  customerId      String
+  customer        Customer          @relation(fields: [customerId], references: [id])
+  
+  status          String            @default("Generated")
+  subtotal        Float
+  vatApplied      Boolean           @default(false)
+  vatRate         Float             @default(0.12)
+  vatAmount       Float             @default(0)
+  grandTotal      Float
+  
+  createdBy       String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  items           PackingListItem[]
+
+  @@index([company])
+}
+
+model PackingListItem {
+  id              String       @id @default(uuid())
+  
+  packingListId   String
+  packingList     PackingList  @relation(fields: [packingListId], references: [id], onDelete: Cascade)
+  
+  productId       Int
+  product         Product      @relation(fields: [productId], references: [id])
+  
+  sku             String
+  productName     String
+  requestedQty    Int
+  unitPrice       Float
+  lineTotal       Float
 }
 
 model Warehouse {
@@ -270,7 +360,12 @@ model Customer {
   category String @default("General")
   website String?
   tin String?
+
+  quotations  Quotation[]
+  packingLists PackingList[]
 }
+
+
 
 model Supplier {
   id            String   @id @default(uuid())
