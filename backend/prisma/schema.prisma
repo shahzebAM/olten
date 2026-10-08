@@ -269,6 +269,7 @@ model Customer {
   shortages   Shortage[]
   category String @default("General")
   website String?
+  tin String?
 }
 
 model Supplier {
