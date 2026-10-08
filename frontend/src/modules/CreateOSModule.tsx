@@ -738,19 +738,17 @@ const handleSubmit = async () => {
                         const plNumber = finalOrderNumber.replace('FO-', 'PL-');
                         setIsGeneratingFinalOrder(true);
                         try {
-                   const payload = {
+ const payload = {
                             plNumber, 
                             referenceOs: finalizedOs.osNumber, 
                             company: selectedCompany, 
                             customerId: finalizedOs.customerId,
-                            isVatApplied: finalizedOs.vatApplied, 
-                            vatRate: finalizedOs.vatRate, 
-                            subtotal: finalizedOs.subtotal, 
-                            vatAmount: finalizedOs.vatAmount, 
-                            grandTotal: finalizedOs.grandTotal, 
+                            isVatApplied: finalizedOs.isVatApplied ?? finalizedOs.vatApplied, 
+                            vatRate: Number(finalizedOs.vatRate), 
+                            subtotal: Number(finalizedOs.subtotal), 
+                            vatAmount: Number(finalizedOs.vatAmount), 
+                            grandTotal: Number(finalizedOs.grandTotal), 
                             user: loginUsername,
-                            
-                            // CLEAN THE ITEMS SO PRISMA ACCEPTS THEM!
                             items: finalizedOs.items.map((i: any) => ({
                               productId: i.productId,
                               sku: i.sku,

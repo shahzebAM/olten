@@ -46,7 +46,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   
   // --- DATA STATES ---
   const [allSlips, setAllSlips] = useState<OrderSlip[]>([]);
-  const [activeTab, setActiveTab] = useState<'OS' | 'FO'>('OS');
+const [activeTab, setActiveTab] = useState<'OS' | 'FO' | 'QT' | 'PL'>('OS');
   const [searchQuery, setSearchQuery] = useState('');
 
   // --- MODAL STATES ---
@@ -58,13 +58,23 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
     setTimeout(() => setToast(null), 3500); 
   };
 
-  const fetchOrderSlips = useCallback(async () => {
+const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
-      if (!res.ok) throw new Error("Failed to fetch records.");
-      const data = await res.json();
-      setAllSlips(data.data || []);
+      const [osRes, qtRes, plRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`),
+        fetch(`${API_BASE_URL}/sales/quotations?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/sales/packing-lists?company=${encodeURIComponent(selectedCompany)}`)
+      ]);
+      
+      const osData = osRes.ok ? await osRes.json() : { data: [] };
+      const qtData = qtRes.ok ? await qtRes.json() : [];
+      const plData = plRes.ok ? await plRes.json() : [];
+      
+      const normalizedQt = qtData.map((q: any) => ({ ...q, osNumber: q.qtNumber }));
+      const normalizedPl = plData.map((p: any) => ({ ...p, osNumber: p.plNumber }));
+
+      setAllSlips([...(osData.data || []), ...normalizedQt, ...normalizedPl]);
     } catch (e) {
       showToast("Error loading records.", "error");
     } finally {
@@ -98,8 +108,11 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
   }, [viewSlip, allSlips]);
 
   // --- FILTERING LOGIC ---
-  const filteredSlips = useMemo(() => {
-    let filtered = allSlips.filter(s => activeTab === 'OS' ? s.osNumber.startsWith('OS') : s.osNumber.startsWith('FO'));
+const filteredSlips = useMemo(() => {
+    let filtered = allSlips.filter(s => {
+       if (!s.osNumber) return false;
+       return s.osNumber.startsWith(activeTab);
+    });
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(s => 
@@ -226,9 +239,11 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
 
       {/* NAVIGATION TABS & SEARCH */}
       <div className="bg-white border-b border-slate-200 px-6 sm:px-8 py-4 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4 print:hidden">
-        <div className="flex bg-slate-100 p-1 rounded-xl shadow-inner w-full sm:w-auto">
-          <button onClick={() => setActiveTab('OS')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Order Slips (Drafts)</button>
-          <button onClick={() => setActiveTab('FO')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'FO' ? 'bg-white text-teal-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Final Orders (Logged)</button>
+        <div className="flex bg-slate-100 p-1 rounded-xl shadow-inner w-full sm:w-auto overflow-x-auto">
+          <button onClick={() => setActiveTab('QT')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'QT' ? 'bg-white text-amber-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Quotations</button>
+          <button onClick={() => setActiveTab('OS')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Order Slips (Drafts)</button>
+          <button onClick={() => setActiveTab('FO')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'FO' ? 'bg-white text-teal-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Final Orders</button>
+          <button onClick={() => setActiveTab('PL')} className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'PL' ? 'bg-white text-rose-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Packing Lists</button>
         </div>
 
         <div className="w-full sm:w-72">
@@ -254,7 +269,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
               <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
                 <tr>
                   <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Document No.</th>
-                  {activeTab === 'FO' && <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Reference</th>}
+                 {(activeTab === 'FO' || activeTab === 'PL') && <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">O.S. Reference</th>}
                   <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Customer</th>
                   <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200">Date</th>
                   <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] text-right border-b border-slate-200">Total Value</th>
@@ -269,7 +284,7 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                   filteredSlips.map(slip => (
                     <tr key={slip.id} className="hover:bg-slate-50 transition-colors">
                       <td className={`py-3.5 px-6 font-mono text-sm font-black ${slip.osNumber.startsWith('FO') ? 'text-teal-700' : 'text-indigo-700'}`}>{slip.osNumber}</td>
-                      {activeTab === 'FO' && <td className="py-3.5 px-6 font-mono text-xs font-bold text-slate-400">{slip.referenceOs || '-'}</td>}
+                  {(activeTab === 'FO' || activeTab === 'PL') && <td className="py-3.5 px-6 font-mono text-xs font-bold text-slate-400">{slip.referenceOs || '-'}</td>}
                       <td className="py-3.5 px-6 font-bold text-slate-900 uppercase truncate max-w-[200px]">{slip.customer?.name}</td>
                       <td className="py-3.5 px-6 font-bold text-slate-500 text-xs uppercase tracking-wider">{new Date(slip.createdAt).toLocaleDateString()}</td>
                       <td className="py-3.5 px-6 text-right font-black text-slate-900 font-mono">₱{Number(slip.grandTotal).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
@@ -372,8 +387,8 @@ export default function OrderSlipsModule({ selectedCompany, loginUsername, API_B
                     {selectedCompany}
                   </h1>
                   <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest leading-none">
-                    {viewSlip.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
-                  </h2>
+  {viewSlip.osNumber.startsWith('QT') ? 'Quotation' : viewSlip.osNumber.startsWith('PL') ? 'Packing List' : viewSlip.osNumber.startsWith('FO') ? 'Final Order' : 'Order Slip'}
+</h2>
                 </div>
                 
                 {/* Billed To (Left) & OS Number (Right) */}
