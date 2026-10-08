@@ -18,5 +18,6 @@ import { ExpiryCronService } from './expiry-cron.service';
     ExpiryExtractorService,
     ExpiryCronService
   ],
+  exports: [DocumentService],
 })
 export class DocumentationModule {}

@@ -133,6 +133,176 @@ describe('Drive upload folder coordination and deletion', () => {
     expect(files.list.mock.calls[0][0].q).toBe("name = 'O\\'Neil\\\\Branch' and 'test-root' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
   });
 
+  it('deletes all matching company roots across pages before committing, without scanning descendants', async () => {
+    const company = "O'Neil\\Branch";
+    files.list.mockResolvedValueOnce({ data: { files: [{ id: 'first-folder' }], nextPageToken: 'page-two' } })
+      .mockResolvedValueOnce({ data: { files: [{ id: 'second-folder' }, { id: 'first-folder' }] } });
+    files.get.mockResolvedValue({ data: { name: company, mimeType: 'application/vnd.google-apps.folder', parents: ['test-root'] } });
+    const commit = jest.fn(async () => ({ name: company }));
+    await expect(service.deleteCompanyFolder(company, commit)).resolves.toEqual({ name: company });
+    expect(files.list).toHaveBeenCalledTimes(2);
+    expect(files.list.mock.calls[0][0].q).toBe("name = 'O\\'Neil\\\\Branch' and 'test-root' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+    expect(files.list.mock.calls[1][0].pageToken).toBe('page-two');
+    expect(files.delete.mock.calls).toEqual([
+      [{ fileId: 'first-folder', supportsAllDrives: true }], [{ fileId: 'second-folder', supportsAllDrives: true }],
+    ]);
+    expect(commit.mock.invocationCallOrder[0]).toBeGreaterThan(files.delete.mock.invocationCallOrder[1]);
+    expect(files.create).not.toHaveBeenCalled();
+  });
+
+  it('commits company deletion when its folder is already absent without creating an empty one', async () => {
+    const commit = jest.fn(async () => 'deleted');
+    await expect(service.deleteCompanyFolder('Olten', commit)).resolves.toBe('deleted');
+    expect(files.create).not.toHaveBeenCalled();
+    expect(files.delete).not.toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { name: 'Other Company', mimeType: 'application/vnd.google-apps.folder', parents: ['test-root'] },
+    { name: 'Olten', mimeType: 'application/vnd.google-apps.folder', parents: ['outside-root'] },
+    { name: 'Olten', mimeType: 'application/pdf', parents: ['test-root'] },
+    { name: 'Olten', mimeType: 'application/vnd.google-apps.folder', parents: ['test-root', 'outside-root'] },
+  ])('refuses a company root whose fresh metadata changed: %j', async metadata => {
+    files.list.mockResolvedValue({ data: { files: [{ id: 'changed-folder' }] } });
+    files.get.mockResolvedValue({ data: metadata });
+    const commit = jest.fn(async () => undefined);
+    await expect(service.deleteCompanyFolder('Olten', commit)).rejects.toMatchObject({ status: 409 });
+    expect(files.delete).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it.each(['test-root', "invalid'folder"])('never deletes the configured root or invalid folder ID %s', async id => {
+    files.list.mockResolvedValue({ data: { files: [{ id }] } });
+    const commit = jest.fn(async () => undefined);
+    await expect(service.deleteCompanyFolder('Olten', commit)).rejects.toMatchObject({ status: 502 });
+    expect(files.get).not.toHaveBeenCalled();
+    expect(files.delete).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('rejects incomplete lookups before deleting any folder or database company', async () => {
+    files.list.mockResolvedValue({ data: { incompleteSearch: true, files: [{ id: 'company-folder' }] } });
+    const commit = jest.fn(async () => undefined);
+    await expect(service.deleteCompanyFolder('Olten', commit)).rejects.toMatchObject({ status: 502 });
+    expect(files.delete).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal OAuth details or commit when the root lookup fails', async () => {
+    files.list.mockRejectedValue({ code: 403, message: 'Private OAuth account details' });
+    const commit = jest.fn(async () => undefined);
+    await expect(service.deleteCompanyFolder('Olten', commit)).rejects.toThrow('Google Drive could not find the workspace folder');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('allows idempotent deletion if a listed folder disappears before metadata verification', async () => {
+    files.list.mockResolvedValue({ data: { files: [{ id: 'missing-folder' }] } });
+    files.get.mockRejectedValue({ response: { status: 404 } });
+    const commit = jest.fn(async () => undefined);
+    await service.deleteCompanyFolder('Olten', commit);
+    expect(files.delete).not.toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the database company when Google refuses folder deletion and allows a retry', async () => {
+    files.list.mockResolvedValue({ data: { files: [{ id: 'company-folder' }] } });
+    files.get.mockResolvedValue({ data: { name: 'Olten', mimeType: 'application/vnd.google-apps.folder', parents: ['test-root'] } });
+    files.delete.mockRejectedValueOnce({ code: 403, message: 'No permission' });
+    const commit = jest.fn(async () => undefined);
+    await expect(service.deleteCompanyFolder('Olten', commit)).rejects.toMatchObject({ status: 502 });
+    expect(commit).not.toHaveBeenCalled();
+    await service.deleteCompanyFolder('Olten', commit);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks new company storage creation until database deletion has completed', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const callbackStarted = new Promise<void>(resolve => { started = resolve; });
+    const complete = new Promise<void>(resolve => { release = resolve; });
+    const deletion = service.deleteCompanyFolder('Olten', async () => { started(); await complete; });
+    await callbackStarted;
+    await expect(service.getOrCreateCompanyFolder('Olten')).rejects.toMatchObject({ status: 409 });
+    await expect(service.createSubFolder('Olten', 'Late folder', 'old-parent')).rejects.toMatchObject({ status: 409 });
+    await expect(service.uploadFileToDrive(Buffer.from('PDF'), 'application/pdf', 'late.pdf', 'Olten', 'old-parent'))
+      .rejects.toMatchObject({ status: 409 });
+    expect(files.create).not.toHaveBeenCalled();
+    release();
+    await deletion;
+    await expect(service.getOrCreateCompanyFolder('Another Company')).resolves.toBe('company-folder');
+  });
+
+  it('waits for a company root creation already in flight before looking up folders to delete', async () => {
+    let finishLookup!: (result: any) => void;
+    files.list.mockImplementationOnce(() => new Promise(resolve => { finishLookup = resolve; }))
+      .mockResolvedValue({ data: { files: [{ id: 'company-folder' }] } });
+    files.get.mockResolvedValue({ data: { name: 'Olten', mimeType: 'application/vnd.google-apps.folder', parents: ['test-root'] } });
+    const creation = service.getOrCreateCompanyFolder('Olten');
+    const commit = jest.fn(async () => undefined);
+    const deletion = service.deleteCompanyFolder('Olten', commit);
+    expect(files.list).toHaveBeenCalledTimes(1);
+    finishLookup({ data: { files: [] } });
+    await creation;
+    await deletion;
+    expect(files.create).toHaveBeenCalledTimes(1);
+    expect(files.delete.mock.invocationCallOrder[0]).toBeGreaterThan(files.create.mock.invocationCallOrder[0]);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a delayed directory request recreate a deleted company folder', async () => {
+    let release!: () => void;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    const oldRequest = (async () => { await delayed; return service.getCompanyDirectory('Olten'); })();
+    await service.deleteCompanyFolder('Olten', async () => undefined);
+    release();
+    await expect(oldRequest).rejects.toMatchObject({ status: 404 });
+    await expect(service.uploadFileToDrive(Buffer.from('PDF'), 'application/pdf', 'late.pdf', 'Olten', 'old-parent'))
+      .rejects.toMatchObject({ status: 404 });
+    expect(files.create).not.toHaveBeenCalled();
+    expect(files.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows folder creation for a newly recreated company after confirming its new database identity', async () => {
+    let recreated = false;
+    const isRecreated = jest.fn(async () => recreated);
+    await service.deleteCompanyFolder('Olten', async () => undefined, isRecreated);
+    await expect(service.getOrCreateCompanyFolder('Olten')).rejects.toMatchObject({ status: 404 });
+    recreated = true;
+    await expect(service.getOrCreateCompanyFolder('Olten')).resolves.toBe('company-folder');
+    expect(isRecreated).toHaveBeenCalledTimes(2);
+    expect(files.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a delayed recreation check if a newer company deletion has completed meanwhile', async () => {
+    let finishCheck!: (value: boolean) => void;
+    await service.deleteCompanyFolder('Olten', async () => undefined,
+      () => new Promise(resolve => { finishCheck = resolve; }));
+    const late = service.getOrCreateCompanyFolder('Olten');
+    await service.deleteCompanyFolder('Olten', async () => undefined, async () => false);
+    finishCheck(true);
+    await expect(late).rejects.toMatchObject({ status: 409 });
+    expect(files.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['root', 'subfolder', 'upload'])('rechecks deletion after asynchronous company recreation verification for %s', async kind => {
+    let finishCheck!: (value: boolean) => void;
+    await service.deleteCompanyFolder('Olten', async () => undefined,
+      () => new Promise(resolve => { finishCheck = resolve; }));
+    const late = kind === 'root' ? service.getOrCreateCompanyFolder('Olten')
+      : kind === 'subfolder' ? service.createSubFolder('Olten', 'Late folder', 'old-parent')
+        : service.uploadFileToDrive(Buffer.from('PDF'), 'application/pdf', 'late.pdf', 'Olten', 'old-parent');
+    let releaseLookup!: (value: unknown) => void;
+    files.list.mockImplementationOnce(() => new Promise(resolve => { releaseLookup = resolve; }));
+    let secondDeletion!: Promise<unknown>;
+    finishCheck(true);
+    queueMicrotask(() => { secondDeletion = service.deleteCompanyFolder('Olten', async () => undefined); });
+    await expect(late).rejects.toMatchObject({ status: 409 });
+    expect(files.create).not.toHaveBeenCalled();
+    releaseLookup({ data: { files: [] } });
+    await secondDeletion;
+  });
+
   it('streams original bytes without buffering or using a Google viewer page', async () => {
     const stream = Readable.from(Buffer.from('%PDF-1.7'));
     files.get.mockResolvedValueOnce({ data: { name: 'license.pdf', mimeType: 'application/pdf', size: '8' } });

@@ -10,6 +10,7 @@ import { DocumentService } from './document.service';
 import { DriveService } from './drive.service';
 import { GeminiService } from './gemini.service';
 import { ExpiryCronService } from './expiry-cron.service';
+import { CompaniesController } from '../companies/companies.controller';
 
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({
   admin: { findUnique: jest.fn() }, company: { findUnique: jest.fn() },
@@ -28,14 +29,15 @@ jest.mock('@nestjs/schedule', () => {
 
 describe('DocumentationModule authentication wiring', () => {
   let app: INestApplication;
-  const docs = { getActiveNotifications: jest.fn(async () => []) };
+  const docs = { getActiveNotifications: jest.fn(async () => []),
+    deleteCompanyWorkspace: jest.fn(async (name: string) => ({ id: 'deleted-company', name })) };
   const administrator: SessionAdmin = { id: 7, username: 'module-test', password: 'stored-password',
     role: 'Admin', status: 'Active', modules: { ai_docs: true, companies: { Olten: true } } };
 
   afterEach(async () => { await app?.close(); jest.clearAllMocks(); });
 
-  async function start(imports: Array<typeof DocumentationModule | typeof AuthSessionModule>) {
-    const module = await Test.createTestingModule({ imports })
+  async function start(imports: Array<typeof DocumentationModule | typeof AuthSessionModule>, includeCompanies = false) {
+    const module = await Test.createTestingModule({ imports, controllers: includeCompanies ? [CompaniesController] : [] })
       .overrideProvider(DocumentService).useValue(docs)
       .overrideProvider(DriveService).useValue({})
       .overrideProvider(GeminiService).useValue({})
@@ -70,5 +72,18 @@ describe('DocumentationModule authentication wiring', () => {
     const token = sessions.issue(administrator).accessToken;
     await request(app.getHttpServer()).get('/api/docs/notifications')
       .set('Authorization', `Bearer ${token}`).set('x-company', 'Olten').expect(200, []);
+  });
+
+  it('exports document storage deletion to the parent company controller while keeping Super Admin authorization', async () => {
+    const { sessions } = await start([AuthSessionModule, DocumentationModule], true);
+    await request(app.getHttpServer()).delete('/companies/Olten').expect(401);
+    const token = sessions.issue(administrator).accessToken;
+    await request(app.getHttpServer()).delete('/companies/Olten').set('Authorization', `Bearer ${token}`).expect(403);
+    expect(docs.deleteCompanyWorkspace).not.toHaveBeenCalled();
+    const database = (PrismaClient as unknown as jest.Mock).mock.results.at(-1)!.value;
+    database.admin.findUnique.mockResolvedValue({ ...administrator, role: 'Super Admin' });
+    await request(app.getHttpServer()).delete('/companies/Olten').set('Authorization', `Bearer ${token}`)
+      .expect(200, { id: 'deleted-company', name: 'Olten' });
+    expect(docs.deleteCompanyWorkspace).toHaveBeenCalledWith('Olten');
   });
 });

@@ -39,6 +39,8 @@ export class DriveService {
   private drive: any;
   private readonly companyFolderRequests = new Map<string, Promise<string>>();
   private readonly companyDirectoryRequests = new Map<string, Promise<{ companyFolderId: string; folders: any[]; files: any[] }>>();
+  private readonly deletingCompanies = new Set<string>();
+  private readonly deletedCompanies = new Map<string, () => Promise<boolean>>();
 
   constructor() {
     const oauth2Client = new google.auth.OAuth2(
@@ -55,6 +57,9 @@ export class DriveService {
   }
 
   async getOrCreateCompanyFolder(companyName: string): Promise<string> {
+    this.assertCompanyStorageAvailable(companyName);
+    if (this.deletedCompanies.has(companyName)) await this.verifyRecreatedCompany(companyName);
+    this.assertCompanyStorageAvailable(companyName);
     let request = this.companyFolderRequests.get(companyName);
     if (!request) {
       request = this.findOrCreateCompanyFolder(companyName);
@@ -66,6 +71,92 @@ export class DriveService {
       // Concurrent uploads share the lookup and cannot create duplicate roots.
       // Keep no lasting cache, so externally moved/deleted folders are refreshed.
       if (this.companyFolderRequests.get(companyName) === request) this.companyFolderRequests.delete(companyName);
+    }
+  }
+
+  private assertCompanyStorageAvailable(companyName: string) {
+    if (this.deletingCompanies.has(companyName)) {
+      throw new HttpException('This workspace is being deleted. Please wait.', HttpStatus.CONFLICT);
+    }
+  }
+
+  private async verifyRecreatedCompany(companyName: string) {
+    const isRecreated = this.deletedCompanies.get(companyName);
+    if (!isRecreated) return;
+    let available: boolean;
+    try { available = await isRecreated(); }
+    catch { throw new HttpException('The workspace could not be verified. Please retry.', HttpStatus.SERVICE_UNAVAILABLE); }
+    if (!available) throw new HttpException('This workspace was deleted.', HttpStatus.NOT_FOUND);
+    this.assertCompanyStorageAvailable(companyName);
+    const latest = this.deletedCompanies.get(companyName);
+    if (latest && latest !== isRecreated) throw new HttpException('The workspace changed. Refresh and retry.', HttpStatus.CONFLICT);
+    if (this.deletedCompanies.get(companyName) === isRecreated) this.deletedCompanies.delete(companyName);
+  }
+
+  // Keep the creation barrier until the caller has removed the database company.
+  // Deletion only looks up existing roots; it must never create a missing folder.
+  async deleteCompanyFolder<T>(companyName: string, completeDeletion: () => Promise<T>, isRecreated?: () => Promise<boolean>): Promise<T> {
+    this.assertCompanyStorageAvailable(companyName);
+    const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
+    if (!rootFolderId) throw new HttpException('Document storage is not configured', HttpStatus.SERVICE_UNAVAILABLE);
+    this.validateFileId(rootFolderId);
+    if (typeof companyName !== 'string' || !companyName.trim() || companyName.length > 200) {
+      throw new HttpException('Invalid company name', HttpStatus.BAD_REQUEST);
+    }
+    this.deletingCompanies.add(companyName);
+    try {
+      // A lookup started before deletion may still be creating the root.
+      await this.companyFolderRequests.get(companyName)?.catch(() => undefined);
+      const folders = new Set<string>();
+      let pageToken: string | undefined;
+      do {
+        const response = await this.drive.files.list({
+          q: `name = '${driveQueryLiteral(companyName)}' and '${driveQueryLiteral(rootFolderId)}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: 'nextPageToken,incompleteSearch,files(id)', pageSize: 1000, pageToken,
+          spaces: 'drive', includeItemsFromAllDrives: true, supportsAllDrives: true,
+        }).catch(() => {
+          throw new HttpException('Google Drive could not find the workspace folder. Please retry.', HttpStatus.BAD_GATEWAY);
+        });
+        if (response.data.incompleteSearch) {
+          throw new HttpException('Google Drive returned an incomplete folder lookup. Please retry.', HttpStatus.BAD_GATEWAY);
+        }
+        for (const folder of response.data.files || []) {
+          if (typeof folder.id !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(folder.id) || folder.id === rootFolderId) {
+            throw new HttpException('The workspace folder could not be verified. Please retry.', HttpStatus.BAD_GATEWAY);
+          }
+          folders.add(folder.id);
+        }
+        pageToken = response.data.nextPageToken || undefined;
+      } while (pageToken);
+      for (const fileId of folders) {
+        // Fresh metadata protects against folders renamed or moved after lookup.
+        let metadata: any;
+        try {
+          metadata = (await this.drive.files.get({
+            fileId, fields: 'name,mimeType,trashed,parents', supportsAllDrives: true,
+          })).data;
+        } catch (error: any) {
+          if (Number(error.code || error.response?.status || error.response?.data?.error?.code) === 404) continue;
+          throw new HttpException('The workspace folder could not be verified. Please retry.', HttpStatus.BAD_GATEWAY);
+        }
+        if (metadata.trashed) continue;
+        if (metadata.name !== companyName || metadata.mimeType !== 'application/vnd.google-apps.folder'
+          || metadata.parents?.length !== 1 || metadata.parents[0] !== rootFolderId) {
+          throw new HttpException('The workspace folder changed. Refresh and retry deletion.', HttpStatus.CONFLICT);
+        }
+        // Drive deletes the folder's owned descendants without a per-file scan.
+        try { await this.deleteFile(fileId); }
+        catch { throw new HttpException('Google Drive could not delete the workspace folder. Please retry.', HttpStatus.BAD_GATEWAY); }
+      }
+      const result = await completeDeletion();
+      // Late requests which passed auth before deletion must not recreate a root.
+      // Only a new database Company ID can release this process-local tombstone.
+      this.deletedCompanies.set(companyName, isRecreated || (async () => false));
+      return result;
+    } finally {
+      this.companyFolderRequests.delete(companyName);
+      this.companyDirectoryRequests.delete(companyName);
+      this.deletingCompanies.delete(companyName);
     }
   }
 
@@ -108,6 +199,7 @@ export class DriveService {
   }
 
   async getCompanyDirectory(companyName: string) {
+    this.assertCompanyStorageAvailable(companyName);
     let request = this.companyDirectoryRequests.get(companyName);
     if (!request) {
       request = this.loadCompanyDirectory(companyName);
@@ -177,6 +269,9 @@ export class DriveService {
 
   // UPDATED: Now accepts an optional parentFolderId to allow nesting
   async createSubFolder(companyName: string, folderName: string, parentFolderId?: string) {
+    this.assertCompanyStorageAvailable(companyName);
+    if (this.deletedCompanies.has(companyName)) await this.verifyRecreatedCompany(companyName);
+    this.assertCompanyStorageAvailable(companyName);
     // If a specific parent folder is passed, use it. Otherwise, default to the company's root folder.
     const parentId = parentFolderId || await this.getOrCreateCompanyFolder(companyName);
     
@@ -197,6 +292,9 @@ export class DriveService {
   }
 
   async uploadFileToDrive(fileBuffer: Buffer, mimeType: string, originalName: string, company: string, targetFolderId?: string) {
+    this.assertCompanyStorageAvailable(company);
+    if (this.deletedCompanies.has(company)) await this.verifyRecreatedCompany(company);
+    this.assertCompanyStorageAvailable(company);
     try {
       const destinationFolderId = targetFolderId || (await this.getOrCreateCompanyFolder(company));
 

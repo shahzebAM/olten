@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException, HttpException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
@@ -31,6 +31,9 @@ export class DocumentService {
   private readonly maxSearchAnswers = 128;
   private readonly maxContextMisses = 64;
   private readonly maxSearchContexts = 64;
+  private readonly companyWrites = new Map<string, Set<Promise<unknown>>>();
+  private readonly companyDeletions = new Map<string, Promise<unknown>>();
+  private readonly deletedCompanies = new Map<string, string>();
 
   constructor(
     private geminiService: GeminiService,
@@ -41,6 +44,77 @@ export class DocumentService {
   private requireCompany(company: string) {
     if (typeof company !== 'string' || !company.trim()) throw new BadRequestException('Company header missing');
     if (company.length > 200) throw new BadRequestException('Invalid company header');
+  }
+
+  private async withCompanyWrite<T>(company: string, action: () => Promise<T>): Promise<T> {
+    this.requireCompany(company);
+    if (this.companyDeletions.has(company)) throw new ConflictException('This workspace is being deleted. Please wait.');
+    const deletedId = this.deletedCompanies.get(company);
+    if (deletedId) {
+      if (!await this.isRecreatedCompany(company, deletedId)) throw new NotFoundException('This workspace was deleted.');
+      if (this.companyDeletions.has(company)) throw new ConflictException('This workspace is being deleted. Please wait.');
+      const latest = this.deletedCompanies.get(company);
+      if (latest && latest !== deletedId) throw new ConflictException('The workspace changed. Refresh and retry.');
+      if (this.deletedCompanies.get(company) === deletedId) this.deletedCompanies.delete(company);
+    }
+    let writes = this.companyWrites.get(company);
+    if (!writes) { writes = new Set(); this.companyWrites.set(company, writes); }
+    const operation = action();
+    writes.add(operation);
+    try { return await operation; }
+    finally {
+      writes.delete(operation);
+      if (!writes.size && this.companyWrites.get(company) === writes) this.companyWrites.delete(company);
+    }
+  }
+
+  private async isRecreatedCompany(company: string, deletedId: string) {
+    const current = await prisma.company.findUnique({ where: { name: company }, select: { id: true } });
+    return !!current && current.id !== deletedId;
+  }
+
+  async deleteCompanyWorkspace(company: string) {
+    this.requireCompany(company);
+    const current = this.companyDeletions.get(company);
+    if (current) return current;
+    const operation = this.removeCompanyWorkspace(company);
+    this.companyDeletions.set(company, operation);
+    try { return await operation; }
+    finally { if (this.companyDeletions.get(company) === operation) this.companyDeletions.delete(company); }
+  }
+
+  private async removeCompanyWorkspace(company: string) {
+    const workspace = await prisma.company.findUnique({ where: { name: company } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    // Finish existing uploads/replacements before deleting their parent folder.
+    // New writes are blocked, so no source or index row can be saved afterward.
+    await Promise.allSettled([...(this.companyWrites.get(company) || [])]);
+    const currentWorkspace = await prisma.company.findUnique({ where: { name: company }, select: { id: true } });
+    if (!currentWorkspace || currentWorkspace.id !== workspace.id) throw new ConflictException('The workspace changed. Refresh and retry deletion.');
+    let geminiFileIds: string[] = [];
+    const deleted = await this.driveService.deleteCompanyFolder(company, () => prisma.$transaction(async client => {
+      const current = await client.company.findUnique({ where: { name: company } });
+      if (!current || current.id !== workspace.id) throw new ConflictException('The workspace changed. Refresh and retry deletion.');
+      const docs = await client.document.findMany({ where: { company }, select: { geminiFileId: true } });
+      geminiFileIds = [...new Set(docs.flatMap(doc => doc.geminiFileId ? [doc.geminiFileId] : []))];
+      // Document cascades remove its expiry reminders and notifications.
+      await client.document.deleteMany({ where: { company } });
+      await client.searchHistory.deleteMany({ where: { company } });
+      return client.company.delete({ where: { id: workspace.id, name: company } });
+    }).catch(error => {
+      if (error instanceof HttpException) throw error;
+      if (error.code === 'P2025') throw new ConflictException('The workspace changed. Refresh and retry deletion.');
+      throw new ServiceUnavailableException('The Drive folder was removed, but database cleanup failed. Please retry workspace deletion.');
+    }), () => this.isRecreatedCompany(company, workspace.id));
+    this.deletedCompanies.set(company, workspace.id);
+    this.invalidateSearch(company);
+    // Remote AI index cleanup never delays the completed Drive/DB deletion and
+    // generates no AI tokens. Failed cleanup cannot make old rows searchable.
+    void Promise.allSettled(geminiFileIds.map(id => this.geminiService.deleteGeminiFile(id)))
+      .then(results => {
+        if (results.some(result => result.status === 'rejected')) this.logger.warn('Some deleted workspace Gemini indexes could not be removed.');
+      });
+    return deleted;
   }
 
   private driveId(link?: string | null): string | null {
@@ -186,6 +260,10 @@ export class DocumentService {
   }
 
   async createFolder(company: string, folderName: string, targetFolderId?: string) {
+    return this.withCompanyWrite(company, () => this.createCompanyFolder(company, folderName, targetFolderId));
+  }
+
+  private async createCompanyFolder(company: string, folderName: string, targetFolderId?: string) {
     this.requireCompany(company);
     const name = this.validFolderName(folderName);
     if (targetFolderId) await this.verifyCompanyFolder(company, targetFolderId);
@@ -249,6 +327,10 @@ export class DocumentService {
   }
 
   async replaceDocument(documentId: string | number, file: any, company: string, username: string, expectedDriveFileId?: string) {
+    return this.withCompanyWrite(company, () => this.replaceCompanyDocument(documentId, file, company, username, expectedDriveFileId));
+  }
+
+  private async replaceCompanyDocument(documentId: string | number, file: any, company: string, username: string, expectedDriveFileId?: string) {
     this.requireCompany(company);
     const safeMimeType = this.validateUpload(file);
     const original = await this.findDocument(documentId, company);
@@ -381,6 +463,10 @@ export class DocumentService {
   }
 
   async processNewDocument(file: any, company: string, username: string, targetFolderId?: string, options: ReminderOptions = {}) {
+    return this.withCompanyWrite(company, () => this.processNewCompanyDocument(file, company, username, targetFolderId, options));
+  }
+
+  private async processNewCompanyDocument(file: any, company: string, username: string, targetFolderId?: string, options: ReminderOptions = {}) {
     this.requireCompany(company);
     const safeMimeType = this.validateUpload(file);
     const choice = readReminderChoice(options);
