@@ -14,6 +14,7 @@ interface Customer {
   balance: number;
   createdAt: string;
   category: string;
+  tin: string | null;
 }
 
 interface CustomerModuleProps {
@@ -302,7 +303,7 @@ useEffect(() => {
             Customers
           </button>
           <button 
-            onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General' } })} 
+            onClick={() => setEditModal({ isOpen: true, data: { name: '', company: selectedCompany, contact: '', phone: '', email: '', website: '', address: '', creditLimit: 0, balance: 0, category: 'General', tin: '' } })} 
             className="px-6 py-3.5 text-[10px] font-bold text-slate-500 border-b-[3px] border-transparent hover:text-slate-800 uppercase tracking-widest transition-colors"
           >
             + Register
@@ -679,6 +680,11 @@ useEffect(() => {
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Person</label>
                   <input type="text" value={editModal.data.contact || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, contact: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
                 </div>
+
+                <div className="flex flex-col gap-1.5">
+  <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">TIN Number</label>
+  <input type="text" placeholder="000-000-000-000" value={editModal.data.tin || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, tin: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+</div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Contact Number</label>
                   <input type="text" value={editModal.data.phone || ''} onChange={e => setEditModal({ ...editModal, data: { ...editModal.data, phone: e.target.value } })} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
