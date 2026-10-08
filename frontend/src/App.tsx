@@ -40,6 +40,10 @@ export default function App() {
   const authRef = useRef({ isAuthenticated, loginUsername });
   authRef.current = { isAuthenticated, loginUsername };
   const readsRef = useRef<Partial<Record<'admins' | 'companies', Promise<boolean>>>>({});
+  const companyListVersionRef = useRef(0);
+  const companyDeletesRef = useRef(new Map<string, Promise<void>>());
+  const selectedCompanyRef = useRef(selectedCompany);
+  selectedCompanyRef.current = selectedCompany;
   const controllersRef = useRef(new Set<AbortController>());
   const retrySyncRef = useRef<() => void>(() => {});
 
@@ -119,6 +123,7 @@ export default function App() {
     controllersRef.current.add(controller);
     const timeout = window.setTimeout(() => controller.abort(), 10000);
     const requestedUser = authRef.current.loginUsername;
+    const companyListVersion = companyListVersionRef.current;
     const request = (async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/${kind}`, { signal: controller.signal, headers: getApiAuthHeaders() });
@@ -128,7 +133,10 @@ export default function App() {
         if (!Array.isArray(data)) throw new Error('The backend returned an invalid response.');
         if (!mountedRef.current || !authRef.current.isAuthenticated || authRef.current.loginUsername !== requestedUser) return false;
         if (kind === 'admins') setAdminUsers(data);
-        else setCompaniesList(data.map((company: any) => company.name));
+        else if (companyListVersion === companyListVersionRef.current) {
+          // A snapshot requested before a completed create/delete is stale.
+          setCompaniesList(data.map((company: any) => company.name));
+        }
         return true;
       } catch {
         if (mountedRef.current && authRef.current.isAuthenticated && authRef.current.loginUsername === requestedUser) {
@@ -229,7 +237,8 @@ export default function App() {
           return; 
         }
 
-        setCompaniesList([...companiesList, newCompany]);
+        companyListVersionRef.current += 1;
+        setCompaniesList(previous => previous.includes(newCompany) ? previous : [...previous, newCompany]);
       } catch (e) { 
         alert("Network Error: Could not reach the backend server.");
         console.error(e); 
@@ -237,13 +246,37 @@ export default function App() {
     }
   };
 
-  const handleRemoveCompany = async (companyToRemove: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/companies/${encodeURIComponent(companyToRemove)}`, { method: 'DELETE', headers: getApiAuthHeaders() });
-      if (!response.ok) throw new Error('Could not delete the workspace.');
-      setCompaniesList(companiesList.filter(c => c !== companyToRemove));
-      if (selectedCompany === companyToRemove) setSelectedCompany(null);
-    } catch (e) { console.error(e); }
+  const handleRemoveCompany = (companyToRemove: string): Promise<void> => {
+    const active = companyDeletesRef.current.get(companyToRemove);
+    if (active) return active;
+    const headers = getApiAuthHeaders();
+    const request = (async () => {
+      try {
+        let response: Response;
+        try {
+          response = await fetch(`${API_BASE_URL}/companies/${encodeURIComponent(companyToRemove)}`, { method: 'DELETE', headers });
+        } catch {
+          throw new Error('Could not reach the backend. The workspace was not removed from this list; please retry.');
+        }
+        if (!response.ok) {
+          if (response.status === 401 && getApiAuthHeaders().Authorization === headers.Authorization) expireApiSession();
+          const details = await response.json().catch(() => null);
+          const message = typeof details?.message === 'string' ? details.message : 'Could not delete the workspace and its Drive folder. Please retry.';
+          throw new Error(message);
+        }
+        if (!mountedRef.current || !authRef.current.isAuthenticated || getApiAuthHeaders().Authorization !== headers.Authorization) return;
+        companyListVersionRef.current += 1;
+        setCompaniesList(previous => previous.filter(company => company !== companyToRemove));
+        if (selectedCompanyRef.current === companyToRemove) {
+          setSelectedCompany(null);
+          setActiveModule('none');
+        }
+      } finally {
+        companyDeletesRef.current.delete(companyToRemove);
+      }
+    })();
+    companyDeletesRef.current.set(companyToRemove, request);
+    return request;
   };
 
   const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';

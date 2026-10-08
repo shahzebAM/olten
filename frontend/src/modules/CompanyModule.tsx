@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getApiAuthHeaders } from '../lib/apiSession';
 import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -42,6 +42,14 @@ export default function CompanyModule({
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [deletingCompany, setDeletingCompany] = useState<string | null>(null);
+  const deletingCompanyRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // --- WIDGET & DRAG AND DROP STATES ---
   const [moduleOrder, setModuleOrder] = useState<string[]>([]);
@@ -160,12 +168,22 @@ export default function CompanyModule({
     }
   };
 
-  const handleRemoveClick = (e: React.MouseEvent, company: string) => {
+  const handleRemoveClick = async (e: React.MouseEvent, company: string) => {
     e.stopPropagation();
-    const confirmName = window.prompt(`CRITICAL WARNING: This will remove the "${company}" workspace from the system.\n\nPlease type "${company}" to confirm:`);
+    if (deletingCompanyRef.current) return;
+    const confirmName = window.prompt(`This will permanently delete the "${company}" workspace, its Google Drive folder and stored documents, and their reminders.\n\nPlease type "${company}" to confirm:`);
     if (confirmName === company) {
-      onRemoveCompany(company);
-      showToast(`Workspace "${company}" deleted securely.`, "success");
+      deletingCompanyRef.current = company;
+      setDeletingCompany(company);
+      try {
+        await onRemoveCompany(company);
+        if (mountedRef.current) showToast(`Workspace "${company}" and its Drive folder deleted.`, "success");
+      } catch (error) {
+        if (mountedRef.current) showToast(error instanceof Error ? error.message : 'Could not delete the workspace. Please retry.', 'error');
+      } finally {
+        deletingCompanyRef.current = null;
+        if (mountedRef.current) setDeletingCompany(null);
+      }
     } else if (confirmName !== null) {
       showToast("Workspace name did not match. Deletion cancelled.", "error");
     }
@@ -407,7 +425,7 @@ export default function CompanyModule({
             <div className="flex flex-wrap items-center gap-3">
               {hasUsers && (
                 <>
-                  <button onClick={() => setShowAddModal(true)} className="px-5 py-2.5 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] rounded-xl font-bold transition-colors text-sm flex items-center gap-2">
+                  <button disabled={!!deletingCompany} onClick={() => setShowAddModal(true)} className="px-5 py-2.5 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] rounded-xl font-bold transition-colors text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                     Add Company
                   </button>
@@ -433,10 +451,10 @@ export default function CompanyModule({
               
               return (
                 <div key={company} className="relative group/card">
-                  <button onClick={() => onSelectCompany(company)} className={`w-full bg-white p-8 rounded-2xl shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] border border-[#E2E8F0] ${theme.borderHover} hover:shadow-md transition-all text-left flex flex-col justify-between h-[180px] group`}>
+                  <button disabled={deletingCompany === company} aria-busy={deletingCompany === company} onClick={() => onSelectCompany(company)} className={`w-full bg-white p-8 rounded-2xl shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] border border-[#E2E8F0] ${theme.borderHover} hover:shadow-md transition-all text-left flex flex-col justify-between h-[180px] group disabled:cursor-wait disabled:opacity-70`}>
                     <div>
                       <h2 className={`text-[22px] font-black ${theme.title} tracking-tight pr-8 transition-colors`}>{company}</h2>
-                      <p className="text-[13px] text-[#64748B] mt-1 font-medium">{theme.sub}</p>
+                      <p className="text-[13px] text-[#64748B] mt-1 font-medium" aria-live="polite">{deletingCompany === company ? 'Deleting workspace and Drive folder…' : theme.sub}</p>
                     </div>
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center ${theme.iconBg} group-hover:translate-x-1.5 transition-transform duration-300`}>
                       <svg className={`w-4 h-4 ${theme.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
@@ -447,9 +465,11 @@ export default function CompanyModule({
                   
                   {hasUsers && (
                     <button 
-                      onClick={(e) => handleRemoveClick(e, company)} 
-                      className="absolute top-5 right-5 p-1.5 text-[#CBD5E1] hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover/card:opacity-100"
-                      title="Delete Workspace"
+                      disabled={!!deletingCompany}
+                      onClick={(e) => { void handleRemoveClick(e, company); }}
+                      className="absolute top-5 right-5 p-1.5 text-[#CBD5E1] hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover/card:opacity-100 focus:opacity-100 disabled:cursor-wait disabled:opacity-50"
+                      title={deletingCompany === company ? 'Deleting workspace and Drive folder' : 'Delete workspace and Drive folder'}
+                      aria-label={deletingCompany === company ? `Deleting ${company}` : `Delete ${company} workspace and Drive folder`}
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
