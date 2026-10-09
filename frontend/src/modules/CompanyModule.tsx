@@ -4,6 +4,7 @@ import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSens
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import ProductQRModule from './ProductQRModule';
 
 // --- DRAG AND DROP WRAPPER COMPONENT ---
 function SortableModuleCard({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
@@ -376,6 +377,22 @@ export default function CompanyModule({
             <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-rose-500 transition-colors">{rightArrow}</div>
           </button>
         );
+
+        case 'generate_qr':
+        return (
+          <button 
+  onClick={() => onSelectModule('qr_system')} 
+  className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-indigo-300 transition-all flex flex-col items-center justify-center gap-3 group"
+>
+  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+    {/* QR Icon */}
+    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm14 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+    </svg>
+  </div>
+  <span className="font-black text-sm uppercase tracking-widest text-slate-800">QR Generator</span>
+</button>);
+        
       default:
         return null;
     }

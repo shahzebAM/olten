@@ -6,6 +6,7 @@ import PayrollModule from './modules/PayrollModule';
 import AiDocsModule from './modules/AiDocsModule';
 import MasterInventory from './modules/MasterInventory';
 import OrderSlipsModule from './modules/OrderSlipsModule';
+import ProductQRModule from './modules/ProductQRModule';
 
 // NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
@@ -23,7 +24,7 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   
-  const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os'>('none');
+const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
@@ -356,6 +357,9 @@ export default function App() {
   if (activeModule === 'sales_orders') return <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />;
   if (activeModule === 'purchase_orders') return <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+
+  // ADD THIS LINE:
+if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
 
   if (activeModule === 'users') return (
     <UserControlModule 
