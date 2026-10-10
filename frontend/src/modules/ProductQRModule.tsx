@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react'; // <--- ADD THIS LINE
+import { QRCodeSVG } from 'qrcode.react';
+
 // --- INTERFACES ---
 interface Product {
   id: number;
@@ -9,7 +10,7 @@ interface Product {
   category: string;
   sellingPrice: number;
   currentStock: number;
-  qrCodeUrl?: string;
+  qrCodeUrl?: string | null;
 }
 
 interface ProductQRModuleProps {
@@ -25,12 +26,11 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // --- QR & SECURITY STATES ---
-  const [showQRs, setShowQRs] = useState(false);
+  // --- NEW: TABS & SECURITY STATES ---
+  const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING'>('ALL');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   
-  // Create a ref to hold the printable areas
   const printRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
 
   const showToast = (msg: string, type: 'success' | 'error') => {
@@ -41,8 +41,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-    const res = await fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`);
-      // Note: If you have a dedicated 'get all products' endpoint, use it here instead of the search endpoint.
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`);
       if (!res.ok) throw new Error("Failed to fetch products");
       const data = await res.json();
       setProducts(data || []);
@@ -57,56 +56,62 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
     fetchProducts();
   }, [fetchProducts]);
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    p.sku.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // --- DERIVED DATA & FILTERS ---
+  const pendingProducts = products.filter(p => !p.qrCodeUrl);
+  const pendingCount = pendingProducts.length;
 
-const handleGenerateClick = async () => {
-    if (!showQRs) {
+  const filteredProducts = products.filter(p => {
+    // If we are on the Pending Tab, hide products that already have a QR
+    if (activeTab === 'PENDING' && p.qrCodeUrl) return false;
+    
+    // Then apply the search filter
+    return p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
+  // --- GENERATION & SECURITY LOGIC ---
+  const handleGenerateClick = async () => {
+    if (pendingCount > 0) {
       setIsLoading(true);
       try {
-        // 1. Tell backend to permanently save QRs for any missing products
         await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ company: selectedCompany })
         });
         
-        // 2. Refresh the table to grab the newly saved database URLs
         await fetchProducts(); 
-        setShowQRs(true);
-        showToast("QR Codes Saved to Database & Displayed!", "success");
+        setActiveTab('ALL'); // Switch to ALL tab so they can see the newly generated QRs!
+        showToast(`Successfully registered ${pendingCount} new QR codes!`, "success");
       } catch (e) {
-        showToast("Failed to save QR codes.", "error");
+        showToast("Failed to generate QR codes.", "error");
       } finally {
         setIsLoading(false);
       }
     } else {
+      // If there are NO pending products, prompt for Admin permission to proceed further
       setIsPasswordModalOpen(true);
     }
   };
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Simple frontend check (You can replace this with an API call to verify the admin password if you want strict security)
     if (adminPasswordInput === 'admin123' || adminPasswordInput === 'olten123' || loginUsername.toLowerCase() === 'admin') {
       setIsPasswordModalOpen(false);
       setAdminPasswordInput('');
-      setShowQRs(false); // Reset or do whatever the "second click" is supposed to do
-      showToast("QR System reset successfully.", "success");
+      // Admin confirmed: (You can add specific override logic here if needed in the future)
+      showToast("Admin verified. Database QRs are fully synced.", "success");
     } else {
       showToast("Incorrect Admin Password.", "error");
     }
   };
 
-const handlePrintQR = (product: Product) => {
+  // --- PRINT LOGIC ---
+  const handlePrintQR = (product: Product) => {
     const printContent = printRefs.current[product.id];
     if (printContent) {
       const printWindow = window.open('', '', 'width=600,height=600');
       if (printWindow) {
-        
-        // We use QuickChart for printing because it handles single print requests perfectly
+        // QuickChart is used exclusively for the hidden print window as it is extremely reliable for standalone HTML
         const qrData = encodeURIComponent(`${product.sku}  ${product.name}`);
         const qrUrl = `https://quickchart.io/qr?text=${qrData}&size=150`;
 
@@ -155,9 +160,9 @@ const handlePrintQR = (product: Product) => {
         <div className="flex gap-3">
           <button 
             onClick={handleGenerateClick} 
-            className={`px-5 py-2.5 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm border ${showQRs ? 'bg-amber-500 hover:bg-amber-600 border-amber-600' : 'bg-indigo-600 hover:bg-indigo-700 border-indigo-700'}`}
+            className={`px-5 py-2.5 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm border ${pendingCount > 0 ? 'bg-indigo-600 hover:bg-indigo-700 border-indigo-700' : 'bg-amber-500 hover:bg-amber-600 border-amber-600'}`}
           >
-            {showQRs ? 'Generate QR (Admin)' : 'Generate QR'}
+            {pendingCount > 0 ? `Generate Missing QRs (${pendingCount})` : 'Generate QR (Admin)'}
           </button>
           <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
             Back to Gateway
@@ -165,8 +170,9 @@ const handlePrintQR = (product: Product) => {
         </div>
       </header>
 
-      {/* SEARCH BAR */}
-      <div className="bg-white border-b border-slate-200 px-6 sm:px-8 py-4 shrink-0 flex items-center justify-between">
+      {/* SEARCH BAR & TABS */}
+      <div className="bg-white border-b border-slate-200 px-6 sm:px-8 py-4 shrink-0 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        
         <div className="w-full max-w-md relative">
           <svg className="w-5 h-5 absolute left-3 top-2.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input 
@@ -174,6 +180,23 @@ const handlePrintQR = (product: Product) => {
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:bg-white focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all uppercase placeholder:normal-case"
           />
         </div>
+
+        <div className="bg-slate-100 p-1 rounded-xl shadow-inner flex w-full sm:w-auto">
+          <button 
+            onClick={() => setActiveTab('ALL')} 
+            className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'ALL' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            All Products
+          </button>
+          <button 
+            onClick={() => setActiveTab('PENDING')} 
+            className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'PENDING' ? 'bg-white text-rose-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Pending QRs
+            {pendingCount > 0 && <span className="bg-rose-500 text-white px-2 py-0.5 rounded-full text-[10px] shadow-sm">{pendingCount}</span>}
+          </button>
+        </div>
+
       </div>
 
       {/* MAIN LIST */}
@@ -192,17 +215,13 @@ const handlePrintQR = (product: Product) => {
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 w-32">SKU</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 w-full">Product Description</th>
                     <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center w-24">Stock</th>
-                    <th className={`py-4 px-6 font-black text-indigo-600 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center transition-all ${showQRs ? 'w-48 opacity-100' : 'w-0 opacity-0 overflow-hidden px-0 border-none'}`}>
-                      QR Code
-                    </th>
-                    <th className={`py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-right transition-all ${showQRs ? 'w-32 opacity-100' : 'w-0 opacity-0 overflow-hidden px-0 border-none'}`}>
-                      Action
-                    </th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center w-32">QR Code</th>
+                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-right w-32">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredProducts.length === 0 ? (
-                    <tr><td colSpan={5} className="py-20 text-center text-slate-400 font-medium">No products found.</td></tr>
+                    <tr><td colSpan={5} className="py-20 text-center text-slate-400 font-medium">No products found in this view.</td></tr>
                   ) : (
                     filteredProducts.map(product => (
                       <tr key={product.id} className="hover:bg-slate-50 transition-colors h-24">
@@ -211,25 +230,29 @@ const handlePrintQR = (product: Product) => {
                         <td className="py-2 px-6 text-center font-black text-slate-500">{product.currentStock || 0}</td>
                         
                         {/* THE QR CODE CELL */}
-                        <td className={`py-2 px-6 text-center transition-all ${showQRs ? 'opacity-100' : 'w-0 opacity-0 overflow-hidden p-0'}`}>
-                          {showQRs && (
+                        <td className="py-2 px-6 text-center">
+                          {product.qrCodeUrl ? (
                             <div 
-                           ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
-                              className="flex items-center justify-center p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
+                              ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
+                              className="inline-flex p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
                             >
-                      <QRCodeSVG 
+                              <QRCodeSVG 
                                 value={`${product.sku}  ${product.name}`} 
                                 size={64} 
                                 level="M" 
                                 includeMargin={false} 
                               />
                             </div>
+                          ) : (
+                            <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200">
+                              Pending
+                            </span>
                           )}
                         </td>
 
                         {/* THE PRINT ACTION CELL */}
-                        <td className={`py-2 px-6 text-right transition-all ${showQRs ? 'opacity-100' : 'w-0 opacity-0 overflow-hidden p-0'}`}>
-                          {showQRs && (
+                        <td className="py-2 px-6 text-right">
+                          {product.qrCodeUrl && (
                             <button 
                               onClick={() => handlePrintQR(product)} 
                               className="px-4 py-2 bg-slate-900 text-white border border-slate-800 rounded-lg text-[10px] font-black uppercase hover:bg-slate-800 transition-colors shadow-sm"
