@@ -226,46 +226,70 @@ const fetchNextOsNumber = useCallback(async () => {
     else if (e.key === 'Escape') { setShowCustomerDropdown(false); setCustomerHighlightedIndex(-1); }
   };
 
-  // --- QR SCANNER INTERCEPT LOGIC ---
-  const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const scanData = scannerInput.trim();
-      if (!scanData) return;
+  // --- REFS FOR INVISIBLE SCANNER ---
+  const allProductsRef = useRef(allProducts);
+  allProductsRef.current = allProducts;
+  const draftItemsRef = useRef(draftItems);
+  draftItemsRef.current = draftItems;
+  const activeCategoryPricesRef = useRef(activeCategoryPrices);
+  activeCategoryPricesRef.current = activeCategoryPrices;
 
-      // The QR format is "SKU  Name", so we split by the double space to isolate the SKU
-      const scannedSku = scanData.split('  ')[0].trim();
-      const foundProduct = allProducts.find(p => p.sku.toUpperCase() === scannedSku.toUpperCase());
+  // --- GLOBAL INVISIBLE SCANNER LISTENER ---
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
 
-      if (foundProduct) {
-        const existingIndex = draftItems.findIndex(i => i.productId === foundProduct.id);
-        
-        if (existingIndex >= 0) {
-          // It's already in the list -> Increment Quantity by 1
-          setDraftItems(prev => prev.map((item, idx) => {
-            if (idx !== existingIndex) return item;
-            const newQty = (Number(item.requestedQty) || 0) + 1;
-            return { ...item, requestedQty: newQty, lineTotal: newQty * Number(item.unitPrice) };
-          }));
-          showToast(`+1 ${foundProduct.sku} added`, 'success');
-        } else {
-          // Not in list -> Add as new row with Qty 1
-          const priceToUse = activeCategoryPrices[foundProduct.id] !== undefined ? activeCategoryPrices[foundProduct.id] : (foundProduct.sellingPrice || 0);
-          setDraftItems(prev => [...prev, {
-            productId: foundProduct.id, sku: foundProduct.sku, productName: foundProduct.name,
-            officeStock: foundProduct.currentStock || 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null,
-            requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse
-          }]);
-          showToast(`Added ${foundProduct.sku}`, 'success');
-        }
-      } else {
-        showToast("Invalid QR or Product not found.", "error");
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const currentTime = Date.now();
+      
+      if (currentTime - lastKeyTime > 50) {
+        buffer = '';
       }
       
-      // Clear the input so it's instantly ready for the next scan
-      setScannerInput('');
-    }
-  };
+      if (e.key === 'Enter' && buffer.length > 3) {
+        const scanData = buffer.trim();
+        const scannedSku = scanData.split('  ')[0].trim();
+        const foundProduct = allProductsRef.current.find(p => p.sku.toUpperCase() === scannedSku.toUpperCase());
+
+        if (foundProduct) {
+          e.preventDefault(); 
+          
+          if (document.activeElement instanceof HTMLInputElement) {
+             document.activeElement.blur();
+          }
+
+          const existingIndex = draftItemsRef.current.findIndex(i => i.productId === foundProduct.id);
+          if (existingIndex >= 0) {
+            setDraftItems(prev => prev.map((item, idx) => {
+              if (idx !== existingIndex) return item;
+              const newQty = (Number(item.requestedQty) || 0) + 1;
+              return { ...item, requestedQty: newQty, lineTotal: newQty * Number(item.unitPrice) };
+            }));
+            showToast(`+1 ${foundProduct.sku} added`, 'success');
+          } else {
+            const priceToUse = activeCategoryPricesRef.current[foundProduct.id] !== undefined 
+              ? activeCategoryPricesRef.current[foundProduct.id] 
+              : (foundProduct.sellingPrice || 0);
+              
+            setDraftItems(prev => [...prev, {
+              productId: foundProduct.id, sku: foundProduct.sku, productName: foundProduct.name,
+              officeStock: foundProduct.currentStock || 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null,
+              requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse
+            }]);
+            showToast(`Added ${foundProduct.sku}`, 'success');
+          }
+        }
+        buffer = ''; 
+      } else if (e.key.length === 1) {
+        buffer += e.key; 
+      }
+      
+      lastKeyTime = currentTime;
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   const handleAddProduct = (p: SearchedProduct) => {
     if (draftItems.some(i => i.productId === p.id)) return showToast("Product already exists in the order.", "error");
@@ -687,18 +711,7 @@ const handleSubmit = async () => {
 
                <tr className="bg-white group">
                   
-                  {/* NEW QR SCANNER ZONE */}
-                  <td className="border border-slate-300 relative p-0 h-[48px]">
-                    <div className="absolute inset-0 flex items-center">
-                      <input 
-                        type="text" placeholder="SCAN QR..." value={scannerInput}
-                        onChange={e => setScannerInput(e.target.value)}
-                        onKeyDown={handleScannerInput}
-                        disabled={!selectedCustomer}
-                        className="w-full h-full px-2 bg-teal-50/20 text-[10px] font-black outline-none placeholder:text-teal-600 placeholder:italic focus:bg-teal-50 transition-colors uppercase text-teal-900 border-2 border-transparent focus:border-teal-400"
-                      />
-                    </div>
-                  </td>
+              <td className="border border-slate-300 bg-slate-50/50 h-[48px]"></td>
 
                   <td className="border border-slate-300 relative p-0 h-[48px] w-full">
                     <div className="absolute inset-0 flex items-center">
