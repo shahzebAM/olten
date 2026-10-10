@@ -9,6 +9,7 @@ interface Product {
   category: string;
   sellingPrice: number;
   currentStock: number;
+  qrCodeUrl?: string;
 }
 
 interface ProductQRModuleProps {
@@ -61,13 +62,27 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
     p.sku.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleGenerateClick = () => {
+const handleGenerateClick = async () => {
     if (!showQRs) {
-      // First click: Generate instantly
-      setShowQRs(true);
-      showToast("QR Codes Generated!", "success");
+      setIsLoading(true);
+      try {
+        // 1. Tell backend to permanently save QRs for any missing products
+        await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company: selectedCompany })
+        });
+        
+        // 2. Refresh the table to grab the newly saved database URLs
+        await fetchProducts(); 
+        setShowQRs(true);
+        showToast("QR Codes Saved to Database & Displayed!", "success");
+      } catch (e) {
+        showToast("Failed to save QR codes.", "error");
+      } finally {
+        setIsLoading(false);
+      }
     } else {
-      // Second click: Ask for admin password
       setIsPasswordModalOpen(true);
     }
   };
@@ -106,7 +121,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
               <div class="sticker">
                 <div class="sku">${product.sku}</div>
                 <div class="name">${product.name}</div>
-               <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${product.sku}  ${product.name}`)}" alt="QR Code" />
+               <img src="src={product.qrCodeUrl || https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${product.sku}${product.name}`)}" alt="QR Code" />
               </div>
               <script>
                 window.onload = function() { window.print(); window.close(); }
@@ -201,7 +216,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
                               className="flex items-center justify-center p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
                             >
                              <img 
-  src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${product.sku}${product.name}`)}`} 
+  src="${product.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${product.sku}${product.name}`)}`}" 
   alt={`QR for ${product.sku}`} 
   className="w-16 h-16"
 />
