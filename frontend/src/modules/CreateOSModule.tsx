@@ -31,6 +31,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [allSlips, setAllSlips] = useState<any[]>([]);
   const [productSearchResults, setProductSearchResults] = useState<SearchedProduct[]>([]);
   
+  // --- NEW SCANNER STATES ---
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [scannerInput, setScannerInput] = useState('');
+
   // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
   const [docType, setDocType] = useState<'OS' | 'QT'>('OS');
@@ -130,6 +134,15 @@ const fetchNextOsNumber = useCallback(async () => {
       }).catch(() => {});
   }, [selectedCompany, API_BASE_URL, initialCustomerId]);
 
+
+  // --- FETCH CATALOG FOR INSTANT SCANNING ---
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`)
+      .then(res => res.json())
+      .then(data => setAllProducts(data || []))
+      .catch(() => {});
+  }, [selectedCompany, API_BASE_URL]);
+
   useEffect(() => {
     if (productSearch.trim().length < 2) { setProductSearchResults([]); setHighlightedIndex(-1); return; }
     const handler = setTimeout(async () => {
@@ -211,6 +224,47 @@ const fetchNextOsNumber = useCallback(async () => {
     else if (e.key === 'ArrowUp') { e.preventDefault(); setCustomerHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
     else if (e.key === 'Enter') { e.preventDefault(); if (customerHighlightedIndex >= 0 && customerHighlightedIndex < filteredCustomers.length) handleCustomerSelect(filteredCustomers[customerHighlightedIndex]); } 
     else if (e.key === 'Escape') { setShowCustomerDropdown(false); setCustomerHighlightedIndex(-1); }
+  };
+
+  // --- QR SCANNER INTERCEPT LOGIC ---
+  const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const scanData = scannerInput.trim();
+      if (!scanData) return;
+
+      // The QR format is "SKU  Name", so we split by the double space to isolate the SKU
+      const scannedSku = scanData.split('  ')[0].trim();
+      const foundProduct = allProducts.find(p => p.sku.toUpperCase() === scannedSku.toUpperCase());
+
+      if (foundProduct) {
+        const existingIndex = draftItems.findIndex(i => i.productId === foundProduct.id);
+        
+        if (existingIndex >= 0) {
+          // It's already in the list -> Increment Quantity by 1
+          setDraftItems(prev => prev.map((item, idx) => {
+            if (idx !== existingIndex) return item;
+            const newQty = (Number(item.requestedQty) || 0) + 1;
+            return { ...item, requestedQty: newQty, lineTotal: newQty * Number(item.unitPrice) };
+          }));
+          showToast(`+1 ${foundProduct.sku} added`, 'success');
+        } else {
+          // Not in list -> Add as new row with Qty 1
+          const priceToUse = activeCategoryPrices[foundProduct.id] !== undefined ? activeCategoryPrices[foundProduct.id] : (foundProduct.sellingPrice || 0);
+          setDraftItems(prev => [...prev, {
+            productId: foundProduct.id, sku: foundProduct.sku, productName: foundProduct.name,
+            officeStock: foundProduct.currentStock || 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null,
+            requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse
+          }]);
+          showToast(`Added ${foundProduct.sku}`, 'success');
+        }
+      } else {
+        showToast("Invalid QR or Product not found.", "error");
+      }
+      
+      // Clear the input so it's instantly ready for the next scan
+      setScannerInput('');
+    }
   };
 
   const handleAddProduct = (p: SearchedProduct) => {
@@ -631,8 +685,21 @@ const handleSubmit = async () => {
                   );
                 })}
 
-                <tr className="bg-white group">
-                  <td className="border border-slate-300 bg-slate-50/50 h-[48px]"></td>
+               <tr className="bg-white group">
+                  
+                  {/* NEW QR SCANNER ZONE */}
+                  <td className="border border-slate-300 relative p-0 h-[48px]">
+                    <div className="absolute inset-0 flex items-center">
+                      <input 
+                        type="text" placeholder="SCAN QR..." value={scannerInput}
+                        onChange={e => setScannerInput(e.target.value)}
+                        onKeyDown={handleScannerInput}
+                        disabled={!selectedCustomer}
+                        className="w-full h-full px-2 bg-teal-50/20 text-[10px] font-black outline-none placeholder:text-teal-600 placeholder:italic focus:bg-teal-50 transition-colors uppercase text-teal-900 border-2 border-transparent focus:border-teal-400"
+                      />
+                    </div>
+                  </td>
+
                   <td className="border border-slate-300 relative p-0 h-[48px] w-full">
                     <div className="absolute inset-0 flex items-center">
                       <input 
