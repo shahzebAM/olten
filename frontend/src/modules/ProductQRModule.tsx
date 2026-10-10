@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-
+import { QRCodeSVG } from 'qrcode.react'; // <--- ADD THIS LINE
 // --- INTERFACES ---
 interface Product {
   id: number;
@@ -100,11 +100,16 @@ const handleGenerateClick = async () => {
     }
   };
 
-  const handlePrintQR = (product: Product) => {
+const handlePrintQR = (product: Product) => {
     const printContent = printRefs.current[product.id];
     if (printContent) {
       const printWindow = window.open('', '', 'width=600,height=600');
       if (printWindow) {
+        
+        // We use QuickChart for printing because it handles single print requests perfectly
+        const qrData = encodeURIComponent(`${product.sku}  ${product.name}`);
+        const qrUrl = `https://quickchart.io/qr?text=${qrData}&size=150`;
+
         printWindow.document.write(`
           <html>
             <head>
@@ -112,20 +117,17 @@ const handleGenerateClick = async () => {
               <style>
                 body { margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; font-family: sans-serif; }
                 .sticker { border: 2px dashed #000; padding: 20px; text-align: center; width: 250px; }
-                .sku { font-weight: bold; font-size: 24px; margin-bottom: 5px; }
-                .name { font-size: 14px; margin-bottom: 15px; color: #333; }
-                img { width: 150px; height: 150px; }
+                .sku { font-weight: black; font-size: 20px; margin-bottom: 5px; font-family: monospace; }
+                .name { font-size: 12px; font-weight: bold; margin-bottom: 15px; color: #333; }
+                img { width: 150px; height: 150px; margin: 0 auto; display: block; }
               </style>
             </head>
             <body>
               <div class="sticker">
                 <div class="sku">${product.sku}</div>
                 <div class="name">${product.name}</div>
-               <img src="src={product.qrCodeUrl || https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${product.sku}${product.name}`)}" alt="QR Code" />
+                <img src="${qrUrl}" alt="QR Code" onload="window.print(); window.close();" />
               </div>
-              <script>
-                window.onload = function() { window.print(); window.close(); }
-              </script>
             </body>
           </html>
         `);
@@ -215,11 +217,12 @@ const handleGenerateClick = async () => {
                            ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
                               className="flex items-center justify-center p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
                             >
-                             <img 
-  src="${product.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${product.sku}${product.name}`)}`}" 
-  alt={`QR for ${product.sku}`} 
-  className="w-16 h-16"
-/>
+                      <QRCodeSVG 
+                                value={`${product.sku}  ${product.name}`} 
+                                size={64} 
+                                level="M" 
+                                includeMargin={false} 
+                              />
                             </div>
                           )}
                         </td>
