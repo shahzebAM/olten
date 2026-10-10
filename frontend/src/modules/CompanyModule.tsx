@@ -95,13 +95,16 @@ export default function CompanyModule({
     return formattedUsers;
   }, [adminUsers, isAdmin, loginUsername, selectedCompany]);
 
-  useEffect(() => {
+useEffect(() => {
     if (!isGateway || isDraggingGrid) return; 
 
     const activeIds: string[] = [];
     if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
     if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
-    if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory');
+    
+    // ADD 'generate_qr' RIGHT HERE:
+    if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory', 'generate_qr'); 
+    
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
 
