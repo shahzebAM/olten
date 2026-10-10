@@ -19,6 +19,7 @@ interface Product {
   imageUrl: string; 
   barcode: string; 
   currentStock: number; 
+  cmdn?: string | null;
   createdAt: string; 
   deletedAt: string | null; 
 }
@@ -119,7 +120,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [placementPo, setPlacementPo] = useState<any>(null);
   const [placementDestinations, setPlacementDestinations] = useState<Record<string, string>>({});
 
-  const initialProductForm: any = { name: '', sku: '', category: 'General', purchasePrice: '', sellingPrice: 0, categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
+ const initialProductForm: any = { name: '', sku: '', cmdn: '', category: 'General', purchasePrice: '', sellingPrice: 0, categoryPrices: {}, minQuantity: 10, reorderLevel: 20, unit: 'pcs', isActive: true, vatSetting: 'Vatable', imageUrl: '', barcode: '', previousImageUrl: '', initialQuantity: 0, warehouseId: '', batchNumber: '', expirationDate: '' };
   const [productForm, setProductForm] = useState(initialProductForm);
   const [txForm, setTxForm] = useState({ reference: '', remarks: '', batchNumber: '', expirationDate: '' });
   
@@ -320,6 +321,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     const cleanPayload: any = {
       name: productForm.name,
       sku: productForm.sku,
+      cmdn: productForm.cmdn || null, // <--- ADD THIS LINE
       category: productForm.category || 'General',
       purchasePrice: parseFloat(String(productForm.purchasePrice)) || 0,
       sellingPrice: 0,
@@ -952,9 +954,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                   ) : (
                                     <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[8px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
                                   )}
-                                  <div className="min-w-0 flex flex-col items-start">
+                             <div className="min-w-0 flex flex-col items-start">
                                     <div className="font-bold text-xs text-slate-900 uppercase leading-tight truncate">{p.name}</div>
-                                    <div className="mt-1 font-mono text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100 truncate shadow-sm">{p.sku}</div>
+                                    <div className="mt-1 font-mono text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100 truncate shadow-sm inline-block">{p.sku}</div>
+                                    {p.cmdn && (
+                                      <div className="mt-1 font-mono text-[10px] font-black text-fuchsia-700 bg-fuchsia-50 px-2 py-0.5 rounded border border-fuchsia-200 truncate shadow-sm inline-block tracking-widest">
+                                        CMDN: {p.cmdn}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -1438,21 +1445,32 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     />
                   </div>
                 </div>
-<div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
+{/* NAME (Full Width) */}
+                <div className="flex flex-col gap-1.5 md:col-span-2"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Name *</label><input required type="text" value={productForm.name} onChange={e=>setProductForm((prev: any) => ({...prev, name: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 
+                {/* SKU */}
                 <div className="flex flex-col gap-1.5"><label className="text-xs font-bold uppercase text-slate-500 tracking-wider">SKU *</label><input required type="text" value={productForm.sku} onChange={e=>setProductForm((prev: any) => ({...prev, sku: e.target.value}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" /></div>
                 
-                {/* NEW CATEGORY INPUT WITH DATALIST */}
+                {/* NEW CMDN INPUT (Auto-formats to Uppercase) */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">CMDN Number</label>
+                  <input type="text" placeholder="e.g. CMDN-12345" value={productForm.cmdn || ''} onChange={e => setProductForm((prev: any) => ({...prev, cmdn: e.target.value.toUpperCase()}))} className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-fuchsia-500 shadow-sm text-fuchsia-900 placeholder:text-slate-300" />
+                </div>
+
+                {/* CATEGORY (With new 'Clear' button) */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Category</label>
-                  <input 
-                    type="text" 
-                    list="category-options"
-                    placeholder="e.g. General"
-                    value={productForm.category || ''} 
-                    onChange={e => setProductForm((prev: any) => ({...prev, category: e.target.value}))} 
-                    className="px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" 
-                  />
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      list="category-options"
+                      placeholder="e.g. General"
+                      value={productForm.category || ''} 
+                      onChange={e => setProductForm((prev: any) => ({...prev, category: e.target.value}))} 
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" 
+                    />
+                    <button type="button" onClick={() => setProductForm((prev: any) => ({...prev, category: ''}))} className="px-4 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 rounded-xl font-black uppercase text-[10px] transition-colors shadow-sm border border-slate-200 shrink-0">Clear</button>
+                  </div>
                   <datalist id="category-options">
                     <option value="General" />
                     {uniqueCategories.filter(c => c !== 'General').map(cat => (
@@ -1461,7 +1479,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   </datalist>
                 </div>
 
-                {/* COST PRICE (Shrunk to 1 column to fit the grid perfectly) */}
+                {/* COST PRICE */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold uppercase text-slate-500 tracking-wider">Cost Price (₱)</label>
                   <div className="relative">
