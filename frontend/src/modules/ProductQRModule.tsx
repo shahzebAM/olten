@@ -40,7 +40,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${encodeURIComponent(selectedCompany)}&q=a`); 
+    const res = await fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`);
       // Note: If you have a dedicated 'get all products' endpoint, use it here instead of the search endpoint.
       if (!res.ok) throw new Error("Failed to fetch products");
       const data = await res.json();
