@@ -803,25 +803,6 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           </div>
         </header>
 
-{isAuthorizedAdmin && (
-                    <>
-                      <button onClick={handleDownloadTemplate} className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-200 transition-colors">
-                        Get Template
-                      </button>
-
-                      {/* Hidden File Input for Excel Import */}
-                      <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleImportExcel} />
-                      
-                      <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full sm:w-auto px-5 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-emerald-100 transition-colors disabled:opacity-50">
-                        {isProcessing ? 'Importing...' : 'Import Excel'}
-                      </button>
-                      
-                      <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">
-                        Export Excel
-                      </button>
-                    </>
-                  )}
-
        {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
         <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden min-h-0">
           
@@ -869,9 +850,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   {isAuthorizedAdmin && customerCategories.length > 0 && (
                     <button onClick={() => setBulkPricingModal({ isOpen: true, tier: customerCategories[0]?.name || '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
                   )}
-               {isAuthorizedAdmin && (
+{isAuthorizedAdmin && (
                     <>
-                      {/* Hidden File Input for Excel Import */}
+                      <button onClick={handleDownloadTemplate} className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-200 transition-colors">
+                        Get Template
+                      </button>
+
                       <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleImportExcel} />
                       
                       <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full sm:w-auto px-5 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-emerald-100 transition-colors disabled:opacity-50">
