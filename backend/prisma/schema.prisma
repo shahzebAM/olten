@@ -181,6 +181,8 @@ model Product {
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
 
+  cmdn String? @db.Text
+
   quotationItems QuotationItem[]
   packingListItems PackingListItem[]
 
