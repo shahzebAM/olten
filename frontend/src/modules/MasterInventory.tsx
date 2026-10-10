@@ -698,6 +698,26 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     reader.readAsBinaryString(file);
   };
 
+  // --- DOWNLOAD BLANK TEMPLATE LOGIC ---
+  const handleDownloadTemplate = () => {
+    try {
+      // Creates a clean template with exactly one example row
+      const templateData = [{
+        "SKU": "EXAMPLE-001", 
+        "Product Name": "Sample Surgical Tool", 
+        "Master Stock": 50, 
+        "Cost Price (₱)": 1250.00
+      }];
+      const ws = XLSX.utils.json_to_sheet(templateData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Import_Template");
+      XLSX.writeFile(wb, `Product_Import_Template.xlsx`);
+      showToast("Template downloaded successfully.", "success");
+    } catch (error) { 
+      showToast("Failed to download template.", "error"); 
+    }
+  };
+
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
@@ -782,6 +802,25 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             <button onClick={onLogout} className="px-4 py-2 bg-rose-500 text-white font-bold uppercase text-[10px] sm:text-xs rounded-xl hover:bg-rose-600 transition-colors shadow-sm">Logout</button>
           </div>
         </header>
+
+{isAuthorizedAdmin && (
+                    <>
+                      <button onClick={handleDownloadTemplate} className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-200 transition-colors">
+                        Get Template
+                      </button>
+
+                      {/* Hidden File Input for Excel Import */}
+                      <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleImportExcel} />
+                      
+                      <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full sm:w-auto px-5 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-emerald-100 transition-colors disabled:opacity-50">
+                        {isProcessing ? 'Importing...' : 'Import Excel'}
+                      </button>
+                      
+                      <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">
+                        Export Excel
+                      </button>
+                    </>
+                  )}
 
        {/* LOCKED MAIN CONTAINER PREVENTS EXTERNAL SCROLLING */}
         <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden min-h-0">
