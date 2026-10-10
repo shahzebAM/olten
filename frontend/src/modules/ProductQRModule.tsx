@@ -26,7 +26,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // --- NEW: TABS & SECURITY STATES ---
+  // --- TABS & SECURITY STATES ---
   const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING'>('ALL');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -61,10 +61,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const pendingCount = pendingProducts.length;
 
   const filteredProducts = products.filter(p => {
-    // If we are on the Pending Tab, hide products that already have a QR
     if (activeTab === 'PENDING' && p.qrCodeUrl) return false;
-    
-    // Then apply the search filter
     return p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
@@ -80,7 +77,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         });
         
         await fetchProducts(); 
-        setActiveTab('ALL'); // Switch to ALL tab so they can see the newly generated QRs!
+        setActiveTab('ALL'); 
         showToast(`Successfully registered ${pendingCount} new QR codes!`, "success");
       } catch (e) {
         showToast("Failed to generate QR codes.", "error");
@@ -88,18 +85,30 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         setIsLoading(false);
       }
     } else {
-      // If there are NO pending products, prompt for Admin permission to proceed further
+      // PROMPT ADMIN IF ALL QRS ARE ALREADY GENERATED
       setIsPasswordModalOpen(true);
     }
   };
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (adminPasswordInput === 'admin123' || adminPasswordInput === 'olten123' || loginUsername.toLowerCase() === 'admin') {
       setIsPasswordModalOpen(false);
       setAdminPasswordInput('');
-      // Admin confirmed: (You can add specific override logic here if needed in the future)
-      showToast("Admin verified. Database QRs are fully synced.", "success");
+      
+      // Admin Force-Regenerate Logic (Optional: tells backend to rewrite QRs)
+      setIsLoading(true);
+      try {
+        await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany })
+        });
+        await fetchProducts();
+        showToast("Admin verified. Database QRs forcefully synced.", "success");
+      } catch (e) {
+        showToast("Sync failed.", "error");
+      } finally {
+        setIsLoading(false);
+      }
     } else {
       showToast("Incorrect Admin Password.", "error");
     }
@@ -111,7 +120,6 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
     if (printContent) {
       const printWindow = window.open('', '', 'width=600,height=600');
       if (printWindow) {
-        // QuickChart is used exclusively for the hidden print window as it is extremely reliable for standalone HTML
         const qrData = encodeURIComponent(`${product.sku}  ${product.name}`);
         const qrUrl = `https://quickchart.io/qr?text=${qrData}&size=150`;
 
@@ -150,47 +158,47 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
-      {/* HEADER */}
-      <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-10">
+      {/* RESPONSIVE HEADER */}
+      <header className="bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-8 py-4 sm:py-0 sm:h-20 shrink-0 shadow-sm z-10 gap-4 sm:gap-0">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
-            {selectedCompany} <span className="text-slate-400 font-medium">| Product QR System</span>
+            {selectedCompany} <span className="text-slate-400 font-medium">| Product QRs</span>
           </h2>
         </div>
-        <div className="flex gap-3">
+        <div className="flex w-full sm:w-auto gap-3">
           <button 
             onClick={handleGenerateClick} 
-            className={`px-5 py-2.5 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm border ${pendingCount > 0 ? 'bg-indigo-600 hover:bg-indigo-700 border-indigo-700' : 'bg-amber-500 hover:bg-amber-600 border-amber-600'}`}
+            className={`flex-1 sm:flex-none px-4 sm:px-5 py-2.5 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all shadow-sm border ${pendingCount > 0 ? 'bg-indigo-600 hover:bg-indigo-700 border-indigo-700' : 'bg-amber-500 hover:bg-amber-600 border-amber-600'}`}
           >
-            {pendingCount > 0 ? `Generate Missing QRs (${pendingCount})` : 'Generate QR (Admin)'}
+            {pendingCount > 0 ? `Generate Missing (${pendingCount})` : 'Regenerate (Admin)'}
           </button>
-          <button onClick={onBack} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
-            Back to Gateway
+          <button onClick={onBack} className="flex-1 sm:flex-none px-4 sm:px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
+            Gateway
           </button>
         </div>
       </header>
 
-      {/* SEARCH BAR & TABS */}
-      <div className="bg-white border-b border-slate-200 px-6 sm:px-8 py-4 shrink-0 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      {/* RESPONSIVE SEARCH & TABS */}
+      <div className="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 shrink-0 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         
-        <div className="w-full max-w-md relative">
+        <div className="w-full lg:max-w-md relative">
           <svg className="w-5 h-5 absolute left-3 top-2.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input 
-            type="text" placeholder="Search by SKU or Name..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+            type="text" placeholder="Search SKU or Name..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:bg-white focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all uppercase placeholder:normal-case"
           />
         </div>
 
-        <div className="bg-slate-100 p-1 rounded-xl shadow-inner flex w-full sm:w-auto">
+        <div className="bg-slate-100 p-1 rounded-xl shadow-inner flex w-full lg:w-auto overflow-x-auto">
           <button 
             onClick={() => setActiveTab('ALL')} 
-            className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'ALL' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+            className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === 'ALL' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
           >
             All Products
           </button>
           <button 
             onClick={() => setActiveTab('PENDING')} 
-            className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'PENDING' ? 'bg-white text-rose-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+            className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 whitespace-nowrap ${activeTab === 'PENDING' ? 'bg-white text-rose-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
           >
             Pending QRs
             {pendingCount > 0 && <span className="bg-rose-500 text-white px-2 py-0.5 rounded-full text-[10px] shadow-sm">{pendingCount}</span>}
@@ -204,60 +212,60 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
           
           {isLoading ? (
-            <div className="flex items-center justify-center p-20">
-              <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest">Loading Products...</div>
+            <div className="flex items-center justify-center p-10 sm:p-20">
+              <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm sm:text-base">Syncing Database...</div>
             </div>
           ) : (
             <div className="flex-1 overflow-auto w-full">
-              <table className="w-full text-left text-sm whitespace-nowrap min-w-[800px] border-collapse">
+              <table className="w-full text-left text-sm whitespace-nowrap min-w-[600px] border-collapse">
                 <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
                   <tr>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 w-32">SKU</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 w-full">Product Description</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center w-24">Stock</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-center w-32">QR Code</th>
-                    <th className="py-4 px-6 font-black text-slate-500 uppercase tracking-widest text-[10px] border-b border-slate-200 text-right w-32">Action</th>
+                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-24 sm:w-32">SKU</th>
+                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-full">Product Description</th>
+                    <th className="hidden sm:table-cell py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24">Stock</th>
+                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24 sm:w-32">QR Code</th>
+                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-right w-24 sm:w-32">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredProducts.length === 0 ? (
-                    <tr><td colSpan={5} className="py-20 text-center text-slate-400 font-medium">No products found in this view.</td></tr>
+                    <tr><td colSpan={5} className="py-12 sm:py-20 text-center text-slate-400 font-medium text-sm">No products found in this view.</td></tr>
                   ) : (
                     filteredProducts.map(product => (
-                      <tr key={product.id} className="hover:bg-slate-50 transition-colors h-24">
-                        <td className="py-2 px-6 font-mono text-sm font-black text-slate-900">{product.sku}</td>
-                        <td className="py-2 px-6 font-bold text-slate-700 uppercase truncate max-w-[300px] whitespace-normal leading-tight">{product.name}</td>
-                        <td className="py-2 px-6 text-center font-black text-slate-500">{product.currentStock || 0}</td>
+                      <tr key={product.id} className="hover:bg-slate-50 transition-colors h-20 sm:h-24">
+                        <td className="py-2 px-4 sm:px-6 font-mono text-xs sm:text-sm font-black text-slate-900">{product.sku}</td>
+                        <td className="py-2 px-4 sm:px-6 font-bold text-slate-700 text-xs sm:text-sm uppercase truncate max-w-[200px] sm:max-w-[300px] whitespace-normal leading-tight">{product.name}</td>
+                        <td className="hidden sm:table-cell py-2 px-4 sm:px-6 text-center font-black text-slate-500">{product.currentStock || 0}</td>
                         
                         {/* THE QR CODE CELL */}
-                        <td className="py-2 px-6 text-center">
+                        <td className="py-2 px-4 sm:px-6 text-center">
                           {product.qrCodeUrl ? (
                             <div 
                               ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
-                              className="inline-flex p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
+                              className="inline-flex p-1.5 sm:p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
                             >
                               <QRCodeSVG 
                                 value={`${product.sku}  ${product.name}`} 
-                                size={64} 
+                                size={50} // Slightly smaller on mobile
                                 level="M" 
                                 includeMargin={false} 
                               />
                             </div>
                           ) : (
-                            <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200">
+                            <span className="text-[9px] sm:text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-rose-200">
                               Pending
                             </span>
                           )}
                         </td>
 
                         {/* THE PRINT ACTION CELL */}
-                        <td className="py-2 px-6 text-right">
+                        <td className="py-2 px-4 sm:px-6 text-right">
                           {product.qrCodeUrl && (
                             <button 
                               onClick={() => handlePrintQR(product)} 
-                              className="px-4 py-2 bg-slate-900 text-white border border-slate-800 rounded-lg text-[10px] font-black uppercase hover:bg-slate-800 transition-colors shadow-sm"
+                              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-900 text-white border border-slate-800 rounded-lg text-[9px] sm:text-[10px] font-black uppercase hover:bg-slate-800 transition-colors shadow-sm"
                             >
-                              Print Sticker
+                              Print
                             </button>
                           )}
                         </td>
@@ -275,12 +283,12 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
       {isPasswordModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Admin Verification</h3>
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight uppercase">Admin Verification</h3>
               <button onClick={() => setIsPasswordModalOpen(false)} className="text-slate-400 hover:text-slate-700 font-black text-xl">✕</button>
             </div>
-            <form onSubmit={handlePasswordSubmit} className="p-6 flex flex-col gap-4">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Enter Admin Password to proceed:</p>
+            <form onSubmit={handlePasswordSubmit} className="p-5 sm:p-6 flex flex-col gap-4">
+              <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">Enter Admin Password to proceed:</p>
               <input 
                 type="password" 
                 autoFocus
