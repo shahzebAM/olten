@@ -19,6 +19,16 @@ export class OrderSlipsController {
     return allCompanyCustomers.filter(c => (c.name && c.name.toLowerCase().includes(searchString))).slice(0, 15);
   }
 
+  @Get('all-products')
+  async getAllProducts(@Query('company') company: string) {
+    if (!company) return [];
+    return await this.prisma.product.findMany({
+      where: { company },
+      select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
   @Get('search-products')
   async searchProducts(@Query('company') company: string, @Query('q') q: string) {
     if (!company || !q || q.length < 2) return [];
