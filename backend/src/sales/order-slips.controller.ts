@@ -19,6 +19,30 @@ export class OrderSlipsController {
     return allCompanyCustomers.filter(c => (c.name && c.name.toLowerCase().includes(searchString))).slice(0, 15);
   }
 
+  @Post('save-qrs')
+  async saveProductQRs(@Body() data: { company: string }) {
+    if (!data.company) throw new BadRequestException('Company is required');
+
+    // Find all products that don't have a QR code saved yet
+    const productsToUpdate = await this.prisma.product.findMany({ 
+      where: { company: data.company, qrCodeUrl: null } 
+    });
+
+    if (productsToUpdate.length === 0) return { message: 'All products already have QRs saved!' };
+
+    // Batch update them in the database
+    const updates = productsToUpdate.map(p => {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${p.sku}${p.name}`)}`;
+      return this.prisma.product.update({
+        where: { id: p.id },
+        data: { qrCodeUrl: qrUrl }
+      });
+    });
+
+    await this.prisma.$transaction(updates);
+    return { message: `Successfully saved ${updates.length} QR codes to database.` };
+  }
+
   @Get('all-products')
   async getAllProducts(@Query('company') company: string) {
     if (!company) return [];

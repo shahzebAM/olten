@@ -166,6 +166,7 @@ model Product {
   company       String
   name          String
   sku           String
+  qrCodeUrl     String?   @db.Text
   category      String
   purchasePrice Float
   sellingPrice  Float
