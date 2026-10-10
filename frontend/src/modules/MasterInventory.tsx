@@ -84,6 +84,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- FILTERS ---
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
@@ -622,6 +623,81 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     } catch (error) { showToast("Failed to export Excel file.", "error"); }
   };
 
+  // --- BULK EXCEL IMPORT LOGIC ---
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (!window.confirm("Import catalog? Existing SKUs will have their names, cost prices, and stock updated. New SKUs will be created.")) {
+       if (fileInputRef.current) fileInputRef.current.value = '';
+       return;
+    }
+
+    setIsProcessing(true);
+    const reader = new FileReader();
+    
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        const importPromises = data.map(async (row) => {
+          // Smart column header matching (works with your exported file or a fresh template)
+          const sku = String(row['SKU'] || row['sku'] || '').trim();
+          const name = String(row['Product Name'] || row['Name'] || row['name'] || '').trim();
+          const qty = parseInt(row['Master Stock'] || row['Qty'] || row['Quantity'] || row['qty'] || 0, 10) || 0;
+          const costPrice = parseFloat(row['Cost Price (₱)'] || row['Cost Price'] || row['Cost'] || 0) || 0;
+
+          if (!sku || !name) return; // Skip empty rows
+
+          const existingProd = products.find(p => p.sku.toUpperCase() === sku.toUpperCase());
+
+          try {
+              if (existingProd) {
+                  // UPDATE EXISTING PRODUCT
+                  await fetch(`${API_BASE_URL}/products/${existingProd.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name, purchasePrice: costPrice, currentStock: qty })
+                  });
+              } else {
+                  // CREATE NEW PRODUCT
+                  const payload = {
+                    sku, name, purchasePrice: costPrice, company: selectedCompany,
+                    category: 'General', sellingPrice: 0, minQuantity: 10, reorderLevel: 20, 
+                    unit: 'pcs', vatSetting: 'NONE', barcode: sku.toUpperCase(),
+                    initialQuantity: qty, username: loginUsername
+                  };
+                  await fetch(`${API_BASE_URL}/products`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                  });
+              }
+              successCount++;
+          } catch (err) {
+              errorCount++;
+          }
+        });
+
+        await Promise.all(importPromises);
+        showToast(`Import complete. Success: ${successCount}. Errors: ${errorCount}.`, successCount > 0 ? 'success' : 'error');
+        fetchAllData();
+      } catch (error) {
+        showToast("Error processing Excel file.", "error");
+      } finally {
+        setIsProcessing(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategoryFilter === 'ALL' || p.category === selectedCategoryFilter;
@@ -754,8 +830,19 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   {isAuthorizedAdmin && customerCategories.length > 0 && (
                     <button onClick={() => setBulkPricingModal({ isOpen: true, tier: customerCategories[0]?.name || '', percentage: '' })} className="w-full sm:w-auto px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-amber-100 transition-colors">Bulk Pricing</button>
                   )}
-                  {isAuthorizedAdmin && (
-                    <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">Export Excel</button>
+               {isAuthorizedAdmin && (
+                    <>
+                      {/* Hidden File Input for Excel Import */}
+                      <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleImportExcel} />
+                      
+                      <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full sm:w-auto px-5 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-emerald-100 transition-colors disabled:opacity-50">
+                        {isProcessing ? 'Importing...' : 'Import Excel'}
+                      </button>
+                      
+                      <button onClick={handleExportExcel} className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-slate-50 transition-colors">
+                        Export Excel
+                      </button>
+                    </>
                   )}
                   <button onClick={() => { setProductForm(initialProductForm); setProductModal({ isOpen: true, editingId: null }); }} className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 text-white font-bold uppercase text-[10px] rounded-xl shadow-sm hover:bg-blue-700 transition-colors">+ Register Item</button>
                 </div>
