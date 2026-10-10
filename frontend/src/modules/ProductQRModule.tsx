@@ -106,7 +106,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
               <div class="sticker">
                 <div class="sku">${product.sku}</div>
                 <div class="name">${product.name}</div>
-                <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`SKU:${product.sku} \vert{} Name:${product.name}`)}" alt="QR Code" />
+               <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`${product.sku}  ${product.name}`)}" alt="QR Code" />
               </div>
               <script>
                 window.onload = function() { window.print(); window.close(); }
@@ -200,11 +200,11 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
                            ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
                               className="flex items-center justify-center p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
                             >
-                              <img 
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`SKU:${product.sku} \vert{} Name:${product.name}`)}`} 
-                                alt={`QR for ${product.sku}`} 
-                                className="w-16 h-16"
-                              />
+                             <img 
+  src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${product.sku}${product.name}`)}`} 
+  alt={`QR for ${product.sku}`} 
+  className="w-16 h-16"
+/>
                             </div>
                           )}
                         </td>
