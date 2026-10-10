@@ -48,7 +48,7 @@ export class OrderSlipsController {
     if (!company) return [];
     return await this.prisma.product.findMany({
       where: { company },
-      select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true },
+     select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true, qrCodeUrl: true },
       orderBy: { name: 'asc' }
     });
   }
