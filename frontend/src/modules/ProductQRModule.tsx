@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 
 // --- INTERFACES ---
@@ -31,6 +31,10 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   
+  // --- PAGINATION STATE ---
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50; // Rendering 50 QR codes is instant!
+  
   const printRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
 
   const showToast = (msg: string, type: 'success' | 'error') => {
@@ -60,10 +64,21 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const pendingProducts = products.filter(p => !p.qrCodeUrl);
   const pendingCount = pendingProducts.length;
 
-  const filteredProducts = products.filter(p => {
-    if (activeTab === 'PENDING' && p.qrCodeUrl) return false;
-    return p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
-  });
+  const filteredProducts = useMemo(() => {
+    return products.filter(p => {
+      if (activeTab === 'PENDING' && p.qrCodeUrl) return false;
+      return p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+    });
+  }, [products, activeTab, searchQuery]);
+
+  // Reset to page 1 whenever user searches or switches tabs
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, activeTab]);
+
+  // --- PAGINATION LOGIC ---
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
+  const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   // --- GENERATION & SECURITY LOGIC ---
   const handleGenerateClick = async () => {
@@ -85,7 +100,6 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         setIsLoading(false);
       }
     } else {
-      // PROMPT ADMIN IF ALL QRS ARE ALREADY GENERATED
       setIsPasswordModalOpen(true);
     }
   };
@@ -96,7 +110,6 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
       setIsPasswordModalOpen(false);
       setAdminPasswordInput('');
       
-      // Admin Force-Regenerate Logic (Optional: tells backend to rewrite QRs)
       setIsLoading(true);
       try {
         await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
@@ -158,7 +171,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         </div>
       )}
 
-      {/* RESPONSIVE HEADER */}
+      {/* HEADER */}
       <header className="bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-8 py-4 sm:py-0 sm:h-20 shrink-0 shadow-sm z-10 gap-4 sm:gap-0">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
@@ -178,7 +191,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
         </div>
       </header>
 
-      {/* RESPONSIVE SEARCH & TABS */}
+      {/* SEARCH BAR & TABS */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 shrink-0 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         
         <div className="w-full lg:max-w-md relative">
@@ -207,8 +220,8 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
 
       </div>
 
-      {/* MAIN LIST */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+      {/* MAIN LIST WITH PAGINATION */}
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 flex flex-col">
         <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
           
           {isLoading ? (
@@ -216,65 +229,90 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
               <div className="font-bold text-indigo-600 animate-pulse uppercase tracking-widest text-sm sm:text-base">Syncing Database...</div>
             </div>
           ) : (
-            <div className="flex-1 overflow-auto w-full">
-              <table className="w-full text-left text-sm whitespace-nowrap min-w-[600px] border-collapse">
-                <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
-                  <tr>
-                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-24 sm:w-32">SKU</th>
-                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-full">Product Description</th>
-                    <th className="hidden sm:table-cell py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24">Stock</th>
-                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24 sm:w-32">QR Code</th>
-                    <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-right w-24 sm:w-32">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredProducts.length === 0 ? (
-                    <tr><td colSpan={5} className="py-12 sm:py-20 text-center text-slate-400 font-medium text-sm">No products found in this view.</td></tr>
-                  ) : (
-                    filteredProducts.map(product => (
-                      <tr key={product.id} className="hover:bg-slate-50 transition-colors h-20 sm:h-24">
-                        <td className="py-2 px-4 sm:px-6 font-mono text-xs sm:text-sm font-black text-slate-900">{product.sku}</td>
-                        <td className="py-2 px-4 sm:px-6 font-bold text-slate-700 text-xs sm:text-sm uppercase truncate max-w-[200px] sm:max-w-[300px] whitespace-normal leading-tight">{product.name}</td>
-                        <td className="hidden sm:table-cell py-2 px-4 sm:px-6 text-center font-black text-slate-500">{product.currentStock || 0}</td>
-                        
-                        {/* THE QR CODE CELL */}
-                        <td className="py-2 px-4 sm:px-6 text-center">
-                          {product.qrCodeUrl ? (
-                            <div 
-                              ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
-                              className="inline-flex p-1.5 sm:p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
-                            >
-                              <QRCodeSVG 
-                                value={`${product.sku}  ${product.name}`} 
-                                size={50} // Slightly smaller on mobile
-                                level="M" 
-                                includeMargin={false} 
-                              />
-                            </div>
-                          ) : (
-                            <span className="text-[9px] sm:text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-rose-200">
-                              Pending
-                            </span>
-                          )}
-                        </td>
+            <>
+              <div className="flex-1 overflow-auto w-full">
+                <table className="w-full text-left text-sm whitespace-nowrap min-w-[600px] border-collapse">
+                  <thead className="bg-slate-50 shadow-sm sticky top-0 z-20">
+                    <tr>
+                      <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-24 sm:w-32">SKU</th>
+                      <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 w-full">Product Description</th>
+                      <th className="hidden sm:table-cell py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24">Stock</th>
+                      <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-center w-24 sm:w-32">QR Code</th>
+                      <th className="py-3 sm:py-4 px-4 sm:px-6 font-black text-slate-500 uppercase tracking-widest text-[9px] sm:text-[10px] border-b border-slate-200 text-right w-24 sm:w-32">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {paginatedProducts.length === 0 ? (
+                      <tr><td colSpan={5} className="py-12 sm:py-20 text-center text-slate-400 font-medium text-sm">No products found in this view.</td></tr>
+                    ) : (
+                      paginatedProducts.map(product => (
+                        <tr key={product.id} className="hover:bg-slate-50 transition-colors h-20 sm:h-24">
+                          <td className="py-2 px-4 sm:px-6 font-mono text-xs sm:text-sm font-black text-slate-900">{product.sku}</td>
+                          <td className="py-2 px-4 sm:px-6 font-bold text-slate-700 text-xs sm:text-sm uppercase truncate max-w-[200px] sm:max-w-[300px] whitespace-normal leading-tight">{product.name}</td>
+                          <td className="hidden sm:table-cell py-2 px-4 sm:px-6 text-center font-black text-slate-500">{product.currentStock || 0}</td>
+                          
+                          {/* THE QR CODE CELL */}
+                          <td className="py-2 px-4 sm:px-6 text-center">
+                            {product.qrCodeUrl ? (
+                              <div 
+                                ref={(el: HTMLDivElement | null) => { printRefs.current[product.id] = el; }}
+                                className="inline-flex p-1.5 sm:p-2 bg-white border border-slate-200 rounded-lg shadow-sm"
+                              >
+                                <QRCodeSVG 
+                                  value={`${product.sku}  ${product.name}`} 
+                                  size={50}
+                                  level="M" 
+                                  includeMargin={false} 
+                                />
+                              </div>
+                            ) : (
+                              <span className="text-[9px] sm:text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-rose-200">
+                                Pending
+                              </span>
+                            )}
+                          </td>
 
-                        {/* THE PRINT ACTION CELL */}
-                        <td className="py-2 px-4 sm:px-6 text-right">
-                          {product.qrCodeUrl && (
-                            <button 
-                              onClick={() => handlePrintQR(product)} 
-                              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-900 text-white border border-slate-800 rounded-lg text-[9px] sm:text-[10px] font-black uppercase hover:bg-slate-800 transition-colors shadow-sm"
-                            >
-                              Print
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                          {/* THE PRINT ACTION CELL */}
+                          <td className="py-2 px-4 sm:px-6 text-right">
+                            {product.qrCodeUrl && (
+                              <button 
+                                onClick={() => handlePrintQR(product)} 
+                                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-900 text-white border border-slate-800 rounded-lg text-[9px] sm:text-[10px] font-black uppercase hover:bg-slate-800 transition-colors shadow-sm"
+                              >
+                                Print
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* PAGINATION FOOTER */}
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredProducts.length)} of {filteredProducts.length}
+                </span>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                    disabled={currentPage === 1}
+                    className="px-4 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-md text-xs font-black uppercase tracking-widest disabled:opacity-30 transition-all hover:bg-slate-100"
+                  >
+                    Prev
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+                    disabled={currentPage === totalPages}
+                    className="px-4 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-md text-xs font-black uppercase tracking-widest disabled:opacity-30 transition-all hover:bg-slate-100"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
       </main>
