@@ -954,8 +954,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                   ) : (
                                     <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-[8px] font-bold uppercase text-center text-slate-300 cursor-pointer shrink-0" onClick={() => { if(globalImageVault[p.sku]) setPreviewImage(globalImageVault[p.sku]); }}>No Img</div>
                                   )}
-                             <div className="min-w-0 flex flex-col items-start">
-                                    <div className="font-bold text-xs text-slate-900 uppercase leading-tight truncate">{p.name}</div>
+                             <div className="min-w-0 flex flex-col items-start w-full">
+                                    <div className="font-bold text-xs text-slate-900 uppercase leading-tight whitespace-normal break-words max-w-[300px] xl:max-w-full">{p.name}</div>
                                     <div className="mt-1 font-mono text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100 truncate shadow-sm inline-block">{p.sku}</div>
                                     {p.cmdn && (
                                       <div className="mt-1 font-mono text-[10px] font-black text-fuchsia-700 bg-fuchsia-50 px-2 py-0.5 rounded border border-fuchsia-200 truncate shadow-sm inline-block tracking-widest">
