@@ -111,6 +111,28 @@ export class ImportFilesController {
     });
   }
 
+  @Post(':id/link-document')
+  async linkDocument(@Param('id') id: string, @Body() body: { documentId: number; docLinkStatus?: string }) {
+    if (!body?.documentId) throw new BadRequestException('documentId is required');
+    const imp = await prisma.importFile.findUnique({ where: { id } });
+    if (!imp) throw new NotFoundException('Import file not found');
+    return prisma.document.update({
+      where: { id: Number(body.documentId) },
+      data: {
+        importFileId: id,
+        docLinkStatus: body.docLinkStatus ?? 'received',
+      },
+    });
+  }
+
+  @Delete(':id/unlink-document/:docId')
+  async unlinkDocument(@Param('id') id: string, @Param('docId') docId: string) {
+    return prisma.document.update({
+      where: { id: Number(docId) },
+      data: { importFileId: null, docLinkStatus: null },
+    });
+  }
+
   @Delete(':id')
   async remove(@Param('id') id: string) {
     const imp = await prisma.importFile.findUnique({ where: { id }, include: { shipments: true } });
@@ -262,6 +284,37 @@ export class ShipmentsController {
   async unlinkPo(@Param('id') shipmentId: string, @Param('poId') poId: string) {
     await prisma.shipmentPO.delete({ where: { shipmentId_poId: { shipmentId, poId } } }).catch(() => {});
     return { message: 'PO unlinked from shipment' };
+  }
+
+  @Post(':id/link-document')
+  async linkDocument(@Param('id') id: string, @Body() body: { documentId: number; docLinkStatus?: string }) {
+    if (!body?.documentId) throw new BadRequestException('documentId is required');
+    const shp = await prisma.shipment.findUnique({ where: { id } });
+    if (!shp) throw new NotFoundException('Shipment not found');
+    return prisma.document.update({
+      where: { id: Number(body.documentId) },
+      data: {
+        shipmentId: id,
+        docLinkStatus: body.docLinkStatus ?? 'received',
+      },
+    });
+  }
+
+  @Delete(':id/unlink-document/:docId')
+  async unlinkDocument(@Param('id') id: string, @Param('docId') docId: string) {
+    return prisma.document.update({
+      where: { id: Number(docId) },
+      data: { shipmentId: null, docLinkStatus: null },
+    });
+  }
+
+  @Patch('document-status/:docId')
+  async updateDocStatus(@Param('docId') docId: string, @Body() body: { docLinkStatus: string }) {
+    if (!body?.docLinkStatus) throw new BadRequestException('docLinkStatus is required');
+    return prisma.document.update({
+      where: { id: Number(docId) },
+      data: { docLinkStatus: body.docLinkStatus },
+    });
   }
 
   @Delete(':id')

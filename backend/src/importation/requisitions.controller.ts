@@ -259,6 +259,100 @@ export class SupplierQuotationsController {
     });
   }
 
+  @Post(':id/generate-po')
+  async generatePo(@Param('id') id: string, @Body() body: { user: string }) {
+    if (!body?.user) throw new BadRequestException('user is required');
+    const sq = await prisma.supplierQuotation.findUnique({
+      where: { id },
+      include: { items: true, requisition: true },
+    });
+    if (!sq) throw new NotFoundException('Quotation not found');
+    if (sq.status !== 'Approved') throw new BadRequestException('Only approved quotations can generate a Purchase Order.');
+
+    // Find or create Supplier record if needed
+    let supplierId = sq.supplierId;
+    if (!supplierId) {
+      let supp = await prisma.supplier.findFirst({
+        where: { legalName: sq.supplierName, company: sq.requisition.company },
+      });
+      if (!supp) {
+        supp = await prisma.supplier.create({
+          data: {
+            company: sq.requisition.company,
+            legalName: sq.supplierName,
+            tradeName: sq.supplierName,
+            tin: 'N/A',
+            address: 'International',
+            paymentTerms: sq.paymentTerms ?? 'Net 30',
+          },
+        });
+      }
+      supplierId = supp.id;
+    }
+
+    // Next PO Number
+    const lastPo = await prisma.purchaseOrder.findFirst({
+      where: { company: sq.requisition.company },
+      orderBy: { createdAt: 'desc' },
+    });
+    let nextNum = 1;
+    let nextPoNumber = 'PO-000001';
+    if (lastPo && lastPo.poNumber.match(/(\d+)$/)) {
+      const match = lastPo.poNumber.match(/(\d+)$/);
+      if (match) {
+        nextNum = parseInt(match[0], 10) + 1;
+        const prefix = lastPo.poNumber.substring(0, match.index);
+        const padding = match[0].length;
+        nextPoNumber = `${prefix}${String(nextNum).padStart(padding, '0')}`;
+      }
+    }
+
+    return prisma.$transaction(async (tx) => {
+      let calculatedSubtotal = 0;
+      const cleanItems = sq.items.map((item) => {
+        const lineTotal = Math.round(Number(item.lineTotal) * 100) / 100;
+        calculatedSubtotal += lineTotal;
+        return {
+          productId: item.productId ? Number(item.productId) : 0,
+          sku: item.sku ?? 'N/A',
+          productName: item.productName,
+          requestedQty: Math.max(1, Math.round(Number(item.quotedQty))),
+          unitCost: Number(item.unitPricePhp),
+          lineTotal,
+        };
+      });
+
+      calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
+
+      const createdPo = await tx.purchaseOrder.create({
+        data: {
+          poNumber: nextPoNumber,
+          company: sq.requisition.company,
+          createdBy: body.user,
+          supplierId,
+          requisitionId: sq.requisitionId,
+          subtotal: calculatedSubtotal,
+          vatAmount: 0,
+          grandTotal: calculatedSubtotal,
+          vatApplied: false,
+          status: 'Generated',
+          items: {
+            create: cleanItems,
+          },
+        },
+        include: { items: true, supplier: true },
+      });
+
+      // Update PR status to PO Issued
+      await tx.purchaseRequisition.update({
+        where: { id: sq.requisitionId },
+        data: { status: 'PO Issued' },
+      });
+
+      return createdPo;
+    });
+  }
+
   @Delete(':id')
   async remove(@Param('id') id: string) {
     const sq = await prisma.supplierQuotation.findUnique({ where: { id } });

@@ -13,6 +13,11 @@ import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
 import SupplierModule from './modules/SupplierModule';
+// Phase 1: Importation Pipeline
+import PurchaseRequisitionModule from './modules/PurchaseRequisitionModule';
+import ImportTrackerModule from './modules/ImportTrackerModule';
+import CustomsClearanceModule from './modules/CustomsClearanceModule';
+import GRNModule from './modules/GRNModule';
 import { resolveApiConfig } from './lib/apiConfig';
 import { clearApiSession, getApiAuthHeaders, expireApiSession } from './lib/apiSession';
 
@@ -24,7 +29,7 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   
-const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system'>('none');
+const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system' | 'purchase_requisitions' | 'import_tracker' | 'customs_clearance' | 'grn'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
@@ -301,7 +306,8 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
       const requiredPermission = 
         (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os') ? 'sales' :
         (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
-        (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' : 
+        (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' :
+        (activeModule === 'purchase_requisitions' || activeModule === 'import_tracker' || activeModule === 'customs_clearance' || activeModule === 'grn') ? 'purchasing' :
         activeModule;
 
       const isGloballyDisabled = globalModules[requiredPermission] === false;
@@ -368,6 +374,12 @@ if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selec
       companiesList={companiesList} onBack={() => setActiveModule('none')} onLogout={handleLogout} 
     />
   );
+
+  // Phase 1: Importation Pipeline
+  if (activeModule === 'purchase_requisitions') return <PurchaseRequisitionModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'import_tracker') return <ImportTrackerModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onOpenCustoms={() => setActiveModule('customs_clearance')} onOpenGRN={() => setActiveModule('grn')} />;
+  if (activeModule === 'customs_clearance') return <CustomsClearanceModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'grn') return <GRNModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
 
   return null;
   };

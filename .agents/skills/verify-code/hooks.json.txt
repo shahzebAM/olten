@@ -1,0 +1,8 @@
+{
+  "onFileWrite": [
+    {
+      "command": "npx prettier --write \"${FILE_PATH}\"",
+      "description": "Automatically format the file using Prettier after the agent modifies it."
+    }
+  ]
+}

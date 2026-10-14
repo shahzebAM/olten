@@ -12,6 +12,10 @@ import { ProcurementController } from './sales/purchase-orders.controller';
 import { AuthSessionModule } from './auth/auth-session.module';
 import { PackingListsController } from './sales/packing-lists.controller';
 import { QuotationsController } from './sales/quotations.controller';
+import { RequisitionsController, SupplierQuotationsController } from './importation/requisitions.controller';
+import { ImportFilesController, ShipmentsController } from './importation/shipments.controller';
+import { CustomsController } from './importation/customs.controller';
+import { GoodsReceiptController } from './importation/grn.controller';
 
 @Module({
   imports: [
@@ -28,7 +32,14 @@ import { QuotationsController } from './sales/quotations.controller';
     OrderSlipsController,
     ProcurementController,
     PackingListsController,
-    QuotationsController
+    QuotationsController,
+    // Phase 1: Importation pipeline
+    RequisitionsController,
+    SupplierQuotationsController,
+    ImportFilesController,
+    ShipmentsController,
+    CustomsController,
+    GoodsReceiptController,
   ],
   providers: [AppService],
 })
