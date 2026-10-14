@@ -128,6 +128,13 @@ model Document {
   updatedAt           DateTime @default(now()) @updatedAt
 
   notifications       ExpiryNotification[]
+
+  // --- PHASE 1: Link documents to import files & shipments ---
+  importFileId        String?
+  importFile          ImportFile? @relation(fields: [importFileId], references: [id])
+  shipmentId          String?
+  shipment            Shipment?   @relation(fields: [shipmentId], references: [id])
+  docLinkStatus       String?     // not_requested, requested, received, under_review, accepted, rejected, expired
 }
 
 // 2. Create or update your notification model
@@ -510,9 +517,16 @@ model PurchaseOrder {
   receivedAt  DateTime?
   osReference String?  // Links directly to the OS it was generated from
 
-  items       PurchaseOrderItem[]
-  supplierId   String?
-  supplier     Supplier? @relation(fields: [supplierId], references: [id])
+  items         PurchaseOrderItem[]
+  supplierId    String?
+  supplier      Supplier?           @relation(fields: [supplierId], references: [id])
+
+  // --- PHASE 1: many-to-many link to Shipments ---
+  shipmentLinks ShipmentPO[]
+
+  // --- PHASE 1: link from PR approval ---
+  requisitionId String?
+  requisition   PurchaseRequisition? @relation(fields: [requisitionId], references: [id])
 }
 
 model PurchaseOrderItem {
@@ -550,4 +564,267 @@ model DocumentReminder {
 
   // Prevents the cron job from creating duplicate 30-day reminders for the same document
   @@unique([documentId, reminderType])
+}
+
+
+// ==========================================
+// PHASE 1: PURCHASE REQUISITIONS & QUOTATIONS
+// ==========================================
+
+model PurchaseRequisition {
+  id          String   @id @default(uuid())
+  prNumber    String   @unique // PR-YYYY-XXXXXX
+  company     String
+  requestedBy String
+  department  String?
+  purpose     String?
+  status      String   @default("Draft") // Draft, Pending Approval, Approved, Rejected, PO Issued
+  priority    String   @default("Normal") // Low, Normal, High, Urgent
+  neededBy    DateTime?
+  approvedBy  String?
+  approvedAt  DateTime?
+  rejectedBy  String?
+  rejectedAt  DateTime?
+  rejectionReason String?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       PurchaseRequisitionItem[]
+  quotations  SupplierQuotation[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([company])
+}
+
+model PurchaseRequisitionItem {
+  id              String              @id @default(uuid())
+  requisitionId   String
+  requisition     PurchaseRequisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  productId       Int?
+  sku             String?
+  productName     String
+  requestedQty    Float
+  unit            String              @default("pcs")
+  estimatedCost   Float?
+  notes           String?
+}
+
+model SupplierQuotation {
+  id               String              @id @default(uuid())
+  sqNumber         String              @unique // SQ-YYYY-XXXXXX
+  requisitionId    String
+  requisition      PurchaseRequisition @relation(fields: [requisitionId], references: [id])
+
+  supplierId       String?
+  supplierName     String
+  currency         String              @default("PHP")
+  exchangeRate     Float               @default(1.0)
+  paymentTerms     String?
+  leadTimeDays     Int?
+  validUntil       DateTime?
+  status           String              @default("Pending") // Pending, Approved, Rejected
+  approvedBy       String?
+  approvedAt       DateTime?
+  notes            String?             @db.Text
+  createdBy        String
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  items            SupplierQuotationItem[]
+
+  @@index([requisitionId])
+}
+
+model SupplierQuotationItem {
+  id              String            @id @default(uuid())
+  quotationId     String
+  quotation       SupplierQuotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  productId       Int?
+  sku             String?
+  productName     String
+  moq             Float             @default(1)
+  quotedQty       Float
+  unitPriceForeign Float
+  unitPricePhp    Float             // unitPriceForeign * exchangeRate
+  lineTotal       Float
+}
+
+// ==========================================
+// PHASE 1: IMPORT FILES & SHIPMENT TRACKER
+// ==========================================
+
+model ImportFile {
+  id            String     @id @default(uuid())
+  impNumber     String     @unique // IMP-YYYY-XXXXXX
+  company       String
+  title         String?
+  supplierId    String?
+  supplierName  String?
+  origin        String?    // Country of origin
+  status        String     @default("Open") // Open, In Transit, Arrived, Cleared, Closed, Cancelled
+  notes         String?    @db.Text
+  createdBy     String
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  shipments     Shipment[]
+  documents     Document[]
+
+  @@index([company])
+}
+
+model Shipment {
+  id              String       @id @default(uuid())
+  shpNumber       String       @unique // SHP-YYYY-XXXXXX
+  importFileId    String
+  importFile      ImportFile   @relation(fields: [importFileId], references: [id])
+
+  company         String
+  forwarder       String?
+  carrier         String?
+  shippingMode    String?      // Sea, Air, Land, Courier
+  blAwbNumber     String?      // Bill of Lading or Airway Bill
+  containerRef    String?
+  portOfOrigin    String?
+  portOfDestination String?
+  etd             DateTime?    // Estimated Time of Departure
+  eta             DateTime?    // Estimated Time of Arrival
+  revisedEta      DateTime?
+  actualArrival   DateTime?
+  status          String       @default("Pending") // Pending, In Transit, Arrived, Under Clearance, Released, Delivered, Delayed, Cancelled
+  delayReason     String?
+  notes           String?      @db.Text
+  createdBy       String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  poLinks         ShipmentPO[]
+  customsEntries  CustomsEntry[]
+  goodsReceipts   GoodsReceipt[]
+  documents       Document[]
+
+  @@index([importFileId])
+  @@index([company])
+}
+
+// Many-to-many: a shipment can contain multiple POs; a PO can be split across shipments
+model ShipmentPO {
+  id          String        @id @default(uuid())
+  shipmentId  String
+  shipment    Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  poId        String
+  po          PurchaseOrder @relation(fields: [poId], references: [id])
+  addedBy     String?
+  addedAt     DateTime      @default(now())
+
+  @@unique([shipmentId, poId])
+}
+
+// ==========================================
+// PHASE 1: CUSTOMS & CLEARANCE
+// ==========================================
+
+model CustomsEntry {
+  id              String     @id @default(uuid())
+  ceNumber        String     @unique // CE-YYYY-XXXXXX
+  shipmentId      String
+  shipment        Shipment   @relation(fields: [shipmentId], references: [id])
+
+  company         String
+  brokerName      String?
+  declarationRef  String?    // Import Entry Declaration number
+  clearanceDate   DateTime?
+  status          String     @default("Pending") // Pending, Filed, Under Examination, Released, Cleared
+  notes           String?    @db.Text
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  expenses        ImportExpense[]
+
+  @@index([shipmentId])
+}
+
+model ImportExpense {
+  id             String       @id @default(uuid())
+  customsEntryId String
+  customsEntry   CustomsEntry @relation(fields: [customsEntryId], references: [id], onDelete: Cascade)
+
+  company        String
+  expenseType    String       // Duties, Taxes, Brokerage, Port Handling, Storage, Demurrage, Insurance, Other
+  description    String?
+  currency       String       @default("PHP")
+  exchangeRate   Float        @default(1.0)
+  amountForeign  Float        @default(0)
+  amountPhp      Float        // amountForeign * exchangeRate
+  paymentStatus  String       @default("Estimated") // Estimated, Accrued, Invoiced, Paid
+  invoiceRef     String?
+  paidAt         DateTime?
+  createdBy      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// ==========================================
+// PHASE 1: GOODS RECEIPT (GRN) & QC QUARANTINE
+// ==========================================
+
+model GoodsReceipt {
+  id           String             @id @default(uuid())
+  grnNumber    String             @unique // GRN-YYYY-XXXXXX
+  shipmentId   String
+  shipment     Shipment           @relation(fields: [shipmentId], references: [id])
+
+  company      String
+  receivedBy   String
+  receivedAt   DateTime           @default(now())
+  status       String             @default("Draft") // Draft, In Progress, Completed, Cancelled
+  remarks      String?            @db.Text
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  lines        GoodsReceiptLine[]
+
+  @@index([shipmentId])
+  @@index([company])
+}
+
+model GoodsReceiptLine {
+  id              String       @id @default(uuid())
+  grnId           String
+  grn             GoodsReceipt @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  poId            String?      // Which PO this line traces back to
+  poItemId        String?      // Which PO line item
+  productId       Int?
+  sku             String
+  productName     String
+  batchNumber     String?
+  expirationDate  DateTime?
+
+  orderedQty      Int          @default(0)
+  shippedQty      Int          @default(0)
+  clearedQty      Int          @default(0)
+  receivedQty     Int          @default(0)
+  acceptedQty     Int          @default(0)
+  rejectedQty     Int          @default(0)
+
+  // QC result
+  qcStatus        String       @default("Pending") // Pending, Passed, Failed, Partial, Quarantine
+  qcNotes         String?      @db.Text
+  photoUrls       Json?        @default("[]") // Array of photo URL strings for damaged/missing items
+
+  // Quarantine / Hold
+  quarantineStatus String?     // null = normal, Hold, Released, Destroyed
+  quarantineReason String?
+
+  // Once accepted qty is pushed to MasterInventory receiving queue
+  pushedToInventory Boolean    @default(false)
+  pushedAt          DateTime?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 }
