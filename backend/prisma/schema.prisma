@@ -53,6 +53,8 @@ model Settings {
   company    String @unique @default("Global") 
   shiftStart String @default("08:00")
   shiftEnd   String @default("17:00")
+    lunchStart String  @default("12:00") // <--- ADD THIS
+  lunchEnd   String  @default("13:00") // <--- ADD THIS
 }
 
 model Attendance {
@@ -551,3 +553,5 @@ model DocumentReminder {
   // Prevents the cron job from creating duplicate 30-day reminders for the same document
   @@unique([documentId, reminderType])
 }
+
+

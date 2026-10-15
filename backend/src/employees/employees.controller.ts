@@ -116,6 +116,16 @@ export class EmployeesController {
     });
   }
 
+  @Get('employees/attendance/audit-lunch')
+  async auditLunchDeductions(@Query('company') company?: string) {
+    return await this.employeesService.auditHistoricalAttendance(company);
+  }
+
+  @Post('employees/attendance/recalculate-lunch')
+  async recalculateLunchDeductions(@Body() body: { company?: string; recordIds?: number[]; dryRun?: boolean }) {
+    return await this.employeesService.recalculateHistoricalAttendance(body);
+  }
+  
   @Delete('admins/:id')
   async deleteAdmin(@Param('id') id: string) {
     return await prisma.admin.delete({
