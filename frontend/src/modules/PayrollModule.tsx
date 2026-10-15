@@ -37,8 +37,9 @@ const formatMoney = (val: number) => {
 
 const formatDecToHM = (decimalHours: number) => {
   if (!decimalHours || decimalHours <= 0) return '0m';
-  const h = Math.floor(decimalHours);
-  const m = Math.round((decimalHours - h) * 60);
+  const totalMinutes = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
   if (h > 0 && m > 0) return `${h}h ${m}m`;
   if (h > 0) return `${h}h`;
   return `${m}m`;
@@ -299,10 +300,12 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  const [tempShiftStart, setTempShiftStart] = useState('08:00');
+const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [tempShiftEnd, setTempShiftEnd] = useState('17:00');
   const [shiftStart, setShiftStart] = useState('08:00');
   const [shiftEnd, setShiftEnd] = useState('17:00');
+  const [lunchStart, setLunchStart] = useState('12:00');
+  const [lunchEnd, setLunchEnd] = useState('13:00');
   const [attendanceFilter, setAttendanceFilter] = useState<'day' | 'month'>('day');
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceMonth, setAttendanceMonth] = useState(new Date().toISOString().slice(0, 7)); 
@@ -802,37 +805,81 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     finally { setIsSaving(false); }
   };
 
-  const calculateShiftHours = (tInStr: string, tOutStr: string, sInStr: string = shiftStart, sOutStr: string = shiftEnd) => {
-    if (!tInStr || !tOutStr || !tInStr.includes(':')) return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
-    const timeToFloat = (t: string) => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
-
-    let tIn = timeToFloat(tInStr);
-    let tOut = timeToFloat(tOutStr);
-    let sIn = timeToFloat(sInStr);
-    let sOut = timeToFloat(sOutStr);
-
-    if (tOut < tIn) tOut += 24; 
-    if (sOut < sIn) sOut += 24;
-    if (tIn < sIn && (sIn - tIn) >= 12) { tIn += 24; tOut += 24; } 
-    else if (tIn > sOut && (tIn - sOut) >= 12) { tIn -= 24; tOut -= 24; }
-
-    let totalGrossHours = Math.max(0, tOut - tIn);
-    
-    if (totalGrossHours > 0) {
-      totalGrossHours = Math.max(0, totalGrossHours - 1);
+const calculateShiftHours = (
+    tInStr: string,
+    tOutStr: string,
+    sInStr: string = shiftStart,
+    sOutStr: string = shiftEnd,
+    lStartStr: string = lunchStart,
+    lEndStr: string = lunchEnd
+  ) => {
+    if (!tInStr || !tOutStr || !tInStr.includes(':') || !tOutStr.includes(':')) {
+      return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0, grossMinutes: 0, lunchMinutes: 0, netMinutes: 0 };
     }
 
-    const maxRegularHours = 8;
-    let regHrs = Math.min(totalGrossHours, maxRegularHours);
-    let totalOt = Math.max(0, totalGrossHours - maxRegularHours);
+    const toMinutes = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
 
-    let earlyOt = 0; let lateOt = 0;
-    if (totalOt > 0) {
-      if (tIn < sIn) { earlyOt = Math.min(totalOt, sIn - tIn); lateOt = totalOt - earlyOt; } 
-      else { lateOt = totalOt; }
+    let tIn = toMinutes(tInStr);
+    let tOut = toMinutes(tOutStr);
+    let sIn = toMinutes(sInStr);
+    let sOut = toMinutes(sOutStr);
+    const lStart = toMinutes(lStartStr);
+    const lEnd = toMinutes(lEndStr);
+
+    // Overnight rollover in integer minutes (1440 mins = 24h)
+    if (tOut < tIn) tOut += 1440;
+    if (sOut < sIn) sOut += 1440;
+    if (tIn < sIn && (sIn - tIn) >= 720) { tIn += 1440; tOut += 1440; }
+    else if (tIn > sOut && (tIn - sOut) >= 720) { tIn -= 1440; tOut -= 1440; }
+
+    const grossMinutes = Math.max(0, tOut - tIn);
+
+    // Calculate lunch deduction ONLY from the overlap between attendance [tIn, tOut] and scheduled lunch [lStart, lEnd]
+    let baseLunchStart = lStart;
+    let baseLunchEnd = lEnd;
+    if (baseLunchEnd < baseLunchStart) baseLunchEnd += 1440;
+
+    let lunchMinutes = 0;
+    if (baseLunchEnd > baseLunchStart) {
+      for (const offset of [-1440, 0, 1440]) {
+        const overlapStart = Math.max(tIn, baseLunchStart + offset);
+        const overlapEnd = Math.min(tOut, baseLunchEnd + offset);
+        lunchMinutes += Math.max(0, overlapEnd - overlapStart);
+      }
+      lunchMinutes = Math.min(lunchMinutes, grossMinutes);
     }
 
-    return { reg: regHrs, ot: totalOt, earlyOt: earlyOt, lateOt: lateOt, total: regHrs + totalOt };
+    const netMinutes = Math.max(0, grossMinutes - lunchMinutes);
+    const maxRegularMinutes = 480; // 8 hours = 480 minutes
+    const regMinutes = Math.min(netMinutes, maxRegularMinutes);
+    const otMinutes = Math.max(0, netMinutes - maxRegularMinutes);
+
+    let earlyOtMinutes = 0;
+    let lateOtMinutes = 0;
+    if (otMinutes > 0) {
+      if (tIn < sIn) {
+        earlyOtMinutes = Math.min(otMinutes, sIn - tIn);
+        lateOtMinutes = otMinutes - earlyOtMinutes;
+      } else {
+        lateOtMinutes = otMinutes;
+      }
+    }
+
+    const toDec = (mins: number) => Math.round((mins / 60) * 10000) / 10000;
+
+    return {
+      reg: toDec(regMinutes),
+      ot: toDec(otMinutes),
+      earlyOt: toDec(earlyOtMinutes),
+      lateOt: toDec(lateOtMinutes),
+      total: toDec(netMinutes),
+      grossMinutes,
+      lunchMinutes,
+      netMinutes,
+    };
   };
 
   const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
@@ -921,30 +968,30 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
     const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
     const uniqueLogsMap = new Map();
     
-    rawEmpLogs.forEach(log => {
+rawEmpLogs.forEach(log => {
       const dateStr = log.date.split('T')[0];
-      let logHrs = 0;
-      if (!log.timeIn || !log.timeIn.includes(':')) { 
-          logHrs = log.hours || 0; 
+      let logMinutes = 0;
+      if (!log.timeIn || !log.timeIn.includes(':')) {
+        logMinutes = Math.round((log.hours || 0) * 60);
       } else {
-          const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-          logHrs = shiftCalc.total;
+        const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
+        logMinutes = shiftCalc.netMinutes;
       }
-      
-      // If a duplicate exists, keep the one with the higher working hours
+
       const existing = uniqueLogsMap.get(dateStr);
-      if (!existing || logHrs > existing.calculatedHours) {
-        uniqueLogsMap.set(dateStr, { ...log, calculatedHours: logHrs });
+      if (!existing || logMinutes > existing.calculatedMinutes) {
+        uniqueLogsMap.set(dateStr, { ...log, calculatedMinutes: logMinutes });
       }
     });
 
     const empLogs = Array.from(uniqueLogsMap.values());
-    
-    // 2. Sum valid logged hours
-    let totalHoursWorked = 0;
+
+    // 2. Sum valid logged minutes in integers, then convert to hours
+    let totalMinutesWorked = 0;
     empLogs.forEach((log: any) => {
-        totalHoursWorked += log.calculatedHours;
+      totalMinutesWorked += log.calculatedMinutes;
     });
+    const totalHoursWorked = Math.round((totalMinutesWorked / 60) * 10000) / 10000;
 
     const basicSalary = activeEmployee.baseRate;
     const days = parseFloat(payrollData.daysWorked) || 0;
