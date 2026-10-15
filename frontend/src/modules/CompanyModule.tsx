@@ -36,7 +36,7 @@ function SortableModuleCard({ id, children, disabled = false }: { id: string; ch
 export default function CompanyModule({ 
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
   selectedCompany, loginUsername, currentUser, adminUsers = [],
-  hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales,
+  hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales, hasImportation,
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL
 }: any) {
   
@@ -101,6 +101,7 @@ useEffect(() => {
     const activeIds: string[] = [];
     if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
     if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
+    if (hasImportation) activeIds.push('importation');
     
     // ADD 'generate_qr' RIGHT HERE:
     if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory', 'generate_qr'); 
@@ -122,7 +123,7 @@ useEffect(() => {
       if (JSON.stringify(prev) !== JSON.stringify(mergedOrder)) return mergedOrder;
       return prev;
     });
-  }, [isGateway, hasSales, hasPurchasing, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
+  }, [isGateway, hasSales, hasPurchasing, hasImportation, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
@@ -333,6 +334,15 @@ useEffect(() => {
               </div>
             </div>
             <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-sky-500 transition-colors">{rightArrow}</div>
+          </button>
+        );
+      case 'importation':
+        return (
+          <button onClick={() => onSelectModule('importation')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">↗</div>
+              <div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800">Importation & Receiving</h3><p className="text-xs font-medium text-slate-500 mt-0.5">Requisitions, shipments, customs and QC.</p></div>
+            </div><div className="ml-4 text-slate-300">{rightArrow}</div>
           </button>
         );
       case 'inventory':

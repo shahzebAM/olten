@@ -7,7 +7,7 @@ interface Supplier {
   catalog?: any[]; 
 }
 interface POItem { id?: string; productId?: number; sku: string; productName: string; requestedQty: number; unitCost: number; lineTotal?: number; confirmedQty?: number; shortageQty?: number; }
-interface PurchaseOrder { id: string; poNumber: string; supplierId?: string; supplierName?: string; osReference: string | null; status: string; subtotal: number; vatApplied: boolean; vatAmount: number; grandTotal: number; createdBy: string; createdAt: string; items: POItem[]; }
+interface PurchaseOrder { id: string; poNumber: string; supplierId?: string; supplierName?: string; importManaged?: boolean; osReference: string | null; status: string; subtotal: number; vatApplied: boolean; vatAmount: number; grandTotal: number; createdBy: string; createdAt: string; items: POItem[]; }
 
 interface PurchaseOrdersModuleProps { selectedCompany: string; loginUsername: string; API_BASE_URL: string; onBack: () => void; }
 
@@ -305,11 +305,12 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                           </td>
                           <td className="py-3.5 px-6 text-xs font-bold text-slate-500 uppercase">{po.createdBy}</td>
                           <td className="py-3.5 px-6 text-right space-x-2">
-                            {po.status !== 'Cancelled' && (
+                            {po.importManaged && <span className="text-[10px] font-bold text-indigo-700">Receive in Importation / GRN & QC</span>}
+                            {!po.importManaged && po.status !== 'Cancelled' && (
                               <button onClick={() => openReceiveModal(po)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md text-[9px] font-black uppercase hover:bg-emerald-100 transition-colors shadow-sm">Verify Delivery</button>
                             )}
                             <button onClick={() => setViewPo(po)} className="px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded-md text-[9px] font-black uppercase hover:bg-slate-50 transition-colors shadow-sm">View</button>
-                            {isAuthorizedAdmin && (
+                            {isAuthorizedAdmin && !po.importManaged && (
                               <button onClick={() => handleHardDeletePo(po.id)} className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-md text-[9px] font-black uppercase hover:bg-rose-100 transition-colors shadow-sm">Del</button>
                             )}
                           </td>

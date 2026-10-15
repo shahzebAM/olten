@@ -21,6 +21,27 @@ export class DocumentController {
     private readonly driveService: DriveService 
   ) {}
 
+  @Get('import-links')
+  async getImportLinks(@Headers('x-company') company: string) {
+    return this.documentService.getImportLinks(company);
+  }
+
+  @Patch(':id/import-links')
+  async updateImportLinks(
+    @Param('id') id: string,
+    @Headers('x-company') company: string,
+    @Body()
+    body: {
+      importFileId?: string | null;
+      shipmentId?: string | null;
+      productId?: number | null;
+      regulatoryStatus?: string;
+      documentType?: string;
+    },
+  ) {
+    return this.documentService.updateImportLinks(id, company, body);
+  }
+
   @Get('directory')
   async getDirectory(@Headers('x-company') company: string) {
     if (!company) throw new BadRequestException('Company header missing');

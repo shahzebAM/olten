@@ -1,9 +1,49 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 @Controller('procurement')
 export class ProcurementController {
   private readonly prisma = new PrismaClient();
+
+  private async importSafeTransaction<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    try {
+      return await this.prisma.$transaction(work, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      ) {
+        throw new ConflictException(
+          'The P.O. changed during processing. Refresh and try again.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async requireLegacyReceiving(
+    client: Prisma.TransactionClient,
+    id: string,
+  ) {
+    const imported = await client.purchaseOrder.findFirst({
+      where: {
+        id,
+        OR: [
+          { requisition: { isNot: null } },
+          { items: { some: { shipmentLines: { some: {} } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (imported)
+      throw new BadRequestException(
+        'This P.O. is managed by Importation. Use shipment GRN and QC receiving.',
+      );
+  }
 
   // ==========================================
   // 1. SUPPLIERS WORKFLOW
@@ -159,23 +199,27 @@ export class ProcurementController {
       where: { company },
       include: { 
         items: true,
-        supplier: true 
+        supplier: true,
+        requisition: { select: { id: true } },
+        _count: { select: { items: { where: { shipmentLines: { some: {} } } } } },
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return pos.map(po => ({
       ...po,
-      supplierName: po.supplier ? po.supplier.legalName : null
+      supplierName: po.supplier ? po.supplier.legalName : null,
+      importManaged: !!po.requisition || po._count.items > 0,
     }));
   }
 
   @Post('purchase-orders/:id/receive')
   async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
     const { user, verifications } = data; 
-    return await this.prisma.$transaction(async (tx) => {
+    return await this.importSafeTransaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException('P.O. not found.');
+      await this.requireLegacyReceiving(tx, id);
       if (po.status === 'Cancelled') throw new BadRequestException('Cannot receive a cancelled P.O.');
 
       let hasShortage = false;
@@ -239,17 +283,19 @@ export class ProcurementController {
     const existing = await this.prisma.purchaseOrder.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('P.O. not found.');
 
-    return await this.prisma.purchaseOrder.update({
-      where: { id },
-      data: { status: data.status, updatedBy: data.user }
+    return this.importSafeTransaction(async tx => {
+      await this.requireLegacyReceiving(tx, id);
+      return tx.purchaseOrder.update({ where: { id }, data: { status: data.status, updatedBy: data.user } });
     });
   }
 
   @Delete('purchase-orders/:id/cancel')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
-    return this.prisma.$transaction(async tx => {
+    return this.importSafeTransaction(async tx => {
       const existing = await tx.purchaseOrder.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('P.O. not found.');
+      const linked = await tx.shipmentLine.count({ where: { purchaseOrderItem: { purchaseOrderId: id } } });
+      if (linked) throw new BadRequestException('A shipment-linked P.O. cannot be cancelled. Resolve the shipment first.');
       await tx.shortage.updateMany({
         where: { purchaseOrderId: id, status: { notIn: ['Fulfilled', 'Cancelled'] } },
         data: { status: 'Cancelled', updatedBy: user },
@@ -260,6 +306,9 @@ export class ProcurementController {
 
   @Delete('purchase-orders/:id')
   async hardDeletePurchaseOrder(@Param('id') id: string) {
-    return this.prisma.purchaseOrder.delete({ where: { id } });
+    return this.importSafeTransaction(async tx => {
+      await this.requireLegacyReceiving(tx, id);
+      return tx.purchaseOrder.delete({ where: { id } });
+    });
   }
 }

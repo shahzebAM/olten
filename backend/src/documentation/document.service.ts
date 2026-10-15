@@ -46,6 +46,174 @@ export class DocumentService {
     if (company.length > 200) throw new BadRequestException('Invalid company header');
   }
 
+  async getImportLinks(company: string) {
+    this.requireCompany(company);
+    const docs = await prisma.document.findMany({
+      where: { company, status: 'ACTIVE' },
+      select: {
+        id: true,
+        originalName: true,
+        documentType: true,
+        expiryDate: true,
+        expiryStatus: true,
+        googleDriveLink: true,
+        importFileId: true,
+        shipmentId: true,
+        productId: true,
+        regulatoryStatus: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return docs.map((doc) => ({
+      ...doc,
+      regulatoryStatus:
+        doc.expiryDate && doc.expiryDate < companyToday()
+          ? 'EXPIRED'
+          : doc.regulatoryStatus,
+    }));
+  }
+
+  async updateImportLinks(
+    id: string,
+    company: string,
+    body: {
+      importFileId?: string | null;
+      shipmentId?: string | null;
+      productId?: number | null;
+      regulatoryStatus?: string;
+      documentType?: string;
+    },
+  ) {
+    this.requireCompany(company);
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      !/^\d+$/.test(id) ||
+      !Number.isSafeInteger(Number(id)) ||
+      Number(id) < 1 ||
+      Number(id) > 2147483647
+    ) {
+      throw new BadRequestException(
+        'A valid document and import link payload are required.',
+      );
+    }
+    for (const field of ['importFileId', 'shipmentId'] as const) {
+      if (
+        body[field] !== undefined &&
+        body[field] !== null &&
+        (typeof body[field] !== 'string' ||
+          !body[field].trim() ||
+          body[field].length > 100)
+      ) {
+        throw new BadRequestException(`Invalid ${field}.`);
+      }
+    }
+    if (
+      body.productId !== undefined &&
+      body.productId !== null &&
+      (!Number.isSafeInteger(body.productId) ||
+        body.productId <= 0 ||
+        body.productId > 2147483647)
+    )
+      throw new BadRequestException('Invalid product.');
+    if (
+      body.regulatoryStatus !== undefined &&
+      ![
+        'NOT_REQUESTED',
+        'REQUESTED',
+        'RECEIVED',
+        'UNDER_REVIEW',
+        'ACCEPTED',
+        'REJECTED',
+        'EXPIRED',
+      ].includes(body.regulatoryStatus)
+    ) {
+      throw new BadRequestException('Invalid regulatory document status.');
+    }
+    if (
+      body.documentType !== undefined &&
+      (typeof body.documentType !== 'string' || body.documentType.length > 150)
+    ) {
+      throw new BadRequestException(
+        'Document type must be at most 150 characters.',
+      );
+    }
+    return this.withCompanyWrite(company, () =>
+      prisma.$transaction(async (tx) => {
+        const doc = await tx.document.findFirst({
+          where: { id: Number(id), company, status: 'ACTIVE' },
+        });
+        if (!doc)
+          throw new NotFoundException('Document not found in this workspace.');
+        let importFileId =
+          body.importFileId === undefined
+            ? doc.importFileId
+            : body.importFileId;
+        const shipmentId =
+          body.shipmentId === undefined ? doc.shipmentId : body.shipmentId;
+        const productId =
+          body.productId === undefined ? doc.productId : body.productId;
+        if (shipmentId) {
+          const shipment = await tx.shipment.findFirst({
+            where: { id: shipmentId, company },
+          });
+          if (!shipment)
+            throw new BadRequestException(
+              'Shipment not found in this workspace.',
+            );
+          if (
+            body.importFileId !== undefined &&
+            importFileId !== shipment.importFileId
+          ) {
+            throw new BadRequestException(
+              'Shipment must belong to the selected import file.',
+            );
+          }
+          importFileId = shipment.importFileId;
+        }
+        if (
+          importFileId &&
+          !(await tx.importFile.findFirst({
+            where: { id: importFileId, company },
+          }))
+        ) {
+          throw new BadRequestException(
+            'Import file not found in this workspace.',
+          );
+        }
+        if (
+          productId &&
+          !(await tx.product.findFirst({ where: { id: productId, company } }))
+        ) {
+          throw new BadRequestException('Product not found in this workspace.');
+        }
+        const regulatoryStatus = body.regulatoryStatus ?? doc.regulatoryStatus;
+        if (
+          regulatoryStatus === 'ACCEPTED' &&
+          doc.expiryDate &&
+          doc.expiryDate < companyToday()
+        ) {
+          throw new BadRequestException(
+            'An expired document cannot be accepted.',
+          );
+        }
+        return tx.document.update({
+          where: { id: doc.id, company },
+          data: {
+            importFileId,
+            shipmentId,
+            productId,
+            regulatoryStatus,
+            ...(body.documentType !== undefined
+              ? { documentType: body.documentType.trim() || null }
+              : {}),
+          },
+        });
+      }),
+    );
+  }
+
   private async withCompanyWrite<T>(company: string, action: () => Promise<T>): Promise<T> {
     this.requireCompany(company);
     if (this.companyDeletions.has(company)) throw new ConflictException('This workspace is being deleted. Please wait.');
@@ -236,6 +404,8 @@ export class DocumentService {
       const reminder = this.isReminderInactive(doc) ? undefined : this.configuredReminder(doc.reminders) || doc.reminders[0];
       const payload = this.expiryPayload(doc);
       return { ...file, documentId: doc.id, documentType: doc.documentType, documentNumber: doc.documentNumber,
+        importFileId: doc.importFileId, shipmentId: doc.shipmentId, productId: doc.productId,
+        regulatoryStatus: doc.expiryDate && doc.expiryDate < companyToday() ? 'EXPIRED' : doc.regulatoryStatus,
         expiryDate: doc.expiryDate, expiryStatus: payload.expiryStatus, expiryDateText: doc.expiryDateText,
         daysRemaining: payload.daysRemaining, reminderSetupPending: payload.reminderSetupPending,
         reminderDisabled: payload.reminderDisabled,

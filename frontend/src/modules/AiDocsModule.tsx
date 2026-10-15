@@ -18,6 +18,10 @@ interface DriveFile {
   // --- NEW EXPIRY FIELDS ---
   documentType?: string;
   documentNumber?: string;
+  importFileId?: string | null;
+  shipmentId?: string | null;
+  productId?: number | null;
+  regulatoryStatus?: string;
   expiryDate?: string;
   expiryStatus?: string;
   expiryDetectionMethod?: string;
@@ -1640,6 +1644,14 @@ export default function AiDocsModule({ selectedCompany, loginUsername, API_BASE_
                     <h2 className="text-sm font-black text-slate-900">
                       {selectedFile.documentType || 'Document'} {selectedFile.documentNumber ? `#${selectedFile.documentNumber}` : ''}
                     </h2>
+                    {(selectedFile.importFileId || selectedFile.shipmentId || selectedFile.productId) && (
+                      <p className="text-xs font-medium text-indigo-700 mt-2">
+                        Import document: {selectedFile.regulatoryStatus?.replaceAll('_', ' ') || 'NOT REQUESTED'}
+                        {selectedFile.shipmentId ? ' · Linked to shipment' : selectedFile.importFileId ? ' · Linked to import file' : ''}
+                        {selectedFile.productId ? ` · Product #${selectedFile.productId}` : ''}
+                        {' · Manage links in Importation → Documents'}
+                      </p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2 mt-1.5">
                       {renderStatusBadge(selectedFile.reminderDisabled ? undefined : selectedFile.expiryStatus, selectedFile.reminder?.status !== 'FULFILLED')}
                       

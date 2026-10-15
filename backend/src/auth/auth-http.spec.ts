@@ -137,6 +137,25 @@ describe('HTTP session protection', () => {
     expect(response.body.password).toBeUndefined();
   });
 
+  it.each([true, false])('allows Super Admin to save importation permission flags set to %s', async enabled => {
+    const superAdmin = { ...admin, role: 'Super Admin' };
+    mockPrisma.admin.findFirst.mockResolvedValue(superAdmin);
+    mockPrisma.admin.findUnique.mockResolvedValue(superAdmin);
+    const token = await login();
+    const modules = { importation: enabled, importation_approve: enabled, companies: { Surgicom: true } };
+    await request(app.getHttpServer()).patch('/api/admins/7').set('Authorization', `Bearer ${token}`).send({ modules }).expect(200);
+    expect(mockPrisma.admin.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { modules } });
+  });
+
+  it.each([{ importation: 'true' }, { importation_approve: 1 }])('rejects non-boolean importation permissions: %o', async flags => {
+    const superAdmin = { ...admin, role: 'Super Admin' };
+    mockPrisma.admin.findFirst.mockResolvedValue(superAdmin);
+    mockPrisma.admin.findUnique.mockResolvedValue(superAdmin);
+    const token = await login();
+    await request(app.getHttpServer()).patch('/api/admins/7').set('Authorization', `Bearer ${token}`).send({ modules: flags }).expect(400);
+    expect(mockPrisma.admin.update).not.toHaveBeenCalled();
+  });
+
   it('hashes new passwords on an authorized edit and returns no password material', async () => {
     const superAdmin = { ...admin, role: 'Super Admin' };
     mockPrisma.admin.findFirst.mockResolvedValue(superAdmin);

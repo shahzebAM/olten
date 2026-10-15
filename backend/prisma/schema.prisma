@@ -108,6 +108,13 @@ model Document {
   uploadedBy      String
   createdAt       DateTime @default(now())
   googleDriveLink String?
+  importFileId    String?
+  shipmentId      String?
+  productId       Int?
+  regulatoryStatus String @default("RECEIVED")
+  importFile      ImportFile? @relation(fields: [importFileId], references: [id], onDelete: SetNull)
+  shipment        Shipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  product         Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   // NEW RELATION FOR EXPIRY REMINDERS
   reminders       DocumentReminder[]
@@ -189,6 +196,8 @@ model Product {
   packingListItems PackingListItem[]
 
   orderSlipItems OrderSlipItem[]
+  requisitionItems PurchaseRequisitionItem[]
+  importDocuments Document[]
 
   @@index([company])
   @@index([sku])
@@ -391,6 +400,7 @@ model Supplier {
   // Relational link to Purchase Orders
   purchaseOrders PurchaseOrder[] 
   catalog Json? @default("[]")
+  supplierQuotations SupplierQuotation[]
 }
 
 model CustomerCategory {
@@ -515,6 +525,7 @@ model PurchaseOrder {
   items         PurchaseOrderItem[]
   supplierId    String?
   supplier      Supplier?           @relation(fields: [supplierId], references: [id])
+  requisition   PurchaseRequisition?
 }
 
 model PurchaseOrderItem {
@@ -530,6 +541,198 @@ model PurchaseOrderItem {
   lineTotal       Float
 
   po PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  shipmentLines ShipmentLine[]
+}
+
+// Phase 1 procurement and importation. Existing purchasing and inventory stay intact.
+model ImportSequence {
+  key String @id
+  value Int @default(0)
+}
+
+model PurchaseRequisition {
+  id String @id @default(uuid())
+  prNumber String @unique
+  company String
+  purpose String
+  neededBy DateTime?
+  status String @default("Draft")
+  rejectionReason String?
+  createdBy String
+  approvedBy String?
+  approvedAt DateTime?
+  purchaseOrderId String? @unique
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  selectedQuotationId String? @unique
+  selectedQuotation SupplierQuotation? @relation("SelectedQuotation", fields: [selectedQuotationId], references: [id])
+  items PurchaseRequisitionItem[]
+  quotations SupplierQuotation[] @relation("RequisitionQuotations")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([company, status])
+}
+
+model PurchaseRequisitionItem {
+  id String @id @default(uuid())
+  requisitionId String
+  requisition PurchaseRequisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  productId Int
+  product Product @relation(fields: [productId], references: [id])
+  quantity Int
+  quotationItems SupplierQuotationItem[]
+  @@unique([requisitionId, productId])
+}
+
+model SupplierQuotation {
+  id String @id @default(uuid())
+  requisitionId String
+  requisition PurchaseRequisition @relation("RequisitionQuotations", fields: [requisitionId], references: [id], onDelete: Cascade)
+  selectedBy PurchaseRequisition? @relation("SelectedQuotation")
+  supplierId String
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  currency String @default("PHP")
+  exchangeRate Decimal @db.Decimal(18, 6)
+  leadTimeDays Int
+  paymentTerms String
+  validUntil DateTime?
+  notes String?
+  createdBy String
+  createdAt DateTime @default(now())
+  items SupplierQuotationItem[]
+  @@index([requisitionId])
+}
+
+model SupplierQuotationItem {
+  id String @id @default(uuid())
+  quotationId String
+  quotation SupplierQuotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  requisitionItemId String
+  requisitionItem PurchaseRequisitionItem @relation(fields: [requisitionItemId], references: [id])
+  unitCost Decimal @db.Decimal(18, 6)
+  minimumOrderQty Int @default(1)
+  @@unique([quotationId, requisitionItemId])
+}
+
+model ImportFile {
+  id String @id @default(uuid())
+  importNumber String @unique
+  company String
+  title String
+  notes String?
+  status String @default("Open")
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  shipments Shipment[]
+  documents Document[]
+  @@index([company, status])
+}
+
+model Shipment {
+  id String @id @default(uuid())
+  shipmentNumber String @unique
+  company String
+  importFileId String
+  importFile ImportFile @relation(fields: [importFileId], references: [id])
+  forwarder String?
+  carrier String?
+  mode String
+  blAwbNumber String?
+  containerReference String?
+  etd DateTime?
+  eta DateTime?
+  revisedEta DateTime?
+  actualArrival DateTime?
+  status String @default("Planned")
+  notes String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  items ShipmentLine[]
+  clearance ShipmentClearance?
+  expenses ImportExpense[]
+  receipts GoodsReceipt[]
+  documents Document[]
+  @@index([company, status])
+}
+
+// Joining through PO items supports partial and consolidated shipments.
+model ShipmentLine {
+  id String @id @default(uuid())
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  purchaseOrderItemId String
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+  shippedQty Int
+  clearedQty Int @default(0)
+  receipts GoodsReceiptLine[]
+  @@unique([shipmentId, purchaseOrderItemId])
+  @@index([purchaseOrderItemId])
+}
+
+model ShipmentClearance {
+  id String @id @default(uuid())
+  shipmentId String @unique
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  broker String?
+  declarationReference String?
+  entryReference String?
+  clearanceDate DateTime?
+  status String @default("Pending")
+  updatedBy String
+  updatedAt DateTime @updatedAt
+}
+
+model ImportExpense {
+  id String @id @default(uuid())
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  category String
+  description String
+  currency String @default("PHP")
+  amount Decimal @db.Decimal(18, 2)
+  status String @default("Estimated")
+  invoiceReference String?
+  paidAt DateTime?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([shipmentId, status])
+}
+
+model GoodsReceipt {
+  id String @id @default(uuid())
+  grnNumber String @unique
+  company String
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  receivedAt DateTime @default(now())
+  notes String?
+  createdBy String
+  createdAt DateTime @default(now())
+  items GoodsReceiptLine[]
+  @@index([company, shipmentId])
+}
+
+model GoodsReceiptLine {
+  id String @id @default(uuid())
+  receiptId String
+  receipt GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  shipmentLineId String
+  shipmentLine ShipmentLine @relation(fields: [shipmentLineId], references: [id])
+  receivedQty Int
+  acceptedQty Int
+  rejectedQty Int
+  heldQty Int
+  placedQty Int @default(0)
+  batchNumber String?
+  expirationDate DateTime?
+  photos Json @default("[]")
+  notes String?
+  inspectedBy String
+  updatedAt DateTime @updatedAt
+  @@unique([receiptId, shipmentLineId])
+  @@index([shipmentLineId])
 }
 
 // --- NEW DOCUMENT REMINDERS MODEL ---

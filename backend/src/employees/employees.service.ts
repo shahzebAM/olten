@@ -510,8 +510,6 @@ export class EmployeesService {
       });
     }
     return {
-      lunchStart: "12:00",
-      lunchEnd: "13:00",
       ...settings,
     };
   }

@@ -13,6 +13,7 @@ import CustomerModule from './modules/CustomerModule';
 import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
 import SupplierModule from './modules/SupplierModule';
+import ImportationModule from './modules/ImportationModule';
 import { resolveApiConfig } from './lib/apiConfig';
 import { clearApiSession, getApiAuthHeaders, expireApiSession } from './lib/apiSession';
 
@@ -24,7 +25,7 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   
-const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system'>('none');
+const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system' | 'importation'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
@@ -335,6 +336,7 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
     const userHasInventory = isCurrentUserSuperAdmin || currentUser?.modules?.inventory === true;
     const userHasWarehouses = isCurrentUserSuperAdmin || currentUser?.modules?.warehouses === true;
     const userHasPurchasing = isCurrentUserSuperAdmin || currentUser?.modules?.purchasing === true;
+    const userHasImportation = isCurrentUserSuperAdmin || currentUser?.modules?.importation === true;
     const userHasSales = isCurrentUserSuperAdmin || currentUser?.modules?.sales === true;
     
     return <CompanyModule 
@@ -343,6 +345,7 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
       hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory} 
       hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}
       hasSales={userHasSales && globalModules.sales}
+      hasImportation={userHasImportation && globalModules.importation !== false}
       onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} API_BASE_URL={API_BASE_URL}
       adminUsers={adminUsers} // <-- FED DIRECTLY FROM THE LIVE POLLING
     />
@@ -357,6 +360,7 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
   if (activeModule === 'sales_orders') return <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />;
   if (activeModule === 'purchase_orders') return <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'importation') return <ImportationModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} canApprove={['Super Admin', 'Admin'].includes(currentUser?.role) || currentUser?.modules?.importation_approve === true} onBack={() => setActiveModule('none')} />;
 
   // ADD THIS LINE:
 if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;

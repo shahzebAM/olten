@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { getApiAuthHeaders, expireApiSession } from '../lib/apiSession';
 
 // --- INTERFACES ---
 interface Product { 
@@ -63,6 +64,17 @@ interface CustomerCategory {
   name: string; 
 }
 
+interface ImportReceipt {
+  id: string;
+  goodsReceiptId: string;
+  poNumber: string;
+  osReference: string;
+  status: string;
+  supplierName: string;
+  items: { id: string; productId: number; sku: string; productName: string; confirmedQty: number;
+    batchNumber?: string | null; expirationDate?: string | null }[];
+}
+
 // --- PERSISTENT CACHE & VAULT ---
 let globalImageVault: Record<string, string> = {}; 
 let currentValidImages: Record<string, string> = {};
@@ -77,6 +89,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [hubStock, setHubStock] = useState<WarehouseStock[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [importReceipts, setImportReceipts] = useState<ImportReceipt[]>([]);
+  const [importReceivingError, setImportReceivingError] = useState('');
   const [customerCategories, setCustomerCategories] = useState<CustomerCategory[]>([]);
   
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
@@ -159,13 +173,16 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   const fetchAllData = useCallback(async () => {
     try {
-      const [prodRes, movRes, whRes, stkRes, poRes, catRes] = await Promise.all([
+      const [prodRes, movRes, whRes, stkRes, poRes, catRes, grnRes] = await Promise.all([
         fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`),
         fetch(`${API_BASE_URL}/inventory-movements?company=${encodeURIComponent(selectedCompany)}`),
         fetch(`${API_BASE_URL}/warehouses?company=${encodeURIComponent(selectedCompany)}`),
         fetch(`${API_BASE_URL}/warehouse-stock?company=${encodeURIComponent(selectedCompany)}`),
         fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/sales/customer-categories?company=${encodeURIComponent(selectedCompany)}`)
+        fetch(`${API_BASE_URL}/sales/customer-categories?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/importation/receiving-queue`, {
+          headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany },
+        }).catch(() => null)
       ]);
       
       let productsList: Product[] = [];
@@ -177,6 +194,14 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       if (whRes.ok) setWarehouses(await whRes.json());
       if (stkRes.ok) setHubStock(await stkRes.json());
       if (poRes.ok) setPurchaseOrders(await poRes.json());
+      if (grnRes?.ok) {
+        setImportReceipts(await grnRes.json());
+        setImportReceivingError('');
+      } else {
+        setImportReceipts([]);
+        setImportReceivingError('Import receipt queue could not be loaded. Refresh before placing imported goods.');
+        if (grnRes?.status === 401) expireApiSession();
+      }
       
       if (catRes.ok) {
         const categories = await catRes.json();
@@ -225,7 +250,10 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   useEffect(() => { fetchAllData(); }, [fetchAllData]);
 
-  const pendingReceivables = purchaseOrders.filter(po => po.status === 'Received' || po.status === 'Partially Received');
+  const pendingReceivables = [
+    ...purchaseOrders.filter(po => !po.importManaged && (po.status === 'Received' || po.status === 'Partially Received')),
+    ...importReceipts,
+  ];
 
   const toggleSelection = (id: number) => setSelectedProductIds((prev: number[]) => prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]);
   const toggleSelectAll = (filtered: Product[]) => {
@@ -508,6 +536,27 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     e.preventDefault();
     if (!placementPo) return;
     setIsProcessing(true);
+
+    if (placementPo.goodsReceiptId) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/importation/receipts/${placementPo.goodsReceiptId}/place`, {
+          method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placements: placementPo.items.map((item: ImportReceipt['items'][number]) => ({
+            receiptLineId: item.id, warehouseId: placementDestinations[item.id] || 'MASTER', quantity: item.confirmedQty,
+          })) }),
+        });
+        if (response.status === 401) expireApiSession();
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || 'Stock placement failed.');
+        setPlacementPo(null);
+        setPlacementDestinations({});
+        showToast('QC accepted stock placed successfully.', 'success');
+        await fetchAllData();
+      } catch (error: unknown) {
+        showToast(error instanceof Error ? error.message : 'Stock placement failed.', 'error');
+      } finally { setIsProcessing(false); }
+      return;
+    }
 
     const apiPromises: Promise<any>[] = []; 
     let nextProducts = [...products];
@@ -1054,6 +1103,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           {/* VIEW: RECEIVING (NEW P.O. PLACEMENT QUEUE) */}
           {activeView === 'receiving' && (
             <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300 p-4 sm:p-6">
+              {importReceivingError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{importReceivingError}</p>}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
                 <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                   <div>
@@ -1310,7 +1360,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             </div>
             <form onSubmit={handlePlacePoItems} className="flex-1 overflow-y-auto bg-slate-50 flex flex-col p-6 gap-4">
               <div className="bg-sky-50 border border-sky-200 text-sky-800 p-4 rounded-xl text-xs font-bold mb-2">
-                Note: Any items marked as 'Shortage' during receiving have been excluded. Items completely missing from the Master Catalog will be skipped.
+                {placementPo.goodsReceiptId
+                  ? 'Only QC accepted, unplaced goods are listed. Held and rejected quantities remain in quarantine.'
+                  : "Note: Any items marked as 'Shortage' during receiving have been excluded. Items completely missing from the Master Catalog will be skipped."}
               </div>
               {placementPo.items.filter((i: any) => i.confirmedQty && i.confirmedQty > 0).map((item: any) => {
                 const prodExists = products.some(p => p.sku === item.sku || String(p.id) === String(item.productId));
@@ -1319,6 +1371,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     <div>
                       <div className="text-sm font-black uppercase text-slate-900">{item.productName}</div>
                       <div className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-widest">{item.sku}</div>
+                      {placementPo.goodsReceiptId && <div className="text-xs text-slate-500 mt-1">Batch: {item.batchNumber || '—'} · Expiry: {item.expirationDate?.slice(0, 10) || '—'}</div>}
                       {!prodExists && <div className="text-[10px] font-bold text-rose-500 mt-1 uppercase tracking-widest">NOT IN CATALOG - WILL BE SKIPPED</div>}
                     </div>
                     <div className="flex items-center gap-4 w-full sm:w-auto">

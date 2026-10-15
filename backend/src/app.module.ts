@@ -12,12 +12,14 @@ import { ProcurementController } from './sales/purchase-orders.controller';
 import { AuthSessionModule } from './auth/auth-session.module';
 import { PackingListsController } from './sales/packing-lists.controller';
 import { QuotationsController } from './sales/quotations.controller';
+import { ImportationModule } from './importation/importation.module';
 
 @Module({
   imports: [
     AuthSessionModule,
     EmployeesModule,
     DocumentationModule,
+    ImportationModule,
   ],
   controllers: [
     AppController,

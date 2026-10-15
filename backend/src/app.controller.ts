@@ -49,7 +49,7 @@ export class AppController {
     if (fields.modules !== undefined) {
       if (!fields.modules || typeof fields.modules !== 'object' || Array.isArray(fields.modules)) throw new BadRequestException('Invalid permissions.');
       const modules = fields.modules as Record<string, unknown>;
-      const booleanKeys = ['payroll', 'ai_docs', 'master_inventory', 'inventory', 'products', 'warehouses', 'purchasing', 'sales'];
+      const booleanKeys = ['payroll', 'ai_docs', 'master_inventory', 'inventory', 'products', 'warehouses', 'purchasing', 'sales', 'importation', 'importation_approve'];
       if (Object.entries(modules).some(([key, value]) => key !== 'companies' && (!booleanKeys.includes(key) || typeof value !== 'boolean'))) {
         throw new BadRequestException('Permissions must contain supported boolean module values.');
       }
