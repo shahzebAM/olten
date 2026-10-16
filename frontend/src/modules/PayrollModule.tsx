@@ -3,6 +3,8 @@ import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
 import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
+import AttendanceEntryGrid from './AttendanceEntryGrid';
+import type { AttendanceEntryRecord as AttendanceRecord } from '../lib/attendanceEntry';
 
 // ==========================================
 // 1. GLOBAL FORMATTERS & STYLES
@@ -31,12 +33,6 @@ const toManilaYMD = (dateStr?: string | null) => {
 const formatManilaMDY = (dateStr?: string | null) => {
   const ymd = toManilaYMD(dateStr);
   return ymd ? formatMDY(ymd) : 'MM/DD/YYYY';
-};
-
-const formatMonthYear = (ym: string) => {
-  if (!ym) return 'MM/YYYY';
-  const [y, m] = ym.split('-');
-  return `${m}/${y}`;
 };
 
 const format12Hour = (time24: string) => {
@@ -237,23 +233,6 @@ interface Employee {
   loanInstallment: number;
 }
 
-interface AttendanceRecord {
-  id: number;
-  employeeId: number;
-  date: string;
-  timeIn: string;
-  timeOut: string;
-  hours: number;
-  reason?: string | null;
-  shiftStart?: string; 
-  shiftEnd?: string;
-  lunchStart?: string | null;
-  lunchEnd?: string | null;
-  breakOut?: string | null;
-  breakIn?: string | null;
-  lunchOverrideMinutes?: number | null;
-}
-
 interface PayrollRecord {
   id: number;
   employeeId: number;
@@ -317,9 +296,11 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report'>('dashboard');
+  const [attendanceDirty, setAttendanceDirty] = useState(false);
+  const [attendanceBusy, setAttendanceBusy] = useState(false);
+  const [attendanceRefreshVersion, setAttendanceRefreshVersion] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
   const [payrollStartDate, setPayrollStartDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-01`);
   const [payrollEndDate, setPayrollEndDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-15`);
@@ -402,9 +383,6 @@ const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [selectedPayslip, setSelectedPayslip] = useState<{ record: PayrollRecord, emp: Employee } | null>(null);
-  const [editingLog, setEditingLog] = useState<AttendanceRecord | null>(null);
-  const [editLogForm, setEditLogForm] = useState({ date: '', timeIn: '', timeOut: '', type: 'regular', reason: '' });
-  const [monthLogsModalEmp, setMonthLogsModalEmp] = useState<Employee | null>(null);
   const [reportFromDate, setReportFromDate] = useState('');
   const [reportToDate, setReportToDate] = useState('');
   const [reportSelectedEmp, setReportSelectedEmp] = useState('all');
@@ -419,10 +397,6 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [shiftEnd, setShiftEnd] = useState('17:00');
   const [lunchStart, setLunchStart] = useState('12:00');
   const [lunchEnd, setLunchEnd] = useState('13:00');
-  const [attendanceFilter, setAttendanceFilter] = useState<'day' | 'month'>('day');
-  const [attendanceDate, setAttendanceDate] = useState(toAttendanceDateYMD(new Date().toISOString()));
-  const [attendanceMonth, setAttendanceMonth] = useState(toAttendanceDateYMD(new Date().toISOString()).slice(0, 7));
-  const [dailyTimeLogs, setDailyTimeLogs] = useState<Record<number, { timeIn: string, timeOut: string, type: string, reason: string }>>({});
 
   const initialFormState = {
     employeeId: '', firstName: '', middleName: '', lastName: '', dateOfBirth: '', 
@@ -516,12 +490,6 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const getAttendanceSummary = (employeeId?: number, startDate?: string, endDate?: string) =>
     aggregateAttendanceRecords(attendances, { employeeId, startDate, endDate, shiftStart, shiftEnd, lunchStart, lunchEnd });
 
-  const getMonthlyAttendance = (employeeId: number) => {
-    const [year, month] = attendanceMonth.split('-').map(Number);
-    const lastDay = new Date(year, month, 0).getDate();
-    return getAttendanceSummary(employeeId, `${attendanceMonth}-01`, `${attendanceMonth}-${String(lastDay).padStart(2, '0')}`);
-  };
-
 const toCents = (val: any): number => {
     const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
     return Number.isFinite(num) ? Math.round(num * 100) : 0;
@@ -602,6 +570,25 @@ const toCents = (val: any): number => {
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => { setToast(null); }, 3500);
+  };
+
+  const canLeaveAttendance = () => {
+    if (activeTab !== 'attendance') return true;
+    if (attendanceBusy || isSaving) {
+      showToast('Please wait for the attendance operation to finish.', 'error');
+      return false;
+    }
+    return !attendanceDirty || window.confirm('Discard your unsaved attendance changes and leave Attendance Logs?');
+  };
+
+  const changeTab = (nextTab: typeof activeTab) => {
+    if (nextTab !== activeTab) {
+      if (!canLeaveAttendance()) return false;
+      setAttendanceDirty(false);
+      setActiveTab(nextTab);
+    }
+    setIsMobileMenuOpen(false);
+    return true;
   };
 
   const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
@@ -851,6 +838,7 @@ const toCents = (val: any): number => {
         
         await new Promise(resolve => setTimeout(resolve, 500));
         await fetchAttendances();
+        setAttendanceRefreshVersion(version => version + 1);
         
         showToast(`Imported ${successCount} logs successfully!${skippedCount ? ` Skipped ${skippedCount} exact duplicates.` : ''}`, "success");
 
@@ -944,7 +932,7 @@ const toCents = (val: any): number => {
       await fetchEmployees();
       setIsEditModalOpen(false);
       showToast(editingId ? "Successfully updated employee!" : "Successfully registered employee!", "success");
-      if (!editingId) { setFormData(initialFormState); setActiveTab('list'); }
+      if (!editingId) { setFormData(initialFormState); changeTab('list'); }
     } catch (error) { showToast("Network Error. Cannot connect to backend.", "error"); } finally { setIsSaving(false); }
   };
 
@@ -983,6 +971,7 @@ const toCents = (val: any): number => {
       });
       if (!response.ok) throw new Error();
       setShiftStart(tempShiftStart); setShiftEnd(tempShiftEnd);
+      setAttendanceRefreshVersion(version => version + 1);
       showToast("Shift updated permanently for this workspace!", "success");
     } catch (error) { showToast("Failed to save shift to database.", "error"); } 
     finally { setIsSaving(false); }
@@ -994,72 +983,6 @@ const toCents = (val: any): number => {
     appliedShiftStart: string = shiftStart,
     appliedShiftEnd: string = shiftEnd,
   ) => calculateAttendanceMetrics({ timeIn, timeOut, shiftStart: appliedShiftStart, shiftEnd: appliedShiftEnd, lunchStart, lunchEnd });
-
-  const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
-    setDailyTimeLogs((prev) => {
-      const existingLog = prev[empId] ? prev[empId] : { timeIn: shiftStart, timeOut: shiftEnd, type: 'regular', reason: '' };
-      return { ...prev, [empId]: { ...existingLog, [field]: value } };
-    });
-  };
-
-  const saveInlineAttendance = async (empId: number) => {
-    const log = dailyTimeLogs[empId] || { type: 'regular', timeIn: shiftStart, timeOut: shiftEnd, reason: '' };
-    let payload;
-
-    if (log.type === 'paid_leave') { payload = { employeeId: empId, date: attendanceDate, timeIn: 'LEAVE', timeOut: 'PAID', hours: 8, reason: log.reason || null }; } 
-    else if (log.type === 'unpaid_leave') { payload = { employeeId: empId, date: attendanceDate, timeIn: 'LEAVE', timeOut: 'UNPAID', hours: 0, reason: log.reason || null }; } 
-    else {
-      if (!log.timeIn || !log.timeOut) { showToast("Please enter both Time In and Time Out.", "error"); return; }
-      const calculated = calculateShiftHours(log.timeIn, log.timeOut, shiftStart, shiftEnd);
-      payload = { employeeId: empId, date: attendanceDate, timeIn: log.timeIn, timeOut: log.timeOut, hours: calculated.total, reason: null, shiftStart: shiftStart, shiftEnd: shiftEnd };
-    }
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) throw new Error();
-      await fetchAttendances();
-      setDailyTimeLogs(prev => { const newState = { ...prev }; delete newState[empId]; return newState; });
-      showToast("Log saved successfully!", "success");
-    } catch (error) { showToast("Failed to save attendance log.", "error"); }
-  };
-
-  const openEditLogModal = (log: AttendanceRecord) => {
-    const isLeave = log.timeIn === 'LEAVE';
-    let type = 'regular';
-    if (isLeave) type = log.timeOut === 'PAID' ? 'paid_leave' : 'unpaid_leave';
-    setEditLogForm({ date: toAttendanceDateYMD(log.date), timeIn: isLeave ? '' : log.timeIn, timeOut: isLeave ? '' : log.timeOut, type, reason: log.reason || '' });
-    setEditingLog(log);
-  };
-
-  const submitEditLog = async () => {
-    if (!editingLog) return;
-    setIsSaving(true);
-    let payload;
-
-    if (editLogForm.type === 'paid_leave') { payload = { date: editLogForm.date, timeIn: 'LEAVE', timeOut: 'PAID', hours: 8, reason: editLogForm.reason || null }; } 
-    else if (editLogForm.type === 'unpaid_leave') { payload = { date: editLogForm.date, timeIn: 'LEAVE', timeOut: 'UNPAID', hours: 0, reason: editLogForm.reason || null }; } 
-    else {
-      if (!editLogForm.timeIn || !editLogForm.timeOut) { showToast("Please enter both Time In and Time Out.", "error"); setIsSaving(false); return; }
-      const appliedStart = editingLog.shiftStart || shiftStart; const appliedEnd = editingLog.shiftEnd || shiftEnd;
-      const calculated = calculateAttendanceMetrics({ ...editingLog, timeIn: editLogForm.timeIn, timeOut: editLogForm.timeOut, shiftStart: appliedStart, shiftEnd: appliedEnd, lunchStart: editingLog.lunchStart || lunchStart, lunchEnd: editingLog.lunchEnd || lunchEnd });
-      payload = { date: editLogForm.date, timeIn: editLogForm.timeIn, timeOut: editLogForm.timeOut, hours: calculated.total, reason: null, shiftStart: appliedStart, shiftEnd: appliedEnd };
-    }
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance/${editingLog.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) throw new Error();
-      await fetchAttendances(); setEditingLog(null); showToast("Log updated successfully!", "success");
-    } catch (error) { showToast("Failed to update log.", "error"); } 
-    finally { setIsSaving(false); }
-  };
-
-  const deleteAttendance = async (id: number) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error();
-      await fetchAttendances(); showToast("Log removed successfully.", "success");
-    } catch (error) { showToast("Failed to delete log.", "error"); }
-  };
 
   // --- EXCEL AGGREGATE PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
@@ -1225,15 +1148,6 @@ const taxableIncome = calculateMandatoryTaxableIncome(
     return fullName.includes(query) || emp.employmentStatus.toLowerCase().includes(query) || (emp.bankAccount && emp.bankAccount.includes(query)) || (emp.employeeId && emp.employeeId.includes(query));
   });
 
-  const filteredAttendanceEmployees = employees.filter(emp => {
-    if (emp.company !== selectedCompany) return false; 
-    if (!attendanceSearchQuery) return true;
-    const query = attendanceSearchQuery.toLowerCase();
-    const fullName = `${emp.firstName} ${emp.middleName ? emp.middleName + ' ' : ''}${emp.lastName}`.toLowerCase();
-    const empId = emp.employeeId ? emp.employeeId.toLowerCase() : '';
-    return fullName.includes(query) || empId.includes(query);
-  });
-
   const filteredActiveEmployees = employees.filter(emp => {
     if (emp.company !== selectedCompany) return false; 
     if (!payrollActiveSearchQuery) return true;
@@ -1305,103 +1219,6 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                 <button type="submit" disabled={isSaving} className="w-full sm:w-auto py-2.5 px-8 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base">{isSaving ? "Saving..." : "Save Changes"}</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* MONTHLY LOGS MODAL */}
-      {monthLogsModalEmp && (
-        <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-indigo-50/50 shrink-0">
-              <div>
-                <h2 className="text-xl font-bold text-indigo-950">Monthly Logs: {monthLogsModalEmp.firstName} {monthLogsModalEmp.lastName}</h2>
-                <p className="text-sm text-indigo-700 font-medium mt-1">{formatMonthYear(attendanceMonth)}</p>
-              </div>
-              <button onClick={() => setMonthLogsModalEmp(null)} className="text-slate-400 hover:text-slate-600 p-2">✕</button>
-            </div>
-            <div className="overflow-y-auto p-6 bg-slate-50 flex flex-col gap-3">
-              {(() => {
-                const monthLogs = getMonthlyAttendance(monthLogsModalEmp.id).records;
-                if (monthLogs.length === 0) return <div className="text-center py-8 text-slate-500 italic">No logs found for this month.</div>;
-                return monthLogs.map(log => {
-                  const isLeave = log.timeIn === 'LEAVE';
-                  const shiftDetails = log.metrics;
-                  return (
-                    <div key={log.id} className="flex items-center justify-between gap-3 text-sm border border-slate-200 bg-white rounded-xl px-5 py-3.5 shadow-sm w-full group/log whitespace-nowrap hover:border-indigo-300 transition-colors">
-                      <span className="font-bold text-slate-700 w-[95px]">{formatMDY(toAttendanceDateYMD(log.date))}</span>
-                      <span className="text-slate-200">|</span>
-                      <span className="font-mono font-bold text-indigo-900 min-w-[150px]">
-                        {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${log.timeIn ? format12Hour(log.timeIn) : '--:--'} to ${log.timeOut ? format12Hour(log.timeOut) : '--:--'}`}
-                      </span>
-                      <span className="text-slate-200">|</span>
-                      <span className="font-bold text-indigo-600 w-[70px]">Reg: {formatDecToHM(shiftDetails.reg)}</span>
-                      <span className="text-slate-200">|</span>
-                      {shiftDetails.earlyOt > 0 ? <span className="font-bold text-amber-600 w-[70px]" title="Early Hours">Early: {formatDecToHM(shiftDetails.earlyOt)}</span> : <span className="font-medium text-slate-400 w-[70px]">Early: --</span>}
-                      <span className="text-slate-200">|</span>
-                      {shiftDetails.lateOt > 0 ? <span className="font-bold text-amber-600 w-[75px]" title="Late Overtime">Late OT: {formatDecToHM(shiftDetails.lateOt)}</span> : <span className="font-medium text-slate-400 w-[75px]">Late OT: --</span>}
-                      <span className="text-slate-200">|</span>
-                      <span className={`font-bold w-[75px] text-right ${shiftDetails.netMinutes > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{(shiftDetails.netMinutes / 60).toFixed(2)} hrs</span>
-                      <div className="flex items-center ml-2 border-l border-slate-200 pl-4">
-                        <button onClick={() => { openEditLogModal(log); }} className="text-indigo-500 hover:text-indigo-700 font-bold transition-colors mr-4 text-xs uppercase bg-indigo-50 px-3 py-1.5 rounded-lg" title="Edit Log">Edit</button>
-                        <button onClick={() => deleteAttendance(log.id)} className="text-slate-400 hover:text-red-600 font-bold transition-colors text-lg" title="Remove Log">✕</button>
-                      </div>
-                    </div>
-                  )
-                });
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* EDIT ATTENDANCE MODAL */}
-      {editingLog && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
-            <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-indigo-50/50 shrink-0">
-              <h2 className="text-lg font-bold text-indigo-950">Edit Log for {formatMDY(toAttendanceDateYMD(editingLog.date))}</h2>
-              <button onClick={() => setEditingLog(null)} className="text-slate-400 hover:text-slate-600 p-1">✕</button>
-            </div>
-            <div className="p-6 flex flex-col gap-5">
-              <div className="flex flex-col gap-1.5 w-full">
-                <label className="text-sm font-medium text-slate-600">Shift Date</label>
-                <div className="relative w-full">
-                  <div className="px-4 py-2.5 border rounded-lg text-sm bg-white flex items-center justify-between border-slate-300 text-slate-800 shadow-sm pointer-events-none">
-                    <span>{formatMDY(editLogForm.date)}</span>
-                  </div>
-                  <input type="date" value={editLogForm.date} onChange={(e) => setEditLogForm({...editLogForm, date: e.target.value})} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5 w-full">
-                <label className="text-sm font-medium text-slate-600">Log Type</label>
-                <select value={editLogForm.type} onChange={(e) => setEditLogForm({...editLogForm, type: e.target.value})} className="px-4 py-2.5 border rounded-lg text-sm bg-white outline-none focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm">
-                  <option value="regular">Standard Office Shift</option>
-                  <option value="paid_leave">Paid Leave (8 hrs)</option>
-                  <option value="unpaid_leave">Unpaid Leave (0 hrs)</option>
-                </select>
-              </div>
-              {editLogForm.type === 'regular' ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5 w-full">
-                    <label className="text-sm font-medium text-slate-600">Time In</label>
-                    <TimePicker12h value={editLogForm.timeIn} onChange={(val: string) => setEditLogForm({...editLogForm, timeIn: val})} />
-                  </div>
-                  <div className="flex flex-col gap-1.5 w-full">
-                    <label className="text-sm font-medium text-slate-600">Time Out</label>
-                    <TimePicker12h value={editLogForm.timeOut} onChange={(val: string) => setEditLogForm({...editLogForm, timeOut: val})} />
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5 w-full">
-                  <label className="text-sm font-medium text-slate-600">Reason (Optional)</label>
-                  <input type="text" placeholder="e.g. Sick Leave" value={editLogForm.reason} onChange={(e) => setEditLogForm({...editLogForm, reason: e.target.value})} className="px-4 py-2.5 border rounded-lg text-sm bg-white outline-none focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm" />
-                </div>
-              )}
-              <button onClick={submitEditLog} disabled={isSaving} className="mt-2 w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 shrink-0">
-                {isSaving ? "Updating..." : "Update Attendance"}
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1716,17 +1533,17 @@ const taxableIncome = calculateMandatoryTaxableIncome(
         
         <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
           <div className="px-3 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Main Menu</div>
-          <button onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Dashboard Overview</button>
+          <button onClick={() => { changeTab('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Dashboard Overview</button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
-          <button onClick={() => { setActiveTab('list'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Directory List</button>
-          <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Register New</button>
-          <button onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Log Attendance</button>
+          <button onClick={() => { changeTab('list'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Directory List</button>
+          <button onClick={() => { if (changeTab('add')) setFormData(initialFormState); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Register New</button>
+          <button onClick={() => { changeTab('attendance'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Log Attendance</button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
-          <button onClick={() => { setActiveTab('payroll'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Compute Payroll</button>
-          <button onClick={() => { setActiveTab('tax'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Tax Reports</button>
-          <button onClick={() => { setActiveTab('report'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Summary Reports</button>
+          <button onClick={() => { changeTab('payroll'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Compute Payroll</button>
+          <button onClick={() => { changeTab('tax'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Tax Reports</button>
+          <button onClick={() => { changeTab('report'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Summary Reports</button>
         </div>
       </aside>
 
@@ -1747,12 +1564,12 @@ const taxableIncome = calculateMandatoryTaxableIncome(
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-end">
-            <button onClick={onBack} className="flex-1 sm:flex-none flex justify-center px-4 py-2 sm:py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-sm border border-blue-200 items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+            <button onClick={() => { if (canLeaveAttendance()) onBack(); }} className="flex-1 sm:flex-none flex justify-center px-4 py-2 sm:py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-sm border border-blue-200 items-center gap-1.5 sm:gap-2 whitespace-nowrap">
               <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
               <span className="hidden sm:inline">Gateway</span>
               <span className="sm:hidden">Back</span>
             </button>
-            <button onClick={onLogout} className="flex-1 sm:flex-none flex justify-center px-4 sm:px-6 py-2 sm:py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-sm border border-slate-200 whitespace-nowrap">
+            <button onClick={() => { if (canLeaveAttendance()) onLogout(); }} className="flex-1 sm:flex-none flex justify-center px-4 sm:px-6 py-2 sm:py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-sm border border-slate-200 whitespace-nowrap">
               Logout
             </button>
           </div>
@@ -1801,9 +1618,9 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                   <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
                     <h3 className="text-lg font-bold text-slate-800 mb-4">Quick Actions</h3>
                     <div className="space-y-3">
-                      <button onClick={() => setActiveTab('attendance')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 transition-all">Log Today's Attendance</button>
-                      <button onClick={() => setActiveTab('payroll')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-slate-700 transition-all">Process New Payroll</button>
-                      <button onClick={() => { setActiveTab('add'); setFormData(initialFormState); }} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 transition-all">Register New Employee</button>
+                      <button onClick={() => changeTab('attendance')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 transition-all">Log Today's Attendance</button>
+                      <button onClick={() => changeTab('payroll')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-slate-700 transition-all">Process New Payroll</button>
+                      <button onClick={() => { if (changeTab('add')) setFormData(initialFormState); }} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 transition-all">Register New Employee</button>
                     </div>
                   </div>
 
@@ -1874,175 +1691,37 @@ const taxableIncome = calculateMandatoryTaxableIncome(
 
             {/* ATTENDANCE TAB */}
             {activeTab === 'attendance' && (
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-                <div className="p-4 sm:p-6 border-b border-slate-200 bg-indigo-50/30">
-                  <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 sm:gap-6">
-                    <div className="w-full lg:w-auto flex flex-col gap-3">
-                      <div>
-                        <h2 className="text-lg sm:text-xl font-bold text-indigo-950">Time & Attendance Log</h2>
-                        <p className="text-xs sm:text-sm text-indigo-700 mt-0.5">Logs are bounded by the standard Office Shift parameters.</p>
+              <div className="space-y-4">
+                <fieldset disabled={isSaving} className="min-w-0">
+                  <AttendanceEntryGrid
+                    key={selectedCompany + ':' + attendanceRefreshVersion}
+                    selectedCompany={selectedCompany}
+                    API_BASE_URL={API_BASE_URL}
+                    employees={employees}
+                    onRecordsChange={setAttendances}
+                    onDirtyChange={setAttendanceDirty}
+                    onBusyChange={setAttendanceBusy}
+                  />
+                </fieldset>
+                <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">Attendance tools: CSV &amp; office shift</summary>
+                  <div className="border-t border-slate-100 p-4">
+                    {attendanceDirty && <p className="mb-3 text-xs text-amber-700">Save or discard your attendance changes before using these tools.</p>}
+                    <fieldset disabled={isSaving || attendanceBusy || attendanceDirty} className="flex flex-col gap-4 disabled:opacity-50">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Office In</label><TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact /></div>
+                        <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Office Out</label><TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact /></div>
+                        <button type="button" onClick={applyShiftSettings} className="rounded-lg bg-indigo-100 px-4 py-2.5 text-xs font-bold text-indigo-800 hover:bg-indigo-200">Save Shift</button>
                       </div>
-                      <div className="w-full sm:w-72 md:w-80">
-                        <input type="text" placeholder="Search employee attendance..." value={attendanceSearchQuery} onChange={(e) => setAttendanceSearchQuery(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 outline-none shadow-sm transition-all bg-white" />
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={async () => { await handleRefreshData(); setAttendanceRefreshVersion(version => version + 1); }} className="rounded-lg bg-sky-100 px-4 py-2 text-xs font-bold text-sky-700 hover:bg-sky-200">{isSaving ? 'Syncing...' : 'Refresh'}</button>
+                        <button type="button" onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', toAttendanceDateYMD(new Date()), '08:00 AM', '05:00 PM'], ['2', toAttendanceDateYMD(new Date()), 'LEAVE', 'PAID']])} className="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200">Template</button>
+                        <label className="cursor-pointer rounded-lg border border-indigo-200 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-slate-50">Import CSV<input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} /></label>
+                        <button type="button" onClick={handleExportAttendance} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700">Export CSV</button>
                       </div>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0 mt-1 lg:mt-0">
-                      <div className="flex rounded-xl bg-slate-200/70 p-1 border border-slate-300/60 shadow-inner w-full sm:w-auto">
-                        <button onClick={() => setAttendanceFilter('day')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${attendanceFilter === 'day' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>Daily View</button>
-                        <button onClick={() => setAttendanceFilter('month')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${attendanceFilter === 'month' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>Monthly Summary</button>
-                      </div>
-                      {attendanceFilter === 'day' ? (
-                        <div className="relative w-full sm:w-auto">
-                          <div className="w-full sm:w-auto px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
-                            <span>{formatMDY(attendanceDate)}</span>
-                            <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                          </div>
-                          <input type="date" value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                        </div>
-                      ) : (
-                        <div className="relative w-full sm:w-auto">
-                          <div className="w-full sm:w-auto px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-indigo-950 shadow-sm flex items-center justify-between gap-3 pointer-events-none">
-                            <span>{formatMonthYear(attendanceMonth)}</span>
-                            <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                          </div>
-                          <input type="month" value={attendanceMonth} onChange={(e) => setAttendanceMonth(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                        </div>
-                      )}
-                    </div>
+                    </fieldset>
                   </div>
-
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 mt-6 pt-5 border-t border-indigo-100">
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-indigo-100 w-full xl:w-fit">
-                      <div className="flex flex-col gap-1 w-full sm:w-auto"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office In</label><TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact /></div>
-                      <div className="hidden sm:block w-px h-8 bg-slate-200"></div>
-                      <div className="flex flex-col gap-1 w-full sm:w-auto"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Office Out</label><TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact /></div>
-                      <button onClick={applyShiftSettings} disabled={isSaving} className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-2.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-xs sm:text-sm font-bold rounded-lg shadow-sm transition-colors uppercase tracking-wide disabled:opacity-50">Save Shift</button>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 w-full sm:w-auto mb-1">
-                      <button onClick={handleRefreshData} disabled={isSaving} className="flex-1 sm:flex-none px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1 disabled:opacity-50"><svg className={`w-3.5 h-3.5 ${isSaving ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>{isSaving ? 'Syncing...' : 'Refresh'}</button>
-                      <button onClick={() => exportToCSV('Attendance_Template.csv', ['Employee ID', 'Date', 'Time In', 'Time Out'], [['1', new Date().toISOString().split('T')[0], '08:00 AM', '05:00 PM'], ['2', new Date().toISOString().split('T')[0], 'LEAVE', 'PAID']])} className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg shadow-sm transition-colors">Template</button>
-                      <label className="cursor-pointer flex-1 sm:flex-none text-center px-4 py-2 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold rounded-lg shadow-sm border border-indigo-200 transition-colors">Import CSV<input type="file" accept=".csv" className="hidden" onChange={handleImportAttendance} /></label>
-                      <button onClick={handleExportAttendance} className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors">Export CSV</button>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[1050px]">
-                    <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-1/4">Employee</th>
-                        {attendanceFilter === 'day' ? (
-                          <><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase whitespace-nowrap">Recorded Logs</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase whitespace-nowrap">Add New Log</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right whitespace-nowrap w-24">Total OT</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right whitespace-nowrap">Calculated Hours</th></>
-                        ) : (
-                          <><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase whitespace-nowrap">Detailed Monthly Logs</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right whitespace-nowrap w-24">Total OT</th><th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right whitespace-nowrap w-36">Total Payable Hrs</th></>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {attendanceFilter === 'day' && filteredAttendanceEmployees.map((emp) => {
-                            const dailyAttendance = getAttendanceSummary(emp.id, attendanceDate, attendanceDate);
-                            const empLogs = dailyAttendance.records;
-                            const totalHrs = dailyAttendance.netMinutes / 60;
-                            const totalOtHrs = dailyAttendance.otMinutes / 60;
-                            const currentLog = dailyTimeLogs[emp.id] || { timeIn: shiftStart, timeOut: shiftEnd, type: 'regular', reason: '' };
-                        return (
-                          <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
-                            <td className="py-5 px-6 align-top w-1/4">
-                              <span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span>
-                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {emp.employeeId || emp.id}</div>
-                            </td>
-                            <td className="py-5 px-6 align-top">
-                              <div className="flex flex-col gap-3">
-                                {empLogs.length === 0 ? <span className="text-sm text-slate-400 italic mt-1.5">No logs recorded</span> : 
-                                  empLogs.map(log => {
-                                    const isLeave = log.timeIn === 'LEAVE';
-                                    const hasFullPunch = log.timeIn && log.timeOut && !isLeave;
-                                    const shiftCalc = hasFullPunch ? log.metrics : null;
-                                    return (
-                                      <div key={log.id} className="flex flex-col bg-white border border-indigo-100 rounded-xl shadow-sm overflow-hidden w-full max-w-[420px]">
-                                        <div className="flex items-center justify-between gap-6 bg-indigo-50 px-4 py-2.5">
-                                          <span className="text-sm font-bold text-indigo-900 font-mono whitespace-nowrap">
-                                            {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${log.timeIn ? format12Hour(log.timeIn) : '--:--'} to ${log.timeOut ? format12Hour(log.timeOut) : '--:--'}`}
-                                          </span>
-                                          <div className="flex items-center gap-3 shrink-0">
-                                            <button onClick={() => openEditLogModal(log)} className="text-indigo-400 hover:text-indigo-600 font-bold transition-colors text-xs uppercase tracking-wider">EDIT</button>
-                                            <button onClick={() => deleteAttendance(log.id)} className="text-rose-400 hover:text-rose-600 font-bold transition-colors text-sm">✕</button>
-                                          </div>
-                                        </div>
-                                        {!isLeave && shiftCalc ? (
-                                          <div className="flex gap-4 px-4 py-2.5 text-[11px] uppercase font-bold text-slate-500 bg-white items-center flex-wrap border-t border-indigo-50">
-                                            <span className="text-indigo-600" title="Regular Shift Hours">Reg: {formatDecToHM(shiftCalc.reg)}</span><span className="text-slate-200">|</span><span className={`${shiftCalc.earlyOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Early: {shiftCalc.earlyOt > 0 ? formatDecToHM(shiftCalc.earlyOt) : '--'}</span><span className="text-slate-200">|</span><span className={`${shiftCalc.lateOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Late OT: {shiftCalc.lateOt > 0 ? formatDecToHM(shiftCalc.lateOt) : '--'}</span>
-                                          </div>
-                                        ) : (
-                                          <div className={`px-4 py-2.5 text-[11px] uppercase font-bold border-t border-indigo-50 ${log.metrics.netMinutes > 0 ? 'text-emerald-600 bg-white' : 'text-rose-600 bg-rose-50'}`}>
-                                            {log.metrics.netMinutes > 0 ? `Auto-credited: ${formatDecToHM(log.metrics.netMinutes / 60)}` : 'Deducted: 0m'}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )
-                                  })
-                                }
-                              </div>
-                            </td>
-                            <td className="py-5 px-6 align-top">
-                              <div className="flex flex-col gap-2 w-full min-w-[200px] max-w-full sm:max-w-[400px]">
-                                <select value={currentLog.type} onChange={(e) => handleTimeChange(emp.id, 'type', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:border-indigo-500 bg-white w-full shadow-sm">
-                                  <option value="regular">Standard Office Shift</option>
-                                  <option value="paid_leave">Paid Leave (8 hrs)</option>
-                                  <option value="unpaid_leave">Unpaid Leave (0 hrs)</option>
-                                </select>
-                                <div className="flex flex-col gap-2 mt-1 w-full">
-                                  {currentLog.type === 'regular' ? (
-                                    <div className="flex items-center gap-2 w-full bg-slate-50 p-2 rounded-xl border border-slate-200 shadow-inner">
-                                      <div className="flex-1 min-w-0"><TimePicker12h value={currentLog.timeIn} onChange={(val: string) => handleTimeChange(emp.id, 'timeIn', val)} compact /></div>
-                                      <span className="text-slate-300 font-bold text-lg shrink-0">→</span>
-                                      <div className="flex-1 min-w-0"><TimePicker12h value={currentLog.timeOut} onChange={(val: string) => handleTimeChange(emp.id, 'timeOut', val)} compact /></div>
-                                    </div>
-                                  ) : (
-                                    <input type="text" placeholder="Reason (Optional)" value={currentLog.reason || ''} onChange={(e) => handleTimeChange(emp.id, 'reason', e.target.value)} className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-indigo-500 w-full shadow-sm" />
-                                  )}
-                                </div>
-                                <button onClick={() => saveInlineAttendance(emp.id)} className="mt-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 transition-colors text-white text-sm font-bold rounded-lg shadow-sm w-full">Save Log</button>
-                              </div>
-                            </td>
-                            <td className="py-5 px-6 align-top text-right font-mono font-semibold text-amber-600 text-sm">{totalOtHrs > 0 ? formatDecToHM(totalOtHrs) : '--'}</td>
-                            <td className="py-5 px-6 align-top text-right"><span className="inline-block whitespace-nowrap font-mono font-bold text-sm text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">{totalHrs > 0 ? formatDecToHM(totalHrs) : '--'}</span></td>
-                          </tr>
-                        );
-                      })}
-
-                      {attendanceFilter === 'month' && filteredAttendanceEmployees.map((emp) => {
-                            const monthlyAttendance = getMonthlyAttendance(emp.id);
-                            const monthLogs = monthlyAttendance.records;
-                            const totalHrs = monthlyAttendance.netMinutes / 60;
-                            const totalOverallOtHrs = monthlyAttendance.otMinutes / 60;
-                        return (
-                          <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors">
-                            <td className="py-5 px-6 align-top w-1/4">
-                              <span className="font-semibold text-blue-950 text-sm whitespace-nowrap">{emp.firstName} {emp.lastName}</span>
-                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {emp.employeeId || emp.id}</div>
-                            </td>
-                            <td className="py-5 px-6 align-top">
-                              {monthLogs.length === 0 ? (
-                                <span className="text-sm text-slate-400 italic">No logs this month</span>
-                              ) : (
-                                <button onClick={() => setMonthLogsModalEmp(emp)} className="px-5 py-2.5 bg-white border border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50 text-indigo-700 text-sm font-bold rounded-xl shadow-sm transition-all flex items-center gap-2">
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                                  View {monthLogs.length} Logs
-                                </button>
-                              )}
-                            </td>
-                            <td className="py-5 px-6 align-top text-right font-mono font-bold text-amber-700 text-sm">{totalOverallOtHrs > 0 ? formatDecToHM(totalOverallOtHrs) : '--'}</td>
-                            <td className="py-5 px-6 align-top text-right"><span className="inline-block whitespace-nowrap bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">{totalHrs > 0 ? formatDecToHM(totalHrs) : '0m'}</span></td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                </details>
               </div>
             )}
 
