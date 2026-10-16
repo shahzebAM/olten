@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { expireApiSession, getApiAuthHeaders } from '../lib/apiSession';
 import { safeDocumentLink } from '../lib/documentLinks';
@@ -195,6 +195,101 @@ function Empty({ children }: { children: ReactNode }) {
   return <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">{children}</p>;
 }
 
+function ProductPicker({ products, value, onChange, disabled }: {
+  products: Product[]; value: string; onChange: (value: string) => void; disabled: boolean;
+}) {
+  const listId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const selected = products.find(product => String(product.id) === value);
+  const query = (search ?? '').trim().toLowerCase();
+  const matches = products.filter(product => `${product.sku} ${product.name}`.toLowerCase().includes(query));
+
+  useEffect(() => {
+    inputRef.current?.setCustomValidity(selected ? '' : 'Select a product from the list.');
+  }, [selected]);
+
+  useEffect(() => {
+    if (open) document.getElementById(`${listId}-${highlighted}`)?.scrollIntoView({ block: 'nearest' });
+  }, [open, highlighted, listId, query]);
+
+  function choose(product: Product) {
+    onChange(String(product.id));
+    setSearch(null);
+    setHighlighted(products.indexOf(product));
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <Field label="Product">
+        <input
+          ref={inputRef}
+          required
+          disabled={disabled}
+          role="combobox"
+          aria-label="Product"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={open && matches[highlighted] ? `${listId}-${highlighted}` : undefined}
+          autoComplete="off"
+          placeholder="Search by SKU or product name"
+          className={inputClass}
+          value={search ?? (selected ? `${selected.sku} · ${selected.name}` : '')}
+          onFocus={event => {
+            setOpen(true);
+            setHighlighted(selected ? products.indexOf(selected) : 0);
+            event.currentTarget.select();
+          }}
+          onClick={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onChange={event => {
+            setSearch(event.target.value);
+            onChange('');
+            setHighlighted(0);
+            setOpen(true);
+          }}
+          onKeyDown={event => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              setOpen(true);
+              setHighlighted(index => matches.length ? (index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length : 0);
+            } else if (event.key === 'Enter' && open) {
+              event.preventDefault();
+              if (matches[highlighted]) choose(matches[highlighted]);
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              setOpen(false);
+            }
+          }}
+        />
+      </Field>
+      {open && !disabled && (
+        <div id={listId} role="listbox" aria-label="Products" className="absolute z-40 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-300 bg-white shadow-lg">
+          {matches.length ? matches.map((product, index) => (
+            <button
+              key={product.id}
+              id={`${listId}-${index}`}
+              type="button"
+              role="option"
+              tabIndex={-1}
+              aria-selected={index === highlighted}
+              className={`block w-full px-3 py-2 text-left text-sm ${index === highlighted ? 'bg-cyan-100 text-cyan-900' : 'text-slate-800 hover:bg-slate-100'}`}
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => choose(product)}
+            >
+              {product.sku} · {product.name}
+            </button>
+          )) : <p role="status" className="px-3 py-2 text-sm text-slate-500">No products found.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ImportationModule({
   selectedCompany,
   API_BASE_URL,
@@ -215,7 +310,8 @@ export default function ImportationModule({
   const [requestId, setRequestId] = useState('');
   const [shipmentId, setShipmentId] = useState('');
   const [prForm, setPrForm] = useState({ purpose: '', neededBy: '' });
-  const [prItems, setPrItems] = useState([{ productId: '', quantity: 1 }]);
+  const nextPrItemId = useRef(1);
+  const [prItems, setPrItems] = useState([{ rowId: 0, productId: '', quantity: 1 }]);
   const [quoteForm, setQuoteForm] = useState({
     supplierId: '',
     currency: 'USD',
@@ -584,7 +680,7 @@ export default function ImportationModule({
                         'POST',
                         () => {
                           setPrForm({ purpose: '', neededBy: '' });
-                          setPrItems([{ productId: '', quantity: 1 }]);
+                          setPrItems([{ rowId: nextPrItemId.current++, productId: '', quantity: 1 }]);
                         },
                       ),
                     )
@@ -605,23 +701,14 @@ export default function ImportationModule({
                     </Field>
                   </div>
                   {prItems.map((item, index) => (
-                    <div key={index} className="flex items-end gap-3">
+                    <div key={item.rowId} className="flex items-end gap-3">
                       <div className="flex-1">
-                        <Field label="Product">
-                          <select
-                            required
-                            className={inputClass}
-                            value={item.productId}
-                            onChange={(e) => setPrItems(prItems.map((line, i) => (i === index ? { ...line, productId: e.target.value } : line)))}
-                          >
-                            <option value="">Select product</option>
-                            {data.products.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.sku} · {product.name}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
+                        <ProductPicker
+                          products={data.products}
+                          value={item.productId}
+                          disabled={busy || loading}
+                          onChange={productId => setPrItems(prItems.map((line, i) => i === index ? { ...line, productId } : line))}
+                        />
                       </div>
                       <div className="w-28">
                         <Field label="Quantity">
@@ -658,7 +745,7 @@ export default function ImportationModule({
                     </div>
                   ))}
                   <div className="flex gap-3">
-                    <button type="button" className={secondaryClass} onClick={() => setPrItems([...prItems, { productId: '', quantity: 1 }])}>
+                    <button type="button" className={secondaryClass} onClick={() => setPrItems([...prItems, { rowId: nextPrItemId.current++, productId: '', quantity: 1 }])}>
                       Add item
                     </button>
                     <button className={buttonClass}>Save requisition</button>
