@@ -121,6 +121,18 @@ export class EmployeesController {
     return await this.employeesService.auditHistoricalAttendance(company);
   }
 
+  @Get('employees/payroll/audit-tax')
+  async auditPayrollTax(@Query('company') company?: string) {
+    return await this.employeesService.auditHistoricalPayrollTax(company);
+  }
+
+  @Post('employees/payroll/recalculate-tax')
+  async recalculatePayrollTax(
+    @Body() body: { company?: string; payrollIds?: number[]; dryRun?: boolean },
+  ) {
+    return await this.employeesService.recalculateHistoricalPayrollTax(body);
+  }
+
   @Post('employees/attendance/recalculate-lunch')
   async recalculateLunchDeductions(@Body() body: { company?: string; recordIds?: number[]; dryRun?: boolean }) {
     return await this.employeesService.recalculateHistoricalAttendance(body);

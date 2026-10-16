@@ -20,6 +20,139 @@ export interface AttendanceCalcOptions {
   maxRegularMinutes?: number;           // default 480 (8 hours)
 }
 
+// ==========================================
+// PHILIPPINE BIR WITHHOLDING TAX CALCULATOR
+// ==========================================
+
+export interface TaxBracket {
+  id: number;
+  min: number;
+  baseTax: number;
+  rate: number;
+  excessOver: number;
+}
+
+export const BIR_SEMI_MONTHLY_TAX_BRACKETS: TaxBracket[] = [
+  { id: 1, min: 0, baseTax: 0, rate: 0, excessOver: 0 },
+  { id: 2, min: 10417, baseTax: 0, rate: 0.15, excessOver: 10417 },
+  { id: 3, min: 16667, baseTax: 937.5, rate: 0.20, excessOver: 16667 },
+  { id: 4, min: 33333, baseTax: 4270.7, rate: 0.25, excessOver: 33333 },
+  { id: 5, min: 83333, baseTax: 16770.7, rate: 0.30, excessOver: 83333 },
+  { id: 6, min: 333333, baseTax: 91770.7, rate: 0.35, excessOver: 333333 },
+];
+
+export interface PayrollTaxInput {
+  grossPay: number;
+  sssDeduction?: number;
+  philhealthDeduct?: number;
+  pagIbigDeduct?: number;
+  sssProvident?: number;
+  isSssProvidentMandatory?: boolean; // defaults to true (mandatory WISP/MPF share)
+  isDeclared?: boolean;              // defaults to true when computing BIR tax
+  cashAdvance?: number;
+  companyLoan?: number;
+  pagIbigLoan?: number;
+  pagIbigHousingLoan?: number;
+  sssSalaryLoan?: number;
+  sssCalamityLoan?: number;
+  pagIbigCalamity?: number;
+  pagIbigSalaryLoan?: number;
+  brackets?: TaxBracket[];
+}
+
+export interface PayrollTaxResult {
+  grossPay: number;
+  mandatoryContributions: number;
+  nonExemptDeductions: number;
+  taxableIncome: number;
+  withholdingTax: number;
+  totalDeductions: number;
+  netPay: number;
+  bracketMin: number;
+  rate: number;
+  minTax: number;
+  taxBase: number;
+}
+
+export const toMoneyCents = (val: any): number => {
+  const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
+  return Number.isFinite(num) ? Math.round(num * 100) : 0;
+};
+
+export const fromMoneyCents = (cents: number): number => {
+  return Math.round(cents) / 100;
+};
+
+export const calculatePhilippinePayrollTax = (
+  input: PayrollTaxInput,
+): PayrollTaxResult => {
+  const brackets = input.brackets?.length ? input.brackets : BIR_SEMI_MONTHLY_TAX_BRACKETS;
+  const isDeclared = input.isDeclared !== undefined ? Boolean(input.isDeclared) : true;
+  const isSssProvidentMandatory =
+    input.isSssProvidentMandatory !== undefined ? Boolean(input.isSssProvidentMandatory) : true;
+
+  const grossCents = toMoneyCents(input.grossPay);
+  const sssCents = Math.max(0, toMoneyCents(input.sssDeduction));
+  const philhealthCents = Math.max(0, toMoneyCents(input.philhealthDeduct));
+  const pagIbigCents = Math.max(0, toMoneyCents(input.pagIbigDeduct));
+  const sssProvidentCents = Math.max(0, toMoneyCents(input.sssProvident));
+
+  // Only mandatory employee statutory contributions reduce taxable income
+  const exemptProvidentCents = isSssProvidentMandatory ? sssProvidentCents : 0;
+  const mandatoryContributionsCents =
+    sssCents + philhealthCents + pagIbigCents + exemptProvidentCents;
+
+  const taxableIncomeCents = Math.max(0, grossCents - mandatoryContributionsCents);
+
+  let taxCents = 0;
+  let bracketMin = 0;
+  let rate = 0;
+  let minTax = 0;
+  let excessCents = 0;
+
+  if (isDeclared && taxableIncomeCents > 0) {
+    const sorted = [...brackets].sort((a, b) => b.min - a.min);
+    const applicable =
+      sorted.find(b => taxableIncomeCents >= toMoneyCents(b.min)) || sorted[sorted.length - 1];
+    excessCents = Math.max(0, taxableIncomeCents - toMoneyCents(applicable.excessOver));
+    const baseTaxCents = toMoneyCents(applicable.baseTax);
+    taxCents = Math.max(0, baseTaxCents + Math.round(excessCents * Number(applicable.rate)));
+    bracketMin = applicable.min;
+    rate = applicable.rate;
+    minTax = applicable.baseTax;
+  }
+
+  // Loans, cash advances, and non-mandatory deductions are NOT tax-exempt, deducted once from Net Pay
+  const nonExemptDeductionsCents =
+    Math.max(0, toMoneyCents(input.cashAdvance)) +
+    Math.max(0, toMoneyCents(input.companyLoan)) +
+    Math.max(0, toMoneyCents(input.pagIbigLoan)) +
+    Math.max(0, toMoneyCents(input.pagIbigHousingLoan)) +
+    Math.max(0, toMoneyCents(input.sssSalaryLoan)) +
+    Math.max(0, toMoneyCents(input.sssCalamityLoan)) +
+    Math.max(0, toMoneyCents(input.pagIbigCalamity)) +
+    Math.max(0, toMoneyCents(input.pagIbigSalaryLoan)) +
+    (isSssProvidentMandatory ? 0 : sssProvidentCents);
+
+  const totalDeductionsCents =
+    mandatoryContributionsCents + nonExemptDeductionsCents + taxCents;
+  const netPayCents = grossCents - totalDeductionsCents;
+
+  return {
+    grossPay: fromMoneyCents(grossCents),
+    mandatoryContributions: fromMoneyCents(mandatoryContributionsCents),
+    nonExemptDeductions: fromMoneyCents(nonExemptDeductionsCents),
+    taxableIncome: fromMoneyCents(taxableIncomeCents),
+    withholdingTax: fromMoneyCents(taxCents),
+    totalDeductions: fromMoneyCents(totalDeductionsCents),
+    netPay: fromMoneyCents(netPayCents),
+    bracketMin,
+    rate,
+    minTax,
+    taxBase: fromMoneyCents(excessCents),
+  };
+};
+
 export interface AttendanceCalcResult {
   grossMinutes: number;
   lunchDeductionMinutes: number;
@@ -460,7 +593,7 @@ export class EmployeesService {
     return { mode: 'APPLIED', updatedCount, updatedRecords: targets };
   }
 
-  // ==========================================
+// ==========================================
   // PAYROLLS
   // ==========================================
   async getPayrolls() {
@@ -468,6 +601,27 @@ export class EmployeesService {
   }
 
   async createPayroll(data: any) {
+    const isDeclared =
+      data.isDeclared !== undefined ? Boolean(data.isDeclared) : Number(data.tax || 0) > 0;
+
+    const computed = calculatePhilippinePayrollTax({
+      grossPay: data.grossPay || 0,
+      sssDeduction: data.sssDeduction || 0,
+      pagIbigDeduct: data.pagIbigDeduct || 0,
+      philhealthDeduct: data.philhealthDeduct || 0,
+      sssProvident: data.sssProvident || 0,
+      isSssProvidentMandatory: data.isSssProvidentMandatory ?? true,
+      isDeclared,
+      cashAdvance: data.cashAdvance || 0,
+      companyLoan: data.companyLoan || 0,
+      pagIbigLoan: data.pagIbigLoan || 0,
+      pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
+      sssSalaryLoan: data.sssSalaryLoan || 0,
+      sssCalamityLoan: data.sssCalamityLoan || 0,
+      pagIbigCalamity: data.pagIbigCalamity || 0,
+      pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+    });
+
     return await prisma.payroll.create({ 
       data: {
         employeeId: data.employeeId,
@@ -478,9 +632,9 @@ export class EmployeesService {
         sssDeduction: data.sssDeduction || 0,
         pagIbigDeduct: data.pagIbigDeduct || 0,
         philhealthDeduct: data.philhealthDeduct || 0,
-        tax: data.tax || 0,
-        grossPay: data.grossPay,
-        netPay: data.netPay,
+        tax: computed.withholdingTax,
+        grossPay: computed.grossPay,
+        netPay: computed.netPay,
         pagIbigLoan: data.pagIbigLoan || 0,
         pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
         sssProvident: data.sssProvident || 0,
@@ -496,6 +650,99 @@ export class EmployeesService {
     return await prisma.payroll.delete({
       where: { id },
     });
+  }
+
+  // ==========================================
+  // HISTORICAL PAYROLL TAX AUDIT & SAFE RECALCULATION
+  // ==========================================
+  async auditHistoricalPayrollTax(company?: string) {
+    const allPayrolls = await prisma.payroll.findMany();
+    const employees = await prisma.employee.findMany();
+    const empMap = new Map(employees.map(e => [e.id, e]));
+
+    const discrepancies: any[] = [];
+
+    for (const pr of allPayrolls) {
+      const emp = empMap.get(pr.employeeId);
+      if (company && emp && emp.company !== company) continue;
+
+      const isDeclared = Number(pr.tax || 0) > 0;
+      const expected = calculatePhilippinePayrollTax({
+        grossPay: pr.grossPay,
+        sssDeduction: pr.sssDeduction,
+        philhealthDeduct: pr.philhealthDeduct,
+        pagIbigDeduct: pr.pagIbigDeduct,
+        sssProvident: pr.sssProvident,
+        isSssProvidentMandatory: true,
+        isDeclared,
+        cashAdvance: pr.cashAdvance,
+        companyLoan: pr.companyLoan,
+        pagIbigLoan: pr.pagIbigLoan,
+        pagIbigHousingLoan: pr.pagIbigHousingLoan,
+        sssSalaryLoan: pr.sssSalaryLoan,
+        sssCalamityLoan: pr.sssCalamityLoan,
+        pagIbigCalamity: pr.pagIbigCalamity,
+        pagIbigSalaryLoan: pr.pagIbigSalaryLoan,
+      });
+
+      const storedTaxCents = toMoneyCents(pr.tax);
+      const expectedTaxCents = toMoneyCents(expected.withholdingTax);
+      const storedNetCents = toMoneyCents(pr.netPay);
+      const expectedNetCents = toMoneyCents(expected.netPay);
+
+      if (storedTaxCents !== expectedTaxCents || storedNetCents !== expectedNetCents) {
+        discrepancies.push({
+          payrollId: pr.id,
+          employeeId: pr.employeeId,
+          employeeName: emp ? `${emp.firstName} ${emp.lastName}` : `ID #${pr.employeeId}`,
+          createdAt: pr.createdAt,
+          grossPay: pr.grossPay,
+          sssDeduction: pr.sssDeduction,
+          sssProvident: pr.sssProvident,
+          expectedTaxableIncome: expected.taxableIncome,
+          storedTax: fromMoneyCents(storedTaxCents),
+          expectedTax: expected.withholdingTax,
+          taxDifference: fromMoneyCents(storedTaxCents - expectedTaxCents),
+          storedNetPay: fromMoneyCents(storedNetCents),
+          expectedNetPay: expected.netPay,
+        });
+      }
+    }
+
+    return {
+      totalScanned: allPayrolls.length,
+      discrepancyCount: discrepancies.length,
+      discrepancies,
+    };
+  }
+
+  async recalculateHistoricalPayrollTax(options: {
+    company?: string;
+    payrollIds?: number[];
+    dryRun?: boolean;
+  }) {
+    const audit = await this.auditHistoricalPayrollTax(options?.company);
+    const targets = options?.payrollIds?.length
+      ? audit.discrepancies.filter(d => options.payrollIds!.includes(d.payrollId))
+      : audit.discrepancies;
+
+    if (options?.dryRun !== false) {
+      return { mode: 'DRY_RUN', updatedCount: 0, preview: targets };
+    }
+
+    let updatedCount = 0;
+    for (const item of targets) {
+      await prisma.payroll.update({
+        where: { id: item.payrollId },
+        data: {
+          tax: item.expectedTax,
+          netPay: item.expectedNetPay,
+        },
+      });
+      updatedCount++;
+    }
+
+    return { mode: 'APPLIED', updatedCount, updatedRecords: targets };
   }
 
   // ==========================================

@@ -1,4 +1,5 @@
 import { calculateAttendanceMetrics } from './attendance-calculator';
+import { calculatePhilippinePayrollTax } from './employees.service';
 
 describe('Attendance & Lunch Deduction Calculator', () => {
   it('Prompt Test Case: Oct 1, 2026 (09:02 AM to 11:56 AM) -> 2h 54m, 0m lunch, 2.90 hrs', () => {
@@ -68,6 +69,106 @@ describe('Attendance & Lunch Deduction Calculator', () => {
     expect(res.lateMinutes).toBe(240); // 8:00 to 12:00 (excluding 12:00-12:20 lunch)
     expect(res.decimalHours).toBe('4.00');
   });
+
+
+describe('Philippine BIR Withholding Tax Calculator (2023+ Semi-Monthly Table)', () => {
+  it('Test A: Mandatory contributions included (ZERWA ISABEL MUGHAL: Gross ₱25,000, SSS ₱1,000, Mandatory SSS Provident ₱750)', () => {
+    const result = calculatePhilippinePayrollTax({
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 750,
+      isSssProvidentMandatory: true,
+      isDeclared: true,
+    });
+
+    expect(result.taxableIncome).toBe(23250.00);
+    expect(result.withholdingTax).toBe(2254.10);
+    expect(result.totalDeductions).toBe(4004.10);
+    expect(result.netPay).toBe(20995.90);
+  });
+
+  it('Test B: Without contributions (Gross ₱25,000, all contributions ₱0)', () => {
+    const result = calculatePhilippinePayrollTax({
+      grossPay: 25000,
+      sssDeduction: 0,
+      sssProvident: 0,
+      philhealthDeduct: 0,
+      pagIbigDeduct: 0,
+      isDeclared: true,
+    });
+
+    expect(result.taxableIncome).toBe(25000.00);
+    expect(result.withholdingTax).toBe(2604.10);
+    expect(result.totalDeductions).toBe(2604.10);
+    expect(result.netPay).toBe(22395.90);
+  });
+
+  it('Test C: Only SSS deducted (Gross ₱25,000, SSS ₱1,000, SSS Provident ₱0)', () => {
+    const result = calculatePhilippinePayrollTax({
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 0,
+      isDeclared: true,
+    });
+
+    expect(result.taxableIncome).toBe(24000.00);
+    expect(result.withholdingTax).toBe(2404.10);
+    expect(result.totalDeductions).toBe(3404.10);
+    expect(result.netPay).toBe(21595.90);
+  });
+
+  it('Includes PhilHealth and Pag-IBIG mandatory contributions in tax-exempt deductions but excludes loans and cash advances', () => {
+    const result = calculatePhilippinePayrollTax({
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 750,
+      philhealthDeduct: 500,
+      pagIbigDeduct: 200,
+      cashAdvance: 1000,
+      sssSalaryLoan: 500,
+      isDeclared: true,
+    });
+
+    // Taxable Income = 25,000 - (1,000 + 750 + 500 + 200) = 22,550.00 (loans & cash advance excluded from tax exemption)
+    expect(result.taxableIncome).toBe(22550.00);
+    // Tax = 937.50 + (22,550 - 16,667) * 0.20 = 937.50 + 1,176.60 = 2,114.10
+    expect(result.withholdingTax).toBe(2114.10);
+    // Total Deductions = 2,450 (mandatory) + 1,500 (loans/adv) + 2,114.10 (tax) = 6,064.10
+    expect(result.totalDeductions).toBe(6064.10);
+    expect(result.netPay).toBe(18935.90);
+  });
+
+  it('Does not treat voluntary provident contributions as tax-exempt when isSssProvidentMandatory is false', () => {
+    const result = calculatePhilippinePayrollTax({
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 750,
+      isSssProvidentMandatory: false,
+      isDeclared: true,
+    });
+
+    expect(result.taxableIncome).toBe(24000.00);
+    expect(result.withholdingTax).toBe(2404.10);
+    // Still deducted once from net pay
+    expect(result.totalDeductions).toBe(4154.10);
+    expect(result.netPay).toBe(20845.90);
+  });
+
+  it('Verifies all 6 BIR semi-monthly tax brackets and boundary values', () => {
+    // Bracket 1: <= 10,417 (0%)
+    expect(calculatePhilippinePayrollTax({ grossPay: 10000 }).withholdingTax).toBe(0.00);
+    // Bracket 2: 10,417 - 16,666 (0 + 15% over 10,417)
+    expect(calculatePhilippinePayrollTax({ grossPay: 15000 }).withholdingTax).toBe(687.45);
+    // Bracket 3: 16,667 - 33,332 (937.50 + 20% over 16,667)
+    expect(calculatePhilippinePayrollTax({ grossPay: 16667 }).withholdingTax).toBe(937.50);
+    // Bracket 4: 33,333 - 83,332 (4,270.70 + 25% over 33,333)
+    expect(calculatePhilippinePayrollTax({ grossPay: 50000 }).withholdingTax).toBe(8437.45);
+    // Bracket 5: 83,333 - 333,332 (16,770.70 + 30% over 83,333)
+    expect(calculatePhilippinePayrollTax({ grossPay: 150000 }).withholdingTax).toBe(36770.80);
+    // Bracket 6: >= 333,333 (91,770.70 + 35% over 333,333)
+    expect(calculatePhilippinePayrollTax({ grossPay: 500000 }).withholdingTax).toBe(150104.15);
+  });
+});
 
   it('Supports custom employee schedules and configurable lunch breaks (10:00 to 19:00, lunch 14:00 to 15:00)', () => {
     const res = calculateAttendanceMetrics({
