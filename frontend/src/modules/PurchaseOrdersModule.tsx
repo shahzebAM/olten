@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 
 // --- INTERFACES ---
 interface Supplier { 
@@ -9,19 +10,29 @@ interface Supplier {
 interface POItem { id?: string; productId?: number; sku: string; productName: string; requestedQty: number; unitCost: number; lineTotal?: number; confirmedQty?: number; shortageQty?: number; }
 interface PurchaseOrder { id: string; poNumber: string; supplierId?: string; supplierName?: string; importManaged?: boolean; osReference: string | null; status: string; subtotal: number; vatApplied: boolean; vatAmount: number; grandTotal: number; createdBy: string; createdAt: string; items: POItem[]; }
 
-interface PurchaseOrdersModuleProps { selectedCompany: string; loginUsername: string; API_BASE_URL: string; onBack: () => void; }
+interface PurchaseOrdersModuleProps {
+  selectedCompany: string;
+  loginUsername: string;
+  API_BASE_URL: string;
+  onBack: () => void;
+  canPurchase?: boolean;
+  fulfillmentContent?: ReactNode;
+  initialTab?: 'generate' | 'fulfillment';
+}
 
-export default function PurchaseOrdersModule({ selectedCompany, loginUsername, API_BASE_URL, onBack }: PurchaseOrdersModuleProps) {
+export default function PurchaseOrdersModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, canPurchase = true, fulfillmentContent, initialTab }: PurchaseOrdersModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
-  const [activeTab, setActiveTab] = useState<'ledger' | 'generate'>('generate');
+  const [activeTab, setActiveTab] = useState<'ledger' | 'generate' | 'fulfillment'>(initialTab || (canPurchase ? 'generate' : 'fulfillment'));
+  const visibleTab = canPurchase ? activeTab : 'fulfillment';
   
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
-  const [nextPoNumber, setNextPoNumber] = useState('Loading...');
+  const [nextPoNumber, setNextPoNumber] = useState('');
+  const [numberLoading, setNumberLoading] = useState(false);
   const [poForm, setPoForm] = useState({ supplierId: '', osReference: '', isVatApplied: false });
   const [poItems, setPoItems] = useState<POItem[]>([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]);
 
@@ -56,25 +67,29 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   }, [selectedCompany, API_BASE_URL]);
 
   const fetchNextPoNumber = useCallback(async () => {
+    setNumberLoading(true);
+    setNextPoNumber('');
     try {
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/next-po-number?company=${encodeURIComponent(selectedCompany)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setNextPoNumber(data.poNumber);
-      }
+      if (!res.ok) throw new Error('Could not load the next P.O. number.');
+      const data = await res.json();
+      setNextPoNumber(data.poNumber);
     } catch (e) {
-      setNextPoNumber('PO-ERROR');
+      showToast('Could not load the next P.O. number. Enter a number or try again.', 'error');
+    } finally {
+      setNumberLoading(false);
     }
   }, [selectedCompany, API_BASE_URL]);
 
   useEffect(() => { 
-    if (activeTab === 'ledger') fetchPurchaseOrders();
-    if (activeTab === 'generate') {
+    if (!canPurchase) return;
+    if (visibleTab === 'ledger') fetchPurchaseOrders();
+    if (visibleTab === 'generate') {
       fetchSuppliers();
       fetchNextPoNumber();
       setPoItems([{ sku: '', productName: '', requestedQty: 1, unitCost: 0 }]); 
     }
-  }, [activeTab, fetchPurchaseOrders, fetchSuppliers, fetchNextPoNumber]);
+  }, [visibleTab, canPurchase, fetchPurchaseOrders, fetchSuppliers, fetchNextPoNumber]);
 
   // --- AUTO POPULATE ITEMS ON SUPPLIER CHANGE ---
 // --- AUTO POPULATE ITEMS FROM DATABASE ---
@@ -120,7 +135,9 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   };
 
   const handleGeneratePO = async () => {
+    if (!canPurchase || numberLoading || isLoading) return;
     if (!poForm.supplierId) return showToast("Please select a supplier.", "error");
+    if (!poForm.osReference.trim()) return showToast('Enter the source Order Slip number.', 'error');
     if (!nextPoNumber.trim()) return showToast("P.O. Number cannot be blank.", "error");
     if (poItems.length === 0 || poItems.some(i => !i.productName || i.requestedQty <= 0)) {
       return showToast("Ensure all items have a name and valid quantity.", "error");
@@ -133,7 +150,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         user: loginUsername,
         poNumber: nextPoNumber.trim(),
         supplierId: poForm.supplierId,
-        osReference: poForm.osReference || null,
+        osReference: poForm.osReference.trim(),
         isVatApplied: poForm.isVatApplied,
         vatRate: 0.12,
         items: poItems.map((i, index) => ({ 
@@ -229,7 +246,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const totals = calculateTotals();
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[200] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
@@ -239,9 +256,9 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       {/* HEADER & TABS */}
       <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10 print:hidden">
         <div>
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Purchase Orders</h2>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight">P.O.</h2>
           <div className="text-xs font-semibold text-slate-400 mt-0.5 flex items-center gap-2">
-            <span>Procurement</span> <span>/</span> <span className="text-sky-600">{selectedCompany}</span>
+            <span>Orders & fulfillment</span> <span>/</span> <span className="text-sky-600">{selectedCompany}</span>
           </div>
         </div>
         <button onClick={onBack} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-sm border border-slate-200">
@@ -249,22 +266,26 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         </button>
       </header>
 
-      <div className="bg-white border-b border-slate-200 px-8 py-3 flex gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
-        <button onClick={() => setActiveTab('generate')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'generate' ? 'bg-sky-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+      <div className="bg-white border-b border-slate-200 px-8 py-3 flex flex-wrap gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
+        {canPurchase && <><button onClick={() => setActiveTab('generate')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${visibleTab === 'generate' ? 'bg-sky-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
           Generate P.O.
         </button>
-        <button onClick={() => setActiveTab('ledger')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${activeTab === 'ledger' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+        <button onClick={() => setActiveTab('ledger')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${visibleTab === 'ledger' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
           P.O. Ledger
-        </button>
+        </button></>}
+        {fulfillmentContent && <button onClick={() => setActiveTab('fulfillment')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${visibleTab === 'fulfillment' ? 'bg-cyan-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+          Fulfillment
+        </button>}
       </div>
 
-      <main className="flex-1 overflow-y-auto p-8 print:hidden flex flex-col">
+      <main className={`flex-1 overflow-y-auto p-8 flex flex-col ${visibleTab === 'fulfillment' ? 'print:overflow-visible' : 'print:hidden'}`}>
         <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col relative">
 
           {/* =========================================
               TAB 1: P.O. LEDGER
           ========================================= */}
-          {activeTab === 'ledger' && (
+          {visibleTab === 'fulfillment' && fulfillmentContent}
+          {visibleTab === 'ledger' && (
             <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col flex-1 overflow-hidden relative">
               {isLoading && (
                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex items-center justify-center">
@@ -326,7 +347,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
           {/* =========================================
               TAB 2: GENERATE P.O.
           ========================================= */}
-          {activeTab === 'generate' && (
+          {visibleTab === 'generate' && (
             <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
               
               <div className="flex flex-col sm:flex-row justify-between items-start border-b border-slate-200 pb-6 gap-6">
@@ -339,20 +360,23 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Reference O.S. (Optional)</label>
-                    <input type="text" placeholder="e.g. OS-2026-001" value={poForm.osReference} onChange={e => setPoForm({...poForm, osReference: e.target.value})} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-slate-800" />
+                    <label htmlFor="purchase-order-source-os" className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Source O.S. *</label>
+                    <input id="purchase-order-source-os" required type="text" placeholder="e.g. OS-2026-001" value={poForm.osReference} onChange={e => setPoForm({...poForm, osReference: e.target.value})} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-slate-800" />
                   </div>
                 </div>
                 
                 <div className="w-full sm:w-auto text-left sm:text-right">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">P.O. Number</label>
+                  <label htmlFor="purchase-order-number" className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">P.O. Number</label>
                   <input 
                     type="text" 
+                    id="purchase-order-number"
+                    disabled={numberLoading || isLoading}
                     value={nextPoNumber} 
                     onChange={(e) => setNextPoNumber(e.target.value)}
                     className="text-3xl font-black font-mono text-sky-700 w-full sm:w-64 outline-none border-b-2 border-transparent hover:border-slate-200 focus:border-sky-300 bg-transparent transition-colors text-left sm:text-right"
                     placeholder="PO-000000"
                   />
+                  <p className="mt-2 text-xs text-slate-500">The next P.O. continues from your last saved number.</p>
                   <label className="flex items-center justify-start sm:justify-end gap-2 mt-4 cursor-pointer">
                     <input type="checkbox" checked={poForm.isVatApplied} onChange={e => setPoForm({...poForm, isVatApplied: e.target.checked})} className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900" />
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Apply 12% VAT</span>
@@ -400,7 +424,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
               {/* Totals & Submit */}
               <div className="flex justify-between items-end pt-6 border-t border-slate-200">
-                <button onClick={handleGeneratePO} disabled={isLoading} className="px-8 py-4 bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest shadow-lg transition-colors">
+                <button onClick={handleGeneratePO} disabled={isLoading || numberLoading} className="px-8 py-4 bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest shadow-lg transition-colors">
                   {isLoading ? 'Processing...' : 'Issue Purchase Order'}
                 </button>
                 <div className="w-72 space-y-2">

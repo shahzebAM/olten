@@ -56,6 +56,12 @@ describe('fulfillment workflow state and conflict protection', () => {
       timeout: 20000,
     });
   });
+  it('requires customer orders to originate from OS approval without writing standalone orders', () => {
+    expect(() => service.createOrder()).toThrow(
+      'Create an Order Slip first, then use Approve & reserve.',
+    );
+    expect(database.$transaction).not.toHaveBeenCalled();
+  });
   it.each(['P2034', 'P2002'])(
     'returns a conflict for concurrent write or duplicate serial %s',
     async (code) => {

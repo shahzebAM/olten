@@ -344,16 +344,36 @@ describe('Phase 2 receiving and incoming supply on isolated PostgreSQL', () => {
     const item = await product('incoming');
     const first = await shipment(item.id, 'incoming-a', 10);
     const second = await shipment(item.id, 'incoming-b', 8);
-    const create = async (po: string) =>
-      json<Order>(
-        await api('post', '/fulfillment/orders')
-          .send({
-            customerId,
-            hospitalPoNumber: po,
-            items: [{ productId: item.id, quantity: 10 }],
-          })
+    const create = async (po: string) => {
+      const source = await db.orderSlip.create({
+        data: {
+          company,
+          customerId,
+          osNumber: `OS-${po}-${suffix}`,
+          createdBy: actor,
+          subtotal: 20,
+          vatAmount: 0,
+          grandTotal: 20,
+          items: {
+            create: [
+              {
+                productId: item.id,
+                sku: item.sku,
+                productName: item.name,
+                requestedQty: 10,
+                unitPrice: 2,
+                lineTotal: 20,
+              },
+            ],
+          },
+        },
+      });
+      return json<Order>(
+        await api('post', `/fulfillment/order-slips/${source.id}/approve`)
+          .send({})
           .expect(201),
       );
+    };
     const order = await create('INCOMING-A');
     const other = await create('INCOMING-B');
     await api('delete', `/products/${item.id}`).expect(409);

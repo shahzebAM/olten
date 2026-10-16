@@ -125,12 +125,8 @@ export class FulfillmentController {
   }
   @FulfillmentAccess('sales')
   @Post('orders')
-  order(
-    @Headers('x-company') company: string,
-    @Req() request: FulfillmentRequest,
-    @Body() body: unknown,
-  ) {
-    return this.service.createOrder(company, request.user.username, body);
+  order() {
+    return this.service.createOrder();
   }
   @FulfillmentAccess('sales')
   @Post('orders/from-os/:id')

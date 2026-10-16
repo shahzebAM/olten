@@ -381,6 +381,7 @@ export default function FulfillmentModule({
   canApprove,
   canWarehouse,
   canSales,
+  embedded = false,
   onCreateOrderSlip,
   onBack,
 }: {
@@ -390,6 +391,7 @@ export default function FulfillmentModule({
   canApprove: boolean;
   canWarehouse: boolean;
   canSales: boolean;
+  embedded?: boolean;
   onCreateOrderSlip?: () => void;
   onBack: () => void;
 }) {
@@ -530,13 +532,18 @@ export default function FulfillmentModule({
   function print() {
     window.print();
   }
+  function refresh() {
+    setLoading(true);
+    void load();
+  }
+  const Content = embedded ? 'div' : 'main';
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className={embedded ? 'text-slate-800' : 'min-h-screen bg-slate-50 text-slate-800'}>
       {view === 'delivery' && delivery && (
         <style>{`@media print { body * { visibility: hidden; } #fulfillment-print, #fulfillment-print * { visibility: visible; } #fulfillment-print { position: absolute; inset: 0; width: 100%; } .fulfillment-no-print { display: none !important; } }`}</style>
       )}
-      <header className="border-b border-slate-200 bg-white px-5 py-6 sm:px-10">
+      <header hidden={embedded} className="border-b border-slate-200 bg-white px-5 py-6 sm:px-10">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
           <div>
             <button type="button" className="mb-3 text-sm font-semibold text-cyan-700" onClick={onBack}>
@@ -549,20 +556,17 @@ export default function FulfillmentModule({
             type="button"
             className={secondary}
             disabled={busy || loading}
-            onClick={() => {
-              setLoading(true);
-              void load();
-            }}
+            onClick={refresh}
           >
             Refresh
           </button>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl space-y-5 px-5 py-6 sm:px-10">
+      <Content className={embedded ? 'space-y-5' : 'mx-auto max-w-7xl space-y-5 px-5 py-6 sm:px-10'}>
         <nav className="flex flex-wrap gap-2" aria-label="Fulfillment modules">
           {(
             [
-              ['warehouse', 'Warehouse & Cycle Counts', canWarehouse],
+              ['warehouse', 'Warehouse & Cycle Counts', canWarehouse && !embedded],
               ['orders', 'Customer Orders & Fulfillment', canSales],
               ['delivery', 'Delivery & POD', canSales || canWarehouse],
             ] as const
@@ -583,6 +587,7 @@ export default function FulfillmentModule({
                 {label}
               </button>
             ))}
+          {embedded && <button type="button" className={secondary} disabled={busy || loading} onClick={refresh}>Refresh</button>}
         </nav>
         {error && (
           <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
@@ -1874,7 +1879,7 @@ export default function FulfillmentModule({
             </>
           )}
         </fieldset>
-      </main>
+      </Content>
     </div>
   );
 }

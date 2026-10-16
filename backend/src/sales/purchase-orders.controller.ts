@@ -15,6 +15,16 @@ export class ProcurementController {
     } catch (error: unknown) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        Array.isArray(error.meta?.target) &&
+        error.meta.target.includes('poNumber')
+      ) {
+        throw new ConflictException(
+          'That P.O. number was already saved. Refresh the next number or enter another number.',
+        );
+      }
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2034'
       ) {
         throw new ConflictException(
@@ -116,77 +126,126 @@ export class ProcurementController {
 
   @Get('purchase-orders/next-po-number')
   async getNextPoNumber(@Query('company') company: string) {
-    const lastPo = await this.prisma.purchaseOrder.findFirst({
+    if (!company?.trim()) throw new BadRequestException('Company is required.');
+    const orders = await this.prisma.purchaseOrder.findMany({
       where: { company },
-      orderBy: { createdAt: 'desc' }
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { poNumber: true },
     });
-    
-    let nextNum = 1;
-    if (lastPo && lastPo.poNumber.match(/(\d+)$/)) {
-      const match = lastPo.poNumber.match(/(\d+)$/);
-      if (match) {
-        nextNum = parseInt(match[0], 10) + 1;
-        const prefix = lastPo.poNumber.substring(0, match.index);
-        const padding = match[0].length;
-        return { poNumber: `${prefix}${String(nextNum).padStart(padding, '0')}` };
-      }
-    }
-    return { poNumber: 'PO-000001' };
+    const match = orders
+      .map((order) => order.poNumber.trim().match(/^(.*?)(\d+)$/))
+      .find((value) => value !== null);
+    const prefix = match?.[1] ?? 'PO-';
+    const padding = match?.[2].length ?? 6;
+    let next = match ? BigInt(match[2]) + 1n : 1n;
+    // poNumber is globally unique, including records in other companies.
+    const existing = await this.prisma.purchaseOrder.findMany({
+      where: { poNumber: { startsWith: prefix } },
+      select: { poNumber: true },
+    });
+    const used = new Set(existing.map((order) => order.poNumber));
+    let poNumber: string;
+    do {
+      poNumber = `${prefix}${String(next++).padStart(padding, '0')}`;
+    } while (used.has(poNumber));
+    return { poNumber };
   }
 
   @Post('purchase-orders')
   async createPurchaseOrder(@Body() data: any) {
-    const { company, items, isVatApplied, vatRate = 0.12, user, osReference, poNumber, supplierId } = data;
+    const {
+      company,
+      items,
+      isVatApplied,
+      vatRate = 0.12,
+      user,
+      supplierId,
+    } = data;
+    const fields = data as { poNumber?: unknown; osReference?: unknown };
+    const poNumber =
+      typeof fields.poNumber === 'string' ? fields.poNumber.trim() : '';
+    const osReference =
+      typeof fields.osReference === 'string' ? fields.osReference.trim() : '';
 
     if (!company || !items || items.length === 0 || !poNumber) {
       throw new BadRequestException('Missing required fields.');
     }
-
-    const existing = await this.prisma.purchaseOrder.findUnique({ where: { poNumber } });
-    if (existing) throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
-
-    if (supplierId) {
-      const supplier = await this.prisma.supplier.findUnique({ where: { id: supplierId } });
-      if (!supplier) throw new BadRequestException('The selected supplier does not exist.');
+    if (!osReference.startsWith('OS')) {
+      throw new BadRequestException(
+        'A valid source Order Slip is required to create a P.O.',
+      );
+    }
+    if (!/\d$/.test(poNumber)) {
+      throw new BadRequestException(
+        'P.O. number must end in digits so the next number can increment.',
+      );
     }
 
-    return await this.prisma.$transaction(async (tx) => {
+    const existing = await this.prisma.purchaseOrder.findUnique({
+      where: { poNumber },
+    });
+    if (existing)
+      throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
+
+    if (supplierId) {
+      const supplier = await this.prisma.supplier.findUnique({
+        where: { id: supplierId },
+      });
+      if (!supplier)
+        throw new BadRequestException('The selected supplier does not exist.');
+    }
+
+    return await this.importSafeTransaction(async (tx) => {
+      const source = await tx.orderSlip.findFirst({
+        where: { company, osNumber: osReference },
+        select: { status: true },
+      });
+      if (!source || ['Cancelled', 'Returned'].includes(source.status)) {
+        throw new BadRequestException(
+          'The source Order Slip must exist in this company and must not be cancelled or returned.',
+        );
+      }
       let calculatedSubtotal = 0;
-      
+
       const cleanItems = items.map((item: any) => {
-        const lineTotal = Math.round((Number(item.requestedQty) * Number(item.unitCost)) * 100) / 100;
+        const lineTotal =
+          Math.round(Number(item.requestedQty) * Number(item.unitCost) * 100) /
+          100;
         calculatedSubtotal += lineTotal;
-        
+
         return {
           productId: Number(item.productId), // Safely parsing the 32-bit integer generated on frontend
           sku: item.sku,
           productName: item.productName,
           requestedQty: Number(item.requestedQty),
           unitCost: Number(item.unitCost),
-          lineTotal
+          lineTotal,
         };
       });
 
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
-      const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
-      const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+      const calculatedVat = isVatApplied
+        ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+        : 0;
+      const calculatedGrandTotal =
+        Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
       return await tx.purchaseOrder.create({
         data: {
-          poNumber, 
-          company, 
-          osReference, 
-          status: 'Generated', 
-          subtotal: calculatedSubtotal, 
+          poNumber,
+          company,
+          osReference,
+          status: 'Generated',
+          subtotal: calculatedSubtotal,
           vatApplied: isVatApplied,
-          vatRate: Number(vatRate), 
-          vatAmount: calculatedVat, 
+          vatRate: Number(vatRate),
+          vatAmount: calculatedVat,
           grandTotal: calculatedGrandTotal,
           createdBy: user,
-          supplierId: supplierId || null, 
-          items: { create: cleanItems }
+          supplierId: supplierId || null,
+          items: { create: cleanItems },
         },
-        include: { items: true }
+        include: { items: true },
       });
     });
   }

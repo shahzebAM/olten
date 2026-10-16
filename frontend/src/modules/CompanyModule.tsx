@@ -98,9 +98,10 @@ useEffect(() => {
     if (!isGateway || isDraggingGrid) return; 
 
     const activeIds: string[] = [];
-    if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders', 'customer_pos');
+    if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
     if (hasSales || hasInventory || hasWarehouses) activeIds.push('deliveries');
-    if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
+    if (hasPurchasing) activeIds.push('suppliers');
+    if (hasPurchasing || hasSales) activeIds.push('purchase_orders');
     if (hasImportation) activeIds.push('importation');
     
     // ADD 'generate_qr' RIGHT HERE:
@@ -330,8 +331,8 @@ useEffect(() => {
                 <svg className="w-6 h-6 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-sky-800">Procurement (P.O.)</h3>
-                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Manage POs, verify deliveries & track.</p>
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-sky-800">P.O.</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Generate P.O.s, view the ledger and track fulfillment.</p>
               </div>
             </div>
             <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-sky-500 transition-colors">{rightArrow}</div>

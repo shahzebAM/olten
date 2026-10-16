@@ -1015,36 +1015,10 @@ export class FulfillmentService implements OnModuleDestroy {
     v.unique(lines.map((line) => line.productId));
     return lines;
   }
-  async createOrder(company: string, user: string, input: unknown) {
-    const data = v.object(input);
-    const customerId = v.text(data.customerId, 'Customer', true, 100)!;
-    const items = this.demand(data.items);
-    const hospitalPoNumber = v.text(
-      data.hospitalPoNumber,
-      'Hospital/customer PO',
-      true,
-      150,
-    )!;
-    return this.transaction(async (tx) => {
-      if (
-        !(await tx.customer.findFirst({ where: { id: customerId, company } }))
-      )
-        throw new BadRequestException('Customer not found in this workspace.');
-      for (const item of [...items].sort((a, b) => a.productId - b.productId))
-        await lockProduct(tx, company, item.productId);
-      return tx.customerOrder.create({
-        data: {
-          company,
-          customerId,
-          hospitalPoNumber,
-          notes: v.text(data.notes, 'Notes', false),
-          soNumber: await this.number(tx, 'SO'),
-          createdBy: user,
-          items: { create: items },
-        },
-        include: orderInclude,
-      });
-    });
+  createOrder(): never {
+    throw new BadRequestException(
+      'Create an Order Slip first, then use Approve & reserve. Customer P.O.s must originate from an Order Slip.',
+    );
   }
   async approveFromOs(company: string, user: User, id: string) {
     this.canApprove(user);

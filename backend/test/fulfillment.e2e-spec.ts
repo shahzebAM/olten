@@ -9,6 +9,7 @@ import { AuthSessionService } from '../src/auth/auth-session.service';
 import { FulfillmentModule } from '../src/fulfillment/fulfillment.module';
 import { OrderSlipsController } from '../src/sales/order-slips.controller';
 import { PackingListsController } from '../src/sales/packing-lists.controller';
+import { ProcurementController } from '../src/sales/purchase-orders.controller';
 
 type Pick = {
   id: string;
@@ -109,7 +110,11 @@ describe('Phase 2 real PostgreSQL fulfillment workflow', () => {
     customerId = customer.id;
     const module = await Test.createTestingModule({
       imports: [AuthSessionModule, FulfillmentModule],
-      controllers: [OrderSlipsController, PackingListsController],
+      controllers: [
+        OrderSlipsController,
+        PackingListsController,
+        ProcurementController,
+      ],
     }).compile();
     app = module.createNestApplication({ logger: false });
     await app.init();
@@ -124,6 +129,7 @@ describe('Phase 2 real PostgreSQL fulfillment workflow', () => {
       for (const controller of [
         app.get(OrderSlipsController),
         app.get(PackingListsController),
+        app.get(ProcurementController),
       ]) {
         await (Reflect.get(controller, 'prisma') as PrismaClient).$disconnect();
       }
@@ -500,25 +506,81 @@ describe('Phase 2 real PostgreSQL fulfillment workflow', () => {
     ).expect(404);
   }, 30000);
 
+  it('rejects standalone customer POs without creating a second order', async () => {
+    const before = await db.customerOrder.count({ where: { company } });
+    await api('post', '/fulfillment/orders')
+      .send({
+        customerId,
+        hospitalPoNumber: `DIRECT-${suffix}`,
+        items: [{ productId: 1, quantity: 1 }],
+      })
+      .expect(400);
+    expect(await db.customerOrder.count({ where: { company } })).toBe(before);
+  });
+
+  it('requires a valid OS for simple POs and continues a user-entered number on PostgreSQL', async () => {
+    const item = await product('po-number', 0);
+    const saved = await api('post', '/sales/order-slips')
+      .send(osBody(item.id, 'po-number', 2))
+      .expect(201);
+    const body = {
+      company,
+      user: 'integration',
+      poNumber: `${suffix}-001526`,
+      osReference: json(saved).osNumber,
+      isVatApplied: true,
+      items: [
+        {
+          productId: item.id,
+          sku: item.sku,
+          productName: item.name,
+          requestedQty: 2,
+          unitCost: 12.5,
+        },
+      ],
+    };
+    await api('post', '/procurement/purchase-orders')
+      .send({ ...body, osReference: '' })
+      .expect(400);
+    await api('post', '/procurement/purchase-orders')
+      .send({ ...body, osReference: 'OS-missing' })
+      .expect(400);
+    const po = await api('post', '/procurement/purchase-orders')
+      .send(body)
+      .expect(201);
+    expect(po.body).toMatchObject({
+      poNumber: body.poNumber,
+      osReference: body.osReference,
+      subtotal: 25,
+      vatAmount: 3,
+      grandTotal: 28,
+    });
+    const next = await api('get', '/procurement/purchase-orders/next-po-number')
+      .query({ company })
+      .expect(200);
+    expect(next.body).toEqual({ poNumber: `${suffix}-001527` });
+    await api('post', '/procurement/purchase-orders').send(body).expect(400);
+    expect(
+      (await db.product.findUniqueOrThrow({ where: { id: item.id } }))
+        .currentStock,
+    ).toBe(0);
+  });
+
   it('does not oversell under competing reservation transactions', async () => {
     const item = await product('concurrency', 1);
-    const first = await api('post', '/fulfillment/orders')
-      .send({
-        customerId,
-        hospitalPoNumber: `HOSP-A-${suffix}`,
-        items: [{ productId: item.id, quantity: 1 }],
-      })
+    const first = await api('post', '/sales/order-slips')
+      .send(osBody(item.id, 'concurrency-a', 1))
       .expect(201);
-    const second = await api('post', '/fulfillment/orders')
-      .send({
-        customerId,
-        hospitalPoNumber: `HOSP-B-${suffix}`,
-        items: [{ productId: item.id, quantity: 1 }],
-      })
+    const second = await api('post', '/sales/order-slips')
+      .send(osBody(item.id, 'concurrency-b', 1))
       .expect(201);
     const results = await Promise.all([
-      api('post', `/fulfillment/orders/${json(first).id}/reserve`).send({}),
-      api('post', `/fulfillment/orders/${json(second).id}/reserve`).send({}),
+      api('post', `/fulfillment/order-slips/${json(first).id}/approve`).send(
+        {},
+      ),
+      api('post', `/fulfillment/order-slips/${json(second).id}/approve`).send(
+        {},
+      ),
     ]);
     expect(results.every((result) => [201, 409].includes(result.status))).toBe(
       true,
@@ -803,12 +865,14 @@ describe('Phase 2 real PostgreSQL fulfillment workflow', () => {
     await api('post', `/fulfillment/lots/${lotId}/status`)
       .send({ status: 'AVAILABLE' })
       .expect(201);
-    const order = await api('post', '/fulfillment/orders')
-      .send({
-        customerId,
-        hospitalPoNumber: `HOSP-COUNT-${suffix}`,
-        items: [{ productId: item.id, quantity: 3 }],
-      })
+    const source = await api('post', '/sales/order-slips')
+      .send(osBody(item.id, 'count-reservation', 3))
+      .expect(201);
+    const order = await api(
+      'post',
+      `/fulfillment/order-slips/${json(source).id}/approve`,
+    )
+      .send({})
       .expect(201);
     await api('post', `/fulfillment/orders/${json(order).id}/reserve`)
       .send({})
