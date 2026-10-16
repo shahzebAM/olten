@@ -50,15 +50,23 @@ describe('QC receipt placement', () => {
   let master: number;
   let hub: number;
   let ledger: unknown[];
+  let lots: Array<Record<string, unknown>>;
   const database = {
     goodsReceipt: { findFirst: jest.fn(), findMany: jest.fn() },
-    goodsReceiptLine: { updateMany: jest.fn() },
+    goodsReceiptLine: { updateMany: jest.fn(), findFirst: jest.fn() },
     product: { findFirst: jest.fn(), update: jest.fn() },
     warehouse: { findFirst: jest.fn() },
-    warehouseStock: { upsert: jest.fn() },
+    warehouseStock: {
+      upsert: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    warehouseBin: { findFirst: jest.fn() },
+    warehouseLot: { aggregate: jest.fn(), create: jest.fn() },
     inventoryMovement: { create: jest.fn() },
     $transaction: jest.fn(),
     $disconnect: jest.fn(),
+    $queryRaw: jest.fn(),
   };
   const place = (
     quantity = 5,
@@ -84,6 +92,7 @@ describe('QC receipt placement', () => {
     master = 10;
     hub = 20;
     ledger = [];
+    lots = [];
     database.goodsReceipt.findFirst.mockImplementation(
       ({ where }: { where: { id: string; company: string } }) =>
         Promise.resolve(
@@ -116,12 +125,43 @@ describe('QC receipt placement', () => {
         return Promise.resolve({ count: line ? 1 : 0 });
       },
     );
-    database.product.findFirst.mockResolvedValue({
-      id: 1,
-      company: 'Surgicom',
-      name: 'Medical item',
-      sku: 'MED-1',
-    });
+    database.goodsReceiptLine.findFirst.mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve(receipt.items.find((item) => item.id === where.id)),
+    );
+    database.product.findFirst.mockImplementation(() =>
+      Promise.resolve({
+        id: 1,
+        company: 'Surgicom',
+        name: 'Medical item',
+        sku: 'MED-1',
+        currentStock: master,
+        expiryControlled: false,
+        serialControlled: false,
+      }),
+    );
+    database.warehouseLot.aggregate.mockImplementation(
+      ({ where }: { where: { warehouseId: string } }) =>
+        Promise.resolve({
+          _sum: {
+            quantity: lots
+              .filter((lot) => lot.warehouseId === where.warehouseId)
+              .reduce((sum, lot) => sum + Number(lot.quantity), 0),
+          },
+        }),
+    );
+    database.warehouseLot.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => {
+        const lot = { id: `lot-${lots.length + 1}`, ...data };
+        lots.push(lot);
+        return Promise.resolve(lot);
+      },
+    );
+    database.warehouseBin.findFirst.mockResolvedValue({ id: 'bin-1' });
+    database.warehouseStock.findFirst.mockResolvedValue({ id: 'hub-stock' });
+    database.warehouseStock.findUnique.mockImplementation(() =>
+      Promise.resolve({ id: 'hub-stock', company: 'Surgicom', quantity: hub }),
+    );
     database.product.update.mockImplementation(
       ({ data }: { data: { currentStock: { increment: number } } }) => {
         master += data.currentStock.increment;
@@ -136,7 +176,11 @@ describe('QC receipt placement', () => {
     database.warehouseStock.upsert.mockImplementation(
       ({ update }: { update: { quantity: { increment: number } } }) => {
         hub += update.quantity.increment;
-        return Promise.resolve({ company: 'Surgicom', quantity: hub });
+        return Promise.resolve({
+          id: 'hub-stock',
+          company: 'Surgicom',
+          quantity: hub,
+        });
       },
     );
     database.inventoryMovement.create.mockImplementation(
@@ -147,11 +191,17 @@ describe('QC receipt placement', () => {
     );
     database.$transaction.mockImplementation(
       async (callback: (client: typeof database) => Promise<unknown>) => {
-        const snapshot = structuredClone({ receipt, master, hub, ledger });
+        const snapshot = structuredClone({
+          receipt,
+          master,
+          hub,
+          ledger,
+          lots,
+        });
         try {
           return await callback(database);
         } catch (error) {
-          ({ receipt, master, hub, ledger } = snapshot);
+          ({ receipt, master, hub, ledger, lots } = snapshot);
           throw error;
         }
       },
@@ -167,6 +217,16 @@ describe('QC receipt placement', () => {
       grnNumber: receipt.grnNumber,
     });
     expect(master).toBe(15);
+    expect(lots).toEqual([
+      expect.objectContaining({
+        receiptLineId: 'line-1',
+        warehouseId: 'MASTER',
+        quantity: 5,
+        warehouseStockId: null,
+        batchNumber: 'LOT-1',
+        expirationDate: day('2026-10-15'),
+      }),
+    ]);
     expect(receipt.items[0].placedQty).toBe(5);
     expect(ledger).toEqual([
       expect.objectContaining({
@@ -178,6 +238,7 @@ describe('QC receipt placement', () => {
         batchNumber: 'LOT-1',
         expirationDate: day('2026-10-15'),
         warehouseId: null,
+        lotId: 'lot-1',
       }),
     ]);
     expect(database.$transaction).toHaveBeenCalledWith(expect.any(Function), {
@@ -192,6 +253,11 @@ describe('QC receipt placement', () => {
     await place(2, '2');
     expect(master).toBe(10);
     expect(hub).toBe(22);
+    expect(lots[0]).toMatchObject({
+      warehouseStockId: 'hub-stock',
+      warehouseId: '2',
+      quantity: 2,
+    });
     expect(receipt.items[0].placedQty).toBe(2);
     expect(database.warehouse.findFirst).toHaveBeenCalledWith({
       where: { id: 2, company: 'Surgicom', status: 'Active' },
@@ -335,6 +401,69 @@ describe('QC receipt placement', () => {
     await expect(place()).resolves.toMatchObject({ success: true });
   });
 
+  it('links optional bin and serial details to the receipt lot and ledger', async () => {
+    await controller.place('receipt-1', 'Surgicom', 'inspector', {
+      placements: [
+        {
+          receiptLineId: 'line-1',
+          warehouseId: 'MASTER',
+          quantity: 1,
+          binId: 'bin-1',
+          serialNumber: ' SERIAL-001 ',
+        },
+      ],
+    });
+    expect(lots[0]).toMatchObject({
+      binId: 'bin-1',
+      serialNumber: 'SERIAL-001',
+      quantity: 1,
+    });
+    expect(ledger[0]).toMatchObject({
+      binId: 'bin-1',
+      serialNumber: 'SERIAL-001',
+      lotId: 'lot-1',
+    });
+    expect(master).toBe(11);
+  });
+
+  it('rolls back aggregate and receipt claim if bin validation fails', async () => {
+    database.warehouseBin.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      controller.place('receipt-1', 'Surgicom', 'inspector', {
+        placements: [
+          {
+            receiptLineId: 'line-1',
+            warehouseId: 'MASTER',
+            quantity: 1,
+            binId: 'foreign-bin',
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(master).toBe(10);
+    expect(receipt.items[0].placedQty).toBe(0);
+    expect(lots).toEqual([]);
+    expect(ledger).toEqual([]);
+  });
+
+  it('requires a single unit when a serial is supplied and rolls back the aggregate', async () => {
+    await expect(
+      controller.place('receipt-1', 'Surgicom', 'inspector', {
+        placements: [
+          {
+            receiptLineId: 'line-1',
+            warehouseId: 'MASTER',
+            quantity: 2,
+            serialNumber: 'SERIAL-001',
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(master).toBe(10);
+    expect(receipt.items[0].placedQty).toBe(0);
+    expect(lots).toEqual([]);
+  });
+
   it('returns a conflict if QC or another placement changed the accepted line', async () => {
     database.goodsReceiptLine.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(place()).rejects.toBeInstanceOf(ConflictException);
@@ -363,7 +492,13 @@ describe('receiving session guard', () => {
     sessions.companyExists.mockResolvedValue(true);
   });
 
-  it.each(['inventory', 'master_inventory', 'importation'])(
+  it.each([
+    'inventory',
+    'master_inventory',
+    'importation',
+    'warehouses',
+    'warehouse',
+  ])(
     'allows %s permission and writes trusted actor/company headers',
     async (permission) => {
       sessions.authenticate.mockResolvedValueOnce({

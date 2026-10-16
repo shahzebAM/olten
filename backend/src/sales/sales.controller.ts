@@ -1,10 +1,23 @@
-import { Controller, Get, Post, Patch, Body, Query, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Query,
+  Param,
+  Delete,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-
 @Controller('sales')
 export class SalesController {
+
+  onModuleDestroy() {
+    return prisma.$disconnect();
+  }
 
   // ==========================================
   // CUSTOMER MANAGEMENT
@@ -141,7 +154,17 @@ export class SalesController {
 
   @Delete('customers/:id')
   async deleteCustomer(@Param('id') id: string) {
-    return prisma.customer.delete({ where: { id } });
+    return prisma.$transaction(
+      async (tx) => {
+        if (await tx.customerOrder.count({ where: { customerId: id } })) {
+          throw new ConflictException(
+            'A customer with fulfillment order history cannot be deleted.',
+          );
+        }
+        return tx.customer.delete({ where: { id } });
+      },
+      { isolationLevel: 'Serializable' },
+    );
   }
 
   @Patch('customers/:id/balance')

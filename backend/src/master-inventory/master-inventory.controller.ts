@@ -1,9 +1,38 @@
-import { Controller, Get, Post, Body, Query, Delete, Param, Patch, NotFoundException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
-
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Delete,
+  Param,
+  Patch,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  assertLegacyStockFloor,
+  lockProduct,
+  validateLocation,
+} from '../fulfillment/fulfillment.stock';
+import { object } from '../importation/importation.validation';
 @Controller() 
 export class MasterInventoryController {
   private prisma = new PrismaClient();
+
+  private async assertUntrackedMutation(
+    tx: Prisma.TransactionClient,
+    company: string,
+    productId: number,
+  ) {
+    if (await tx.warehouseLot.count({ where: { company, productId } })) {
+      throw new ConflictException(
+        'This product has tracked warehouse stock. Use Warehouse Operations for quantity changes.',
+      );
+    }
+  }
 
   // ==========================================
   // 1. PRODUCTS (Master Catalog)
@@ -67,35 +96,103 @@ export class MasterInventoryController {
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() data: any) {
     // Strip all non-schema or immutable parameters to prevent Prisma validation crashes
-    const { 
-      id: _id, 
-      username, 
-      initialQuantity, 
-      warehouseId, 
-      batchNumber, 
-      expirationDate, 
-      previousImageUrl, 
+    const {
+      id: _id,
+      username,
+      initialQuantity,
+      warehouseId,
+      batchNumber,
+      expirationDate,
+      previousImageUrl,
       currentStock,
-      ...cleanData 
+      ...cleanData
     } = data;
+    delete (cleanData as Record<string, unknown>).expiryControlled;
+    delete (cleanData as Record<string, unknown>).serialControlled;
 
-    if (cleanData.createdAt) cleanData.createdAt = new Date(cleanData.createdAt);
-    if (cleanData.deletedAt) cleanData.deletedAt = new Date(cleanData.deletedAt);
-    if (cleanData.purchasePrice !== undefined) cleanData.purchasePrice = parseFloat(cleanData.purchasePrice) || 0;
-    if (cleanData.sellingPrice !== undefined) cleanData.sellingPrice = parseFloat(cleanData.sellingPrice) || 0;
-    if (cleanData.minQuantity !== undefined) cleanData.minQuantity = parseInt(cleanData.minQuantity) || 10;
-    if (cleanData.reorderLevel !== undefined) cleanData.reorderLevel = parseInt(cleanData.reorderLevel) || 20;
-    if (currentStock !== undefined) cleanData.currentStock = parseInt(currentStock) || 0;
-
-    return this.prisma.product.update({ 
-      where: { id: parseInt(id) }, 
-      data: cleanData 
-    });
+    if (cleanData.createdAt)
+      cleanData.createdAt = new Date(cleanData.createdAt);
+    if (cleanData.deletedAt)
+      cleanData.deletedAt = new Date(cleanData.deletedAt);
+    if (cleanData.purchasePrice !== undefined)
+      cleanData.purchasePrice = parseFloat(cleanData.purchasePrice) || 0;
+    if (cleanData.sellingPrice !== undefined)
+      cleanData.sellingPrice = parseFloat(cleanData.sellingPrice) || 0;
+    if (cleanData.minQuantity !== undefined)
+      cleanData.minQuantity = parseInt(cleanData.minQuantity) || 10;
+    if (cleanData.reorderLevel !== undefined)
+      cleanData.reorderLevel = parseInt(cleanData.reorderLevel) || 20;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const product = await tx.product.findUnique({
+          where: { id: Number(id) },
+        });
+        if (!product) throw new NotFoundException('Product not found.');
+        const workspace = (cleanData as Record<string, unknown>).company;
+        if (workspace !== undefined && workspace !== product.company) {
+          throw new BadRequestException(
+            'A product cannot move to another workspace.',
+          );
+        }
+        if (currentStock !== undefined) {
+          const quantity = Number(currentStock);
+          if (
+            (typeof currentStock !== 'number' &&
+              typeof currentStock !== 'string') ||
+            String(currentStock).trim() === '' ||
+            !Number.isSafeInteger(quantity)
+          ) {
+            throw new BadRequestException(
+              'Stock must be a non-negative whole quantity.',
+            );
+          }
+          if (quantity !== product.currentStock) {
+            await lockProduct(tx, product.company, product.id);
+            await assertLegacyStockFloor(
+              tx,
+              product.company,
+              product.id,
+              'MASTER',
+              quantity,
+            );
+            await this.assertUntrackedMutation(tx, product.company, product.id);
+          }
+          cleanData.currentStock = quantity;
+        }
+        return tx.product.update({
+          where: { id: product.id },
+          data: cleanData,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   @Delete('products/:id')
   async removeProduct(@Param('id') id: string) {
-    return this.prisma.product.delete({ where: { id: parseInt(id) } });
+    return this.prisma.$transaction(
+      async (tx) => {
+        const product = await tx.product.findUnique({
+          where: { id: Number(id) },
+        });
+        if (!product) throw new NotFoundException('Product not found.');
+        await this.assertUntrackedMutation(tx, product.company, product.id);
+        if (
+          await tx.customerOrderLine.count({
+            where: {
+              productId: product.id,
+              order: { company: product.company },
+            },
+          })
+        ) {
+          throw new ConflictException(
+            'A product with fulfillment order history cannot be deleted.',
+          );
+        }
+        return tx.product.delete({ where: { id: product.id } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   // ==========================================
@@ -103,6 +200,12 @@ export class MasterInventoryController {
   // ==========================================
   @Post('inventory-movements')
   async createMovement(@Body() data: any) {
+    const movement = object(data);
+    await this.assertUntrackedMutation(
+      this.prisma,
+      typeof movement.company === 'string' ? movement.company : '',
+      Number(movement.productId),
+    );
     return this.prisma.inventoryMovement.create({
       data: {
         productId: data.productId,
@@ -171,47 +274,102 @@ export class MasterInventoryController {
   @Delete('warehouses/:id')
   async removeWarehouse(@Param('id') id: string) {
     const wId = parseInt(id);
-    return await this.prisma.$transaction(async (tx) => {
-      await tx.inventoryMovement.updateMany({
-        where: { warehouseId: wId },
-        data: { warehouseId: null, remarks: 'Facility Deleted (Archived Record)' }
-      });
-      await tx.warehouseStock.deleteMany({
-        where: { warehouseId: id } 
-      });
-      return tx.warehouse.delete({ where: { id: wId } });
-    });
+    return await this.prisma.$transaction(
+      async (tx) => {
+        if (
+          (await tx.warehouseBin.count({ where: { warehouseId: id } })) ||
+          (await tx.warehouseLot.count({ where: { warehouseId: id } }))
+        ) {
+          throw new ConflictException(
+            'This warehouse has bin or lot history and cannot be deleted.',
+          );
+        }
+        await tx.inventoryMovement.updateMany({
+          where: { warehouseId: wId },
+          data: {
+            warehouseId: null,
+            remarks: 'Facility Deleted (Archived Record)',
+          },
+        });
+        await tx.warehouseStock.deleteMany({
+          where: { warehouseId: id },
+        });
+        return tx.warehouse.delete({ where: { id: wId } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   // ==========================================
   // 4. WAREHOUSE STOCK (Live Hub Balances)
   // ==========================================
   @Post('warehouse-stock')
-  async assignStock(@Body() data: any) {
-    const safeProductId = parseInt(data.productId);
-    const safeWarehouseId = String(data.warehouseId); 
-    const safeQuantity = parseInt(data.quantity);
-
-    const existingStock = await this.prisma.warehouseStock.findFirst({
-      where: { warehouseId: safeWarehouseId, productId: safeProductId }
-    });
-
-    if (existingStock) {
-      return this.prisma.warehouseStock.update({
-        where: { id: existingStock.id },
-        data: { quantity: existingStock.quantity + safeQuantity, lastUpdated: new Date() }
-      });
-    } else {
-      return this.prisma.warehouseStock.create({
-        data: {
-          warehouseId: safeWarehouseId,
-          productId: safeProductId,
-          sku: data.sku,
-          quantity: safeQuantity,
-          company: data.company
-        }
-      });
+  async assignStock(@Body() body: unknown) {
+    const data = object(body);
+    const safeProductId = Number(data.productId);
+    const safeWarehouseId = String(data.warehouseId);
+    const safeQuantity = Number(data.quantity);
+    if (
+      !Number.isSafeInteger(safeProductId) ||
+      safeProductId < 1 ||
+      !Number.isSafeInteger(safeQuantity) ||
+      (typeof data.quantity !== 'number' &&
+        typeof data.quantity !== 'string') ||
+      String(data.quantity).trim() === '' ||
+      typeof data.company !== 'string' ||
+      !data.company.trim() ||
+      safeWarehouseId === 'MASTER'
+    ) {
+      throw new BadRequestException(
+        'A product, workspace, warehouse and whole stock quantity are required.',
+      );
     }
+    const company = data.company;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const product = await lockProduct(tx, company, safeProductId);
+        await validateLocation(tx, company, safeWarehouseId);
+        const existingStock = await tx.warehouseStock.findUnique({
+          where: {
+            warehouseId_productId: {
+              warehouseId: safeWarehouseId,
+              productId: safeProductId,
+            },
+          },
+        });
+        if (existingStock && existingStock.company !== company)
+          throw new ConflictException(
+            'Warehouse balance belongs to another workspace.',
+          );
+        const quantity = (existingStock?.quantity ?? 0) + safeQuantity;
+        await assertLegacyStockFloor(
+          tx,
+          company,
+          safeProductId,
+          safeWarehouseId,
+          quantity,
+        );
+        if (safeQuantity !== 0)
+          await this.assertUntrackedMutation(tx, company, safeProductId);
+        return tx.warehouseStock.upsert({
+          where: {
+            warehouseId_productId: {
+              warehouseId: safeWarehouseId,
+              productId: safeProductId,
+            },
+          },
+          create: {
+            company,
+            warehouseId: safeWarehouseId,
+            productId: safeProductId,
+            sku: product.sku,
+            quantity,
+          },
+          update: { quantity, lastUpdated: new Date() },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   @Get('warehouse-stock')
@@ -222,9 +380,22 @@ export class MasterInventoryController {
 
   @Delete('warehouse-stock/clear/:company')
   async clearAllHubStocks(@Param('company') company: string) {
-    return this.prisma.warehouseStock.deleteMany({ where: { company } });
+    return this.prisma.$transaction(
+      async (tx) => {
+        if (
+          await tx.warehouseLot.count({
+            where: { company, warehouseId: { not: 'MASTER' } },
+          })
+        ) {
+          throw new ConflictException(
+            'Tracked warehouse stock must be adjusted through Warehouse Operations.',
+          );
+        }
+        return tx.warehouseStock.deleteMany({ where: { company } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
-
 
 // ==========================================
   // 5. CUSTOMER CATEGORIES & AUTO-PRICING

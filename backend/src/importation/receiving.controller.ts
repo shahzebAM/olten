@@ -19,6 +19,10 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { AuthSessionService } from '../auth/auth-session.service';
 import { companyToday } from '../documentation/expiry-date.utils';
+import {
+  lockProduct,
+  recordReceiptLot,
+} from '../fulfillment/fulfillment.stock';
 
 @Injectable()
 export class ReceivingAuthGuard implements CanActivate {
@@ -56,6 +60,8 @@ export class ReceivingAuthGuard implements CanActivate {
       user.role !== 'Super Admin' &&
       ((modules.inventory !== true &&
         modules.master_inventory !== true &&
+        modules.warehouses !== true &&
+        modules.warehouse !== true &&
         modules.importation !== true) ||
         companies[company] !== true)
     ) {
@@ -75,6 +81,8 @@ type Placement = {
   receiptLineId: string;
   warehouseId: string;
   quantity: number;
+  binId?: string;
+  serialNumber?: string;
 };
 
 @Controller('importation')
@@ -156,6 +164,12 @@ export class ImportReceivingController implements OnModuleDestroy {
         !placement ||
         typeof placement.receiptLineId !== 'string' ||
         !placement.receiptLineId ||
+        (placement.binId !== undefined &&
+          (typeof placement.binId !== 'string' || !placement.binId.trim())) ||
+        (placement.serialNumber !== undefined &&
+          (typeof placement.serialNumber !== 'string' ||
+            !placement.serialNumber.trim() ||
+            placement.serialNumber.length > 150)) ||
         ids.has(placement.receiptLineId) ||
         !Number.isSafeInteger(placement.quantity) ||
         placement.quantity <= 0 ||
@@ -219,6 +233,7 @@ export class ImportReceivingController implements OnModuleDestroy {
               throw new BadRequestException(
                 'An active master catalog product is required for every placement.',
               );
+            await lockProduct(tx, company, product.id);
             const claimed = await tx.goodsReceiptLine.updateMany({
               where: {
                 id: item.id,
@@ -234,6 +249,7 @@ export class ImportReceivingController implements OnModuleDestroy {
             let previousStock: number;
             let newStock: number;
             let warehouseId: number | null = null;
+            let warehouseStockId: string | null = null;
             if (placement.warehouseId === 'MASTER') {
               const updated = await tx.product.update({
                 where: { id: product.id },
@@ -275,7 +291,19 @@ export class ImportReceivingController implements OnModuleDestroy {
                 );
               newStock = stock.quantity;
               previousStock = newStock - placement.quantity;
+              warehouseStockId = stock.id;
             }
+            const lot = await recordReceiptLot(tx, company, username, {
+              productId: product.id,
+              warehouseId: placement.warehouseId,
+              warehouseStockId,
+              binId: placement.binId,
+              receiptLineId: item.id,
+              quantity: placement.quantity,
+              batchNumber: item.batchNumber,
+              expirationDate: item.expirationDate?.toISOString().slice(0, 10),
+              serialNumber: placement.serialNumber?.trim(),
+            });
             await tx.inventoryMovement.create({
               data: {
                 company,
@@ -292,6 +320,9 @@ export class ImportReceivingController implements OnModuleDestroy {
                 warehouseId,
                 batchNumber: item.batchNumber,
                 expirationDate: item.expirationDate,
+                lotId: lot.id,
+                binId: lot.binId,
+                serialNumber: lot.serialNumber,
               },
             });
           }
@@ -302,7 +333,7 @@ export class ImportReceivingController implements OnModuleDestroy {
     } catch (error: unknown) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2034'
+        (error.code === 'P2034' || error.code === 'P2002')
       ) {
         throw new ConflictException(
           'Stock changed during placement. Refresh and try again.',

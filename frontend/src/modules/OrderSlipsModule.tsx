@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 
 // --- INTERFACES ---
 interface OrderItem {
@@ -35,9 +36,11 @@ interface OrderSlipsModuleProps {
   API_BASE_URL: string;
   onBack: () => void;
   onCreateNew?: () => void; 
+  canApprove?: boolean;
+  onOpenFulfillment?: () => void;
 }
 
-export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew }: OrderSlipsModuleProps) {
+export default function OrderSlipsModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onCreateNew, canApprove = false, onOpenFulfillment }: OrderSlipsModuleProps) {
   const isAuthorizedAdmin = ['admin', 'ali', 'super admin'].includes(loginUsername?.toLowerCase() || '');
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -123,24 +126,48 @@ const filteredSlips = useMemo(() => {
   }, [allSlips, activeTab, searchQuery]);
 
   // --- GENERATE FO DIRECTLY FROM LEDGER ---
-  const handleGenerateFoFromLedger = async () => {
+  const handleApproveAndReserve = async () => {
+    if (!viewSlip || !canApprove) return;
+    setIsLoading(true);
+    try {
+      const headers = { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany };
+      const response = await fetch(`${API_BASE_URL}/fulfillment/order-slips/${viewSlip.id}/approve`, { method: 'POST', headers, body: '{}' });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Could not approve and reserve this order.');
+      }
+      setViewSlip({ ...viewSlip, status: 'Approved' });
+      await fetchOrderSlips();
+      showToast('Order approved. Review reservations and remaining demand in fulfillment.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not reserve this order.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGenerateFoFromLedger = async (documentType: 'FO' | 'PL' = 'FO') => {
     if (!viewSlip || !foNumberInput.trim()) return;
     setIsGeneratingFo(true);
     try {
       const payload = {
-        osNumber: foNumberInput.trim(), referenceOs: viewSlip.osNumber, company: selectedCompany, customerId: viewSlip.customerId,
+        [documentType === 'PL' ? 'plNumber' : 'osNumber']: foNumberInput.trim().replace(/^(FO|PL)-/, `${documentType}-`), referenceOs: viewSlip.osNumber, company: selectedCompany, customerId: viewSlip.customerId,
         isVatApplied: viewSlip.vatApplied, vatRate: viewSlip.vatRate, subtotal: viewSlip.subtotal, vatAmount: viewSlip.vatAmount, grandTotal: viewSlip.grandTotal, user: loginUsername,
         items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to generate FO");
+      const endpoint = documentType === 'PL' ? 'packing-lists' : 'order-slips';
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || `Failed to generate ${documentType}`);
+      }
       
       await fetch(`${API_BASE_URL}/sales/order-slips/${viewSlip.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
 
-      showToast("Final Order Generated & Stock Deducted by Backend!", "success");
+      showToast(`${documentType === 'PL' ? 'Packing List' : 'Final Order'} queued for picking and dispatch.`, "success");
       setViewSlip(null);
       fetchOrderSlips();
     } catch(e: any) { showToast(e.message || "Failed to generate Final Order", "error"); } finally { setIsGeneratingFo(false); }
@@ -153,7 +180,7 @@ const filteredSlips = useMemo(() => {
     if (!isFO) {
       confirmMsg = `Notice: Marking an OS as ${newStatus} is safe. However, if an active Final Order exists for this OS, the backend will strictly block this action. Proceed?`;
     } else {
-      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office.\n\nBecause this is a Final Order, its original parent Order Slip (${slip.referenceOs}) will also be automatically marked as ${newStatus}. Proceed?`;
+      confirmMsg = `Marking this Final Order as ${newStatus} will cancel an undispatched delivery; historical deducted stock is restored when applicable. Proceed?`;
     }
 
     if (!window.confirm(confirmMsg)) return;
@@ -161,21 +188,23 @@ const filteredSlips = useMemo(() => {
     setIsLoading(true);
     try {
       // 1. Cancel the target slip (FO or OS)
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}/cancel`, { 
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername, status: newStatus }) 
+      const endpoint = slip.osNumber.startsWith('PL') ? 'packing-lists' : 'order-slips';
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/${slip.id}/cancel`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ user: loginUsername, status: newStatus })
       });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.message || `Failed to process cancellation.`);
       }
 
-      // 2. AUTO-CASCADING CANCELLATION: If this is an FO, find and cancel its parent OS automatically
-      if (isFO && slip.referenceOs) {
+      const cancelled = await res.json();
+      // Preserve historical FO behavior; Phase 2 aliases keep their shared SO active.
+      if (isFO && slip.referenceOs && !cancelled.deliveryManaged) {
         const parentOs = allSlips.find(s => s.osNumber === slip.referenceOs);
         if (parentOs && parentOs.status !== newStatus) {
           try {
             await fetch(`${API_BASE_URL}/sales/order-slips/${parentOs.id}/cancel`, { 
-              method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername, status: newStatus }) 
+              method: 'DELETE', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ user: loginUsername, status: newStatus })
             });
           } catch (parentErr) {
             console.warn("Parent OS Auto-Cancel failed:", parentErr);
@@ -197,14 +226,15 @@ const filteredSlips = useMemo(() => {
     if (!isFO) {
       confirmMsg = "Notice: Deleting this OS is safe. However, if a Final Order exists for this OS, the backend will strictly block this action. Proceed?";
     } else {
-      confirmMsg = "CRITICAL WARNING: You are deleting a Final Order. The backend will restore the stock, and also permanently wipe its parent OS. Proceed?";
+      confirmMsg = "CRITICAL WARNING: You are deleting a Final Order. Undispatched delivery allocations will be released; historical stock is restored when applicable. Proceed?";
     }
 
     if (!window.confirm(confirmMsg)) return;
 
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${slip.id}`, { method: 'DELETE' });
+      const endpoint = slip.osNumber.startsWith('PL') ? 'packing-lists' : 'order-slips';
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/${slip.id}`, { method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.message || "Failed to delete record.");
@@ -221,7 +251,7 @@ const filteredSlips = useMemo(() => {
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
       
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm print:hidden ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
+        <div className={`fixed bottom-6 right-6 z-[300] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm print:hidden ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
         </div>
       )}
@@ -326,12 +356,16 @@ const filteredSlips = useMemo(() => {
 
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none">
             
-            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0 print:hidden rounded-t-2xl">
+            <div className="p-6 border-b border-slate-200 flex flex-wrap gap-3 justify-between items-center bg-slate-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Document View: {viewSlip.osNumber}</h3>
                 <p className="text-xs font-mono uppercase text-slate-500 tracking-widest mt-1">Status: {viewSlip.status}</p>
               </div>
-              <div className="flex gap-3 items-center">
+              <div className="flex flex-wrap gap-3 items-center">
+                {canApprove && viewSlip.osNumber.startsWith('OS') && !['Cancelled', 'Returned', 'Finalized Order'].includes(viewSlip.status) && (
+                  <button onClick={handleApproveAndReserve} disabled={isLoading || isGeneratingFo} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">{isLoading ? 'Reserving...' : 'Approve & reserve'}</button>
+                )}
+                {onOpenFulfillment && <button onClick={onOpenFulfillment} className="px-4 py-2 rounded-lg border border-teal-300 text-teal-800 text-xs font-bold">Fulfillment & delivery</button>}
                 
                 {/* NEW FO GENERATION WITH THICK TEAL STYLING */}
                 {viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned' && (
@@ -344,17 +378,12 @@ const filteredSlips = useMemo(() => {
     }
   }}
                     className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
-                    <button onClick={handleGenerateFoFromLedger} disabled={isGeneratingFo || !foNumberInput} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
+                    <button onClick={() => handleGenerateFoFromLedger('FO')} disabled={isGeneratingFo || !foNumberInput} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFo ? 'Gen...' : 'Gen Final Order'}
                     </button>
                     {/* NEW PL GENERATION BUTTON */}
 <button 
-  onClick={() => {
-    // Just reuse the handleGenerateFoFromLedger logic, but change the prefix!
-    const plNumber = foNumberInput.replace('FO-', 'PL-');
-    setFoNumberInput(plNumber);
-    handleGenerateFoFromLedger();
-  }} 
+  onClick={() => handleGenerateFoFromLedger('PL')}
   disabled={isGeneratingFo || !foNumberInput} 
   className="px-5 py-2.5 bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-600 shadow-sm transition-colors ml-2"
 >

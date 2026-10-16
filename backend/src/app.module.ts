@@ -13,6 +13,8 @@ import { AuthSessionModule } from './auth/auth-session.module';
 import { PackingListsController } from './sales/packing-lists.controller';
 import { QuotationsController } from './sales/quotations.controller';
 import { ImportationModule } from './importation/importation.module';
+import { FulfillmentModule } from './fulfillment/fulfillment.module';
+import { FulfillmentPodController } from './fulfillment-pod.controller';
 
 @Module({
   imports: [
@@ -20,6 +22,7 @@ import { ImportationModule } from './importation/importation.module';
     EmployeesModule,
     DocumentationModule,
     ImportationModule,
+    FulfillmentModule,
   ],
   controllers: [
     AppController,
@@ -31,6 +34,7 @@ import { ImportationModule } from './importation/importation.module';
     ProcurementController,
     PackingListsController,
     QuotationsController,
+    FulfillmentPodController,
   ],
   providers: [AppService],
 })

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
+import { useInvisibleScanner } from '../lib/useInvisibleScanner';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; category?: string; }
@@ -14,9 +16,11 @@ interface CreateOSModuleProps {
   onViewLedger?: () => void;
   setActiveTab?: (tab: string) => void;
   initialCustomerId?: string | null;
+  canApprove?: boolean;
+  onOpenFulfillment?: () => void;
 }
 
-export default function CreateOSModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onViewLedger, initialCustomerId, setActiveTab }: CreateOSModuleProps) {
+export default function CreateOSModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onViewLedger, initialCustomerId, setActiveTab, canApprove = false, onOpenFulfillment }: CreateOSModuleProps) {
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
@@ -33,7 +37,6 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   
   // --- NEW SCANNER STATES ---
   const [allProducts, setAllProducts] = useState<any[]>([]);
-  const [scannerInput, setScannerInput] = useState('');
 
   // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
@@ -210,7 +213,7 @@ const fetchNextOsNumber = useCallback(async () => {
     
     if (mappedItems.length > 0) {
       const productIds = mappedItems.map(i => i.productId);
-      fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds }) })
+      fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ company: selectedCompany, productIds }) })
         .then(res => res.json()).then(stockMap => {
           setDraftItems(prev => prev.map(item => ({ ...item, officeStock: stockMap[item.productId]?.officeStock ?? 0, warehouseQty: stockMap[item.productId]?.warehouseQty ?? 0, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? [] })));
         }).catch(() => {});
@@ -234,62 +237,31 @@ const fetchNextOsNumber = useCallback(async () => {
   const activeCategoryPricesRef = useRef(activeCategoryPrices);
   activeCategoryPricesRef.current = activeCategoryPrices;
 
-  // --- GLOBAL INVISIBLE SCANNER LISTENER ---
-  useEffect(() => {
-    let buffer = '';
-    let lastKeyTime = Date.now();
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const currentTime = Date.now();
-      
-      if (currentTime - lastKeyTime > 50) {
-        buffer = '';
-      }
-      
-      if (e.key === 'Enter' && buffer.length > 3) {
-        const scanData = buffer.trim();
-        const scannedSku = scanData.split('  ')[0].trim();
-        const foundProduct = allProductsRef.current.find(p => p.sku.toUpperCase() === scannedSku.toUpperCase());
-
-        if (foundProduct) {
-          e.preventDefault(); 
-          
-          if (document.activeElement instanceof HTMLInputElement) {
-             document.activeElement.blur();
-          }
-
-          const existingIndex = draftItemsRef.current.findIndex(i => i.productId === foundProduct.id);
-          if (existingIndex >= 0) {
-            setDraftItems(prev => prev.map((item, idx) => {
-              if (idx !== existingIndex) return item;
-              const newQty = (Number(item.requestedQty) || 0) + 1;
-              return { ...item, requestedQty: newQty, lineTotal: newQty * Number(item.unitPrice) };
-            }));
-            showToast(`+1 ${foundProduct.sku} added`, 'success');
-          } else {
-            const priceToUse = activeCategoryPricesRef.current[foundProduct.id] !== undefined 
-              ? activeCategoryPricesRef.current[foundProduct.id] 
-              : (foundProduct.sellingPrice || 0);
-              
-            setDraftItems(prev => [...prev, {
-              productId: foundProduct.id, sku: foundProduct.sku, productName: foundProduct.name,
-              officeStock: foundProduct.currentStock || 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null,
-              requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse
-            }]);
-            showToast(`Added ${foundProduct.sku}`, 'success');
-          }
-        }
-        buffer = ''; 
-      } else if (e.key.length === 1) {
-        buffer += e.key; 
-      }
-      
-      lastKeyTime = currentTime;
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
+  useInvisibleScanner((scannedSku) => {
+    const foundProduct = allProductsRef.current.find(p => p.sku.toUpperCase() === scannedSku.toUpperCase());
+    if (!foundProduct) return false;
+    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
+    const existingIndex = draftItemsRef.current.findIndex(i => i.productId === foundProduct.id);
+    if (existingIndex >= 0) {
+      setDraftItems(prev => prev.map((item, idx) => {
+        if (idx !== existingIndex) return item;
+        const newQty = (Number(item.requestedQty) || 0) + 1;
+        return { ...item, requestedQty: newQty, lineTotal: newQty * Number(item.unitPrice) };
+      }));
+      showToast(`+1 ${foundProduct.sku} added`, 'success');
+    } else {
+      const priceToUse = activeCategoryPricesRef.current[foundProduct.id] !== undefined
+        ? activeCategoryPricesRef.current[foundProduct.id]
+        : (foundProduct.sellingPrice || 0);
+      setDraftItems(prev => [...prev, {
+        productId: foundProduct.id, sku: foundProduct.sku, productName: foundProduct.name,
+        officeStock: foundProduct.currentStock || 0, warehouseQty: 0, warehouseBreakdown: [], selectedWarehouseName: null,
+        requestedQty: 1, unitPrice: priceToUse, lineTotal: priceToUse
+      }]);
+      showToast(`Added ${foundProduct.sku}`, 'success');
+    }
+    return true;
+  });
 
   const handleAddProduct = (p: SearchedProduct) => {
     if (draftItems.some(i => i.productId === p.id)) return showToast("Product already exists in the order.", "error");
@@ -359,7 +331,7 @@ const fetchNextOsNumber = useCallback(async () => {
     setIsRefreshingStock(true);
     try {
       const productIds = draftItems.map(i => i.productId);
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, productIds }) });
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/refresh-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ company: selectedCompany, productIds }) });
       if (!res.ok) throw new Error();
       const stockMap = await res.json();
       setDraftItems(prev => prev.map(item => ({ ...item, officeStock: stockMap[item.productId]?.officeStock ?? item.officeStock, warehouseQty: stockMap[item.productId]?.warehouseQty ?? item.warehouseQty, warehouseBreakdown: stockMap[item.productId]?.warehouseBreakdown ?? item.warehouseBreakdown })));
@@ -385,7 +357,7 @@ const fetchNextOsNumber = useCallback(async () => {
     if (!isFO) {
       confirmMsg = `Notice: Marking an OS as ${newStatus} is safe. However, if a Final Order was generated from this OS, the backend will strictly block this action until the Final Order is cancelled first. Proceed?`;
     } else {
-      confirmMsg = `Marking this Final Order as ${newStatus} will safely restore deducted stock to the Office. Proceed?`;
+      confirmMsg = `Marking this Final Order as ${newStatus} will cancel an undispatched delivery; historical deducted stock is restored when applicable. Proceed?`;
     }
 
     if (!window.confirm(confirmMsg)) return;
@@ -393,7 +365,7 @@ const fetchNextOsNumber = useCallback(async () => {
     setIsProcessing(true);
     try {
       const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { 
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, user: loginUsername }) 
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ status: newStatus, user: loginUsername })
       });
       if (!res.ok) {
         const errorData = await res.json();
@@ -404,6 +376,30 @@ const fetchNextOsNumber = useCallback(async () => {
       showToast(`Order marked as ${newStatus}!`, "success");
       handleClosePrintModal(); 
     } catch (e: any) { showToast(e.message || "Failed to process cancellation.", "error"); } finally { setIsProcessing(false); }
+  };
+
+  const handleApproveAndReserve = async () => {
+    if (!finalizedOs || !canApprove) return;
+    setIsProcessing(true);
+    try {
+      const headers = { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany };
+      const response = await fetch(`${API_BASE_URL}/fulfillment/order-slips/${finalizedOs.id}/approve`, { method: 'POST', headers, body: '{}' });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Could not approve and reserve this order.');
+      }
+      const refreshed = await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { headers });
+      if (!refreshed.ok) throw new Error('Order approved. Refresh the ledger to see its current status.');
+      const approved = await refreshed.json();
+      setFinalizedOs(approved);
+      setLoadedOsStatus(approved.status);
+      await handleRefreshStock();
+      showToast('Order approved. Available stock is reserved; review remaining demand in fulfillment.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not reserve this order.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
 const handleSubmit = async () => {
@@ -420,7 +416,7 @@ const handleSubmit = async () => {
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
-      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error(`Failed to create ${docType}.`);
       
       const newlyCreatedDoc = await res.json();
@@ -446,8 +442,11 @@ const handleSubmit = async () => {
         }))
       };
       
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to update Order Slip.");
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/${loadedOsId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || 'Failed to update Order Slip.');
+      }
       
       const updatedOs = await res.json();
       await handleRefreshStock(); 
@@ -484,7 +483,7 @@ const handleSubmit = async () => {
         }))
       };
 
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       
       if (!res.ok) {
         let errDesc = "Failed to create Final Order in Database.";
@@ -496,14 +495,14 @@ const handleSubmit = async () => {
 
       try {
         await fetch(`${API_BASE_URL}/sales/order-slips/${finalizedOs.id}`, { 
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername }) 
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
         });
       } catch (patchErr) {
         console.warn("Could not patch original OS status, but FO was generated.");
       }
 
       await handleRefreshStock(); 
-      showToast("Final Order logged & Stock Deducted instantly!", "success");
+      showToast("Final Order queued for picking and dispatch.", "success");
       
       const completeFo = { ...newFo, customer: selectedCustomer || finalizedOs.customer };
       
@@ -529,7 +528,7 @@ const handleSubmit = async () => {
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'} print:hidden`}>
+        <div className={`fixed bottom-6 right-6 z-[300] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'} print:hidden`}>
           {toast.message}
         </div>
       )}
@@ -796,14 +795,18 @@ const handleSubmit = async () => {
           
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-auto print:shadow-none print:m-0 print:rounded-none flex flex-col max-h-full print:max-h-none print:block print:h-auto print:overflow-visible">
             
-            <div className="p-6 border-b border-emerald-100 flex justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
+            <div className="p-6 border-b border-emerald-100 flex flex-wrap gap-3 justify-between items-center bg-emerald-50 shrink-0 print:hidden rounded-t-2xl">
               <div>
              <h3 className="text-xl font-black text-emerald-900 tracking-tight">
     {loadedOsId ? `${finalizedOs.osNumber.substring(0,2)} Updated Successfully!` : `${finalizedOs.osNumber.substring(0,2)} Generated Successfully!`}
   </h3>
-                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Ready for immediate printing.</p>
+                <p className="text-xs font-mono uppercase text-emerald-600 tracking-widest mt-1">Status: {finalizedOs.status}. Ready to print.</p>
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
+               {canApprove && finalizedOs.osNumber.startsWith('OS') && !['Cancelled', 'Returned', 'Finalized Order'].includes(finalizedOs.status) && (
+                 <button onClick={handleApproveAndReserve} disabled={isProcessing || isGeneratingFinalOrder} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">{isProcessing ? 'Reserving...' : 'Approve & reserve'}</button>
+               )}
+               {onOpenFulfillment && <button onClick={onOpenFulfillment} className="px-4 py-2 rounded-lg border border-teal-300 text-teal-800 text-xs font-bold">Fulfillment & delivery</button>}
                {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
                     <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
@@ -840,15 +843,18 @@ const handleSubmit = async () => {
                           };
 
                           const res = await fetch(`${API_BASE_URL}/sales/packing-lists`, { 
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+                            method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload)
                           });
                           
-                          if (!res.ok) throw new Error("Failed to create Packing List in Database.");
+                          if (!res.ok) {
+                            const error = await res.json();
+                            throw new Error(error.message || 'Failed to create Packing List in Database.');
+                          }
                           const newPl = await res.json();
                           newPl.osNumber = newPl.plNumber; // Normalize for the UI
 
                           await handleRefreshStock(); 
-                          showToast("Packing List logged & Stock Deducted!", "success");
+                          showToast("Packing List queued for picking and dispatch.", "success");
                           setFinalizedOs({ ...newPl, customer: selectedCustomer || finalizedOs.customer }); 
                           setFinalOrderGenerated(true); 
                         } catch (e: any) { 

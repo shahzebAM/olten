@@ -14,6 +14,7 @@ import CreateOSModule from './modules/CreateOSModule';
 import PurchaseOrdersModule from './modules/PurchaseOrdersModule';
 import SupplierModule from './modules/SupplierModule';
 import ImportationModule from './modules/ImportationModule';
+import FulfillmentModule from './modules/FulfillmentModule';
 import { resolveApiConfig } from './lib/apiConfig';
 import { clearApiSession, getApiAuthHeaders, expireApiSession } from './lib/apiSession';
 
@@ -25,7 +26,7 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   
-const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system' | 'importation'>('none');
+const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' | 'products' | 'inventory' | 'warehouses' | 'users' | 'customers' | 'sales_orders' | 'suppliers' | 'purchase_orders' | 'create_os' | 'qr_system' | 'importation' | 'warehouse_ops' | 'customer_pos' | 'deliveries'>('none');
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [targetCustomerId, setTargetCustomerId] = useState<string | null>(null);
@@ -282,6 +283,7 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
   };
 
   const isCurrentUserSuperAdmin = currentUser?.role === 'Super Admin';
+  const canApproveFulfillment = ['Super Admin', 'Admin'].includes(currentUser?.role) || currentUser?.modules?.warehouse_approve === true;
   const hasUsers = isCurrentUserSuperAdmin;
 
   const allowedCompanies = isCurrentUserSuperAdmin
@@ -300,13 +302,17 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
 
     if (activeModule !== 'none' && activeModule !== 'users') {
       const requiredPermission = 
-        (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os') ? 'sales' :
+        (activeModule === 'customers' || activeModule === 'sales_orders' || activeModule === 'create_os' || activeModule === 'customer_pos' || activeModule === 'deliveries') ? 'sales' :
         (activeModule === 'suppliers' || activeModule === 'purchase_orders') ? 'purchasing' :
-        (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') ? 'master_inventory' : 
+        (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses' || activeModule === 'warehouse_ops') ? 'master_inventory' :
         activeModule;
 
-      const isGloballyDisabled = globalModules[requiredPermission] === false;
-      const isUserDisabled = !isCurrentUserSuperAdmin && currentUser?.modules?.[requiredPermission] === false;
+      const isGloballyDisabled = activeModule === 'deliveries'
+        ? globalModules.sales === false && globalModules.master_inventory === false
+        : globalModules[requiredPermission] === false;
+      const isUserDisabled = !isCurrentUserSuperAdmin && (activeModule === 'deliveries'
+        ? !((globalModules.sales !== false && currentUser?.modules?.sales === true) || (globalModules.master_inventory !== false && (currentUser?.modules?.master_inventory === true || currentUser?.modules?.inventory === true || currentUser?.modules?.warehouses === true)))
+        : currentUser?.modules?.[requiredPermission] === false);
       
       if (isGloballyDisabled || isUserDisabled) {
         setActiveModule('none');
@@ -353,14 +359,15 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
 
   // ALL MODULE ROUTES
   if (activeModule === 'customers') return <CustomerModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onRouteToOrderSlip={(id: string) => { setTargetCustomerId(id); setActiveModule('create_os'); }} />;
-  if (activeModule === 'create_os') return <CreateOSModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} initialCustomerId={targetCustomerId} onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }} onViewLedger={() => setActiveModule('sales_orders')} />;
+  if (activeModule === 'create_os') return <CreateOSModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} initialCustomerId={targetCustomerId} onBack={() => { setActiveModule('none'); setTargetCustomerId(null); }} onViewLedger={() => setActiveModule('sales_orders')} canApprove={canApproveFulfillment} onOpenFulfillment={() => setActiveModule('deliveries')} />;
   if (activeModule === 'products' || activeModule === 'inventory' || activeModule === 'warehouses') return <MasterInventory selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'ai_docs') return <AiDocsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'payroll') return <PayrollModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onLogout={handleLogout} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'sales_orders') return <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} />;
+  if (activeModule === 'sales_orders') return <OrderSlipsModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} onCreateNew={() => setActiveModule('create_os')} canApprove={canApproveFulfillment} onOpenFulfillment={() => setActiveModule('deliveries')} />;
   if (activeModule === 'purchase_orders') return <PurchaseOrdersModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'importation') return <ImportationModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} canApprove={['Super Admin', 'Admin'].includes(currentUser?.role) || currentUser?.modules?.importation_approve === true} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'warehouse_ops' || activeModule === 'customer_pos' || activeModule === 'deliveries') return <FulfillmentModule key={selectedCompany} selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} initialView={activeModule === 'warehouse_ops' ? 'warehouse' : activeModule === 'customer_pos' ? 'orders' : 'delivery'} canApprove={canApproveFulfillment} canWarehouse={globalModules.master_inventory !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.master_inventory === true || currentUser?.modules?.inventory === true || currentUser?.modules?.warehouses === true)} canSales={globalModules.sales !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.sales === true)} onBack={() => setActiveModule('none')} />;
 
   // ADD THIS LINE:
 if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;

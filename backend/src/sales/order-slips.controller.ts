@@ -1,9 +1,60 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { FulfillmentService } from '../fulfillment/fulfillment.service';
+import {
+  FulfillmentAccess,
+  FulfillmentAuthGuard,
+  type FulfillmentRequest,
+} from '../fulfillment/fulfillment-auth.guard';
+import {
+  assertLegacyStockFloor,
+  lockProduct,
+} from '../fulfillment/fulfillment.stock';
 
 @Controller('sales/order-slips')
+@FulfillmentAccess('sales')
 export class OrderSlipsController {
   private readonly prisma = new PrismaClient();
+
+  constructor(private readonly fulfillment: FulfillmentService) {}
+
+  private async mutate<T>(
+    action: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(action, {
+        isolationLevel: 'Serializable',
+        maxWait: 5000,
+        timeout: 20000,
+      });
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        ['P2034', 'P2002'].includes(String(error.code))
+      ) {
+        throw new ConflictException(
+          'Order or stock changed during this request. Refresh and try again.',
+        );
+      }
+      throw error;
+    }
+  }
 
   // --- CUSTOMER SEARCH ENDPOINT TO SUPPORT KEYBOARD NAV ---
   @Get('search-customers')
@@ -54,68 +105,56 @@ export class OrderSlipsController {
   }
 
   @Get('search-products')
-  async searchProducts(@Query('company') company: string, @Query('q') q: string) {
+  async searchProducts(
+    @Query('company') company: string,
+    @Query('q') q: string,
+  ) {
     if (!company || !q || q.length < 2) return [];
     const searchString = q.toLowerCase();
 
     const allCompanyProducts = await this.prisma.product.findMany({
       where: { company },
-      select: { id: true, sku: true, name: true, category: true, sellingPrice: true, currentStock: true }
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        category: true,
+        sellingPrice: true,
+        currentStock: true,
+      },
     });
 
-    const products = allCompanyProducts.filter(p =>
-      (p.name && p.name.toLowerCase().includes(searchString)) ||
-      (p.sku && p.sku.toLowerCase().includes(searchString)) ||
-      (p.category && p.category.toLowerCase().includes(searchString))
-    ).slice(0, 15);
+    const products = allCompanyProducts
+      .filter(
+        (p) =>
+          (p.name && p.name.toLowerCase().includes(searchString)) ||
+          (p.sku && p.sku.toLowerCase().includes(searchString)) ||
+          (p.category && p.category.toLowerCase().includes(searchString)),
+      )
+      .slice(0, 15);
 
     if (products.length === 0) return [];
 
-    const productIds = products.map(p => p.id);
-    const [hubStocks, allWarehouses] = await Promise.all([
-      this.prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } }),
-      this.prisma.warehouse.findMany({ where: { company } })
-    ]);
-
-    const whMap = new Map(allWarehouses.map(w => [String(w.id), w.name]));
-
-    return products.map(p => {
-      const productStocks = hubStocks.filter(h => h.productId === p.id);
-      const warehouseQty = productStocks.reduce((sum, h) => sum + h.quantity, 0);
-
-      const warehouseBreakdown = productStocks
-        .filter(h => h.quantity > 0)
-        .map(h => ({ name: whMap.get(String(h.warehouseId)) || `Depot ${h.warehouseId}`, quantity: h.quantity }));
-
-      return { ...p, officeStock: p.currentStock || 0, warehouseQty, warehouseBreakdown };
-    });
+    const productIds = products.map((p) => p.id);
+    const availability = await this.fulfillment.availableStock(
+      this.prisma,
+      company,
+      productIds,
+    );
+    return products.map((p) => ({ ...p, ...availability[p.id] }));
   }
 
   @Post('refresh-stock')
-  async refreshStock(@Body() data: { company: string, productIds: number[] }) {
-    const { company, productIds } = data;
+  @UseGuards(FulfillmentAuthGuard)
+  async refreshStock(
+    @Body() data: { company: string; productIds: number[] },
+    @Req() request: FulfillmentRequest,
+  ) {
+    const company = String(request.headers['x-company']);
+    const { productIds } = data;
     if (!company || !productIds || productIds.length === 0) return {};
 
-    const [dbProducts, hubStocks, allWarehouses] = await Promise.all([
-      this.prisma.product.findMany({ where: { company, id: { in: productIds } } }),
-      this.prisma.warehouseStock.findMany({ where: { company, productId: { in: productIds } } }),
-      this.prisma.warehouse.findMany({ where: { company } })
-    ]);
-
-    const whMap = new Map(allWarehouses.map(w => [String(w.id), w.name]));
-    const stockMap: Record<number, { officeStock: number, warehouseQty: number, warehouseBreakdown: any[] }> = {};
-
-    productIds.forEach(id => stockMap[id] = { officeStock: 0, warehouseQty: 0, warehouseBreakdown: [] });
-    dbProducts.forEach(p => { stockMap[p.id].officeStock = p.currentStock || 0; });
-
-    hubStocks.forEach(h => { 
-      stockMap[h.productId].warehouseQty += h.quantity;
-      if (h.quantity > 0) {
-        stockMap[h.productId].warehouseBreakdown.push({ name: whMap.get(String(h.warehouseId)) || `Depot ${h.warehouseId}`, quantity: h.quantity });
-      }
-    });
-
-    return stockMap;
+    return this.fulfillment.availableStock(this.prisma, company, productIds);
   }
 
   @Get('shortages/all')
@@ -134,21 +173,60 @@ export class OrderSlipsController {
   }
 
   @Post()
-  async createOrderSlip(@Body() data: any) {
-    const { company, customerId, items, isVatApplied, vatRate = 0.12, user, osNumber: customOsNumber, referenceOs } = data;
+  @UseGuards(FulfillmentAuthGuard)
+  async createOrderSlip(
+    @Body()
+    data: {
+      customerId: string;
+      items: {
+        productId: unknown;
+        requestedQty: unknown;
+        sku?: string;
+        unitPrice?: unknown;
+      }[];
+      isVatApplied: boolean;
+      vatRate?: number;
+      osNumber?: string;
+      referenceOs?: string;
+    },
+    @Req() request: FulfillmentRequest,
+  ) {
+    const company = String(request.headers['x-company']);
+    const user = request.user.username;
+    const {
+      customerId,
+      items,
+      isVatApplied,
+      vatRate = 0.12,
+      osNumber: customOsNumber,
+      referenceOs,
+    } = data;
 
-    if (!company || !customerId || !items || items.length === 0) throw new BadRequestException('Missing required fields.');
+    if (!company || !customerId || !Array.isArray(items) || items.length === 0)
+      throw new BadRequestException('Missing required fields.');
+    if (customOsNumber !== undefined && typeof customOsNumber !== 'string')
+      throw new BadRequestException('Invalid order number.');
 
-    return await this.prisma.$transaction(async (tx) => {
-      const customer = await tx.customer.findUnique({ where: { id: customerId } });
+    return await this.mutate(async (tx) => {
+      const customer = await tx.customer.findFirst({
+        where: { id: customerId, company },
+      });
       if (!customer) throw new NotFoundException('Customer record not found.');
 
       let osNumber = customOsNumber?.trim();
       if (osNumber) {
-        const existing = await tx.orderSlip.findFirst({ where: { company, osNumber } });
-        if (existing) throw new BadRequestException(`Order Slip number ${osNumber} is already in use!`);
+        const existing = await tx.orderSlip.findFirst({
+          where: { company, osNumber },
+        });
+        if (existing)
+          throw new BadRequestException(
+            `Order Slip number ${osNumber} is already in use!`,
+          );
       } else {
-        const lastOs = await tx.orderSlip.findFirst({ where: { company }, orderBy: { osNumber: 'desc' } });
+        const lastOs = await tx.orderSlip.findFirst({
+          where: { company },
+          orderBy: { osNumber: 'desc' },
+        });
         let nextNum = 1;
         if (lastOs && lastOs.osNumber.startsWith('OS-')) {
           const lastNum = parseInt(lastOs.osNumber.replace('OS-', ''), 10);
@@ -157,50 +235,94 @@ export class OrderSlipsController {
         osNumber = `OS-${String(nextNum).padStart(6, '0')}`;
       }
 
-      const productIds = items.map((i: any) => Number(i.productId));
-      const dbProducts = await tx.product.findMany({ where: { id: { in: productIds }, company } });
+      const productIds = items.map((i) => Number(i.productId));
+      const dbProducts = await tx.product.findMany({
+        where: { id: { in: productIds }, company },
+      });
 
       let calculatedSubtotal = 0;
-      const cleanItems: any[] = [];
+      const cleanItems: Prisma.OrderSlipItemUncheckedCreateWithoutOrderSlipInput[] =
+        [];
 
       for (const item of items) {
         const requestedQty = Number(item.requestedQty);
-        if (!item.productId || !requestedQty || requestedQty <= 0) throw new BadRequestException(`Invalid quantity for SKU: ${item.sku}`);
+        if (
+          !item.productId ||
+          !Number.isSafeInteger(requestedQty) ||
+          requestedQty <= 0
+        )
+          throw new BadRequestException(
+            `Invalid quantity for SKU: ${item.sku}`,
+          );
 
-        const product = dbProducts.find(p => p.id === Number(item.productId));
-        if (!product) throw new NotFoundException(`Product not found: ${item.sku}`);
+        const product = dbProducts.find((p) => p.id === Number(item.productId));
+        if (!product)
+          throw new NotFoundException(`Product not found: ${item.sku}`);
 
-        const unitPrice = Number(item.unitPrice) || Number(product.sellingPrice); 
-        const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
+        const unitPrice =
+          Number(item.unitPrice) || Number(product.sellingPrice);
+        const lineTotal = Math.round(requestedQty * unitPrice * 100) / 100;
 
         calculatedSubtotal += lineTotal;
-        cleanItems.push({ productId: product.id, sku: product.sku, productName: product.name, requestedQty, unitPrice, lineTotal });
+        cleanItems.push({
+          productId: product.id,
+          sku: product.sku,
+          productName: product.name,
+          requestedQty,
+          unitPrice,
+          lineTotal,
+        });
       }
 
       calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
-      const calculatedVat = isVatApplied ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
-      const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+      const calculatedVat = isVatApplied
+        ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+        : 0;
+      const calculatedGrandTotal =
+        Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
       const newOs = await tx.orderSlip.create({
         data: {
-          osNumber, referenceOs: referenceOs || null, company, customerId, status: 'Generated', 
-          subtotal: calculatedSubtotal, vatApplied: isVatApplied, vatRate: Number(vatRate), vatAmount: calculatedVat, grandTotal: calculatedGrandTotal, createdBy: user,
-          items: { create: cleanItems }
+          osNumber,
+          referenceOs: referenceOs || null,
+          company,
+          customerId,
+          status: 'Generated',
+          subtotal: calculatedSubtotal,
+          vatApplied: isVatApplied,
+          vatRate: Number(vatRate),
+          vatAmount: calculatedVat,
+          grandTotal: calculatedGrandTotal,
+          createdBy: user,
+          items: { create: cleanItems },
         },
-        include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
+        include: {
+          items: { include: { product: { select: { currentStock: true } } } },
+          customer: true,
+        },
       });
 
-      // RULE: Office Quantity is ONLY deducted when an FO is generated.
-      if (osNumber.startsWith('FO')) {
-        for (const item of cleanItems) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { decrement: item.requestedQty } }
-          });
-        }
+      if (osNumber.startsWith('FO') || osNumber.startsWith('PL')) {
+        await this.fulfillment.ensureDocumentDelivery(tx, company, user, {
+          sourceType: osNumber.startsWith('FO') ? 'FO' : 'PL',
+          sourceId: newOs.id,
+          documentNumber: osNumber,
+          referenceOs,
+          customerId,
+          items: cleanItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.requestedQty,
+          })),
+        });
       }
 
-      return { ...newOs, items: newOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 })) };
+      return {
+        ...newOs,
+        items: newOs.items.map((i: any) => ({
+          ...i,
+          officeStock: i.product?.currentStock || 0,
+        })),
+      };
     });
   }
 
@@ -245,11 +367,22 @@ export class OrderSlipsController {
   }
 
   @Patch(':id/process')
-  async processOrderSlip(@Param('id') id: string, @Body() body: any) {
-    const { items, user } = body; 
-    return await this.prisma.$transaction(async (tx) => {
-      const os = await tx.orderSlip.findUnique({ where: { id }, include: { items: true } });
+  @UseGuards(FulfillmentAuthGuard)
+  async processOrderSlip(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() request: FulfillmentRequest,
+  ) {
+    const { items } = body;
+    const company = String(request.headers['x-company']);
+    const user = request.user.username;
+    return await this.mutate(async (tx) => {
+      const os = await tx.orderSlip.findFirst({
+        where: { id, company },
+        include: { items: true },
+      });
       if (!os) throw new NotFoundException('Order Slip not found');
+      await this.fulfillment.assertOrderSlipMutable(tx, company, id);
 
       let hasShortage = false;
       for (const input of items) {
@@ -261,138 +394,390 @@ export class OrderSlipsController {
         const shortageQty = Math.max(0, requestedQty - physicalQty);
 
         if (shortageQty > 0) hasShortage = true;
-        await tx.orderSlipItem.update({ where: { id: osItem.id }, data: { confirmedQty: physicalQty, shortageQty } });
+        await tx.orderSlipItem.update({
+          where: { id: osItem.id },
+          data: { confirmedQty: physicalQty, shortageQty },
+        });
 
         if (shortageQty > 0) {
-          await tx.shortage.create({ data: { orderSlipId: os.id, orderSlipItemId: osItem.id, company: os.company, customerId: os.customerId, osNumber: os.osNumber, sku: osItem.sku, productName: osItem.productName, requestedQty: requestedQty, confirmedQty: physicalQty, shortageQty: shortageQty, status: 'Open', createdBy: user } });
+          await tx.shortage.create({
+            data: {
+              orderSlipId: os.id,
+              orderSlipItemId: osItem.id,
+              company: os.company,
+              customerId: os.customerId,
+              osNumber: os.osNumber,
+              sku: osItem.sku,
+              productName: osItem.productName,
+              requestedQty: requestedQty,
+              confirmedQty: physicalQty,
+              shortageQty: shortageQty,
+              status: 'Open',
+              createdBy: user,
+            },
+          });
         }
       }
 
-      await tx.orderSlip.update({ where: { id }, data: { status: hasShortage ? 'Partially Verified' : 'Verified', processedAt: new Date() } });
+      await tx.orderSlip.update({
+        where: { id },
+        data: {
+          status: hasShortage ? 'Partially Verified' : 'Verified',
+          processedAt: new Date(),
+        },
+      });
       return { success: true };
     });
   }
 
   @Patch(':id')
-  async updateOrderSlip(@Param('id') id: string, @Body() data: any) {
-    const { status, user, items, isVatApplied, vatRate = 0.12, customerId, referenceOs } = data;
-    const existing = await this.prisma.orderSlip.findUnique({ where: { id }, include: { items: true } });
-    
-    if (!existing) throw new NotFoundException('Order Slip not found.');
-    if (existing.status === 'Cancelled') throw new BadRequestException('Cannot modify a cancelled Order Slip.');
-
-    return await this.prisma.$transaction(async (tx) => {
+  @UseGuards(FulfillmentAuthGuard)
+  async updateOrderSlip(
+    @Param('id') id: string,
+    @Body() data: any,
+    @Req() request: FulfillmentRequest,
+  ) {
+    const {
+      status,
+      items,
+      isVatApplied,
+      vatRate = 0.12,
+      customerId,
+      referenceOs,
+    } = data;
+    const company = String(request.headers['x-company']);
+    const user = request.user.username;
+    return await this.mutate(async (tx) => {
+      const existing = await tx.orderSlip.findFirst({
+        where: { id, company },
+        include: { items: true },
+      });
+      if (!existing) throw new NotFoundException('Order Slip not found.');
+      if (existing.status === 'Cancelled')
+        throw new BadRequestException('Cannot modify a cancelled Order Slip.');
+      if (status === 'Approved' && existing.status !== 'Approved')
+        throw new BadRequestException(
+          'Use Approve & reserve to approve an Order Slip.',
+        );
+      const cancelled = status === 'Cancelled' || status === 'Returned';
+      const outbound =
+        existing.osNumber.startsWith('FO') ||
+        existing.osNumber.startsWith('PL');
+      const sourceType = existing.osNumber.startsWith('FO') ? 'FO' : 'PL';
+      const managed = outbound
+        ? cancelled
+          ? await this.fulfillment.cancelDocument(
+              tx,
+              company,
+              user,
+              sourceType,
+              id,
+            )
+          : await this.fulfillment.assertDocumentMutable(
+              tx,
+              company,
+              sourceType,
+              id,
+            )
+        : false;
+      if (existing.osNumber.startsWith('OS')) {
+        if (cancelled)
+          await this.fulfillment.cancelOrderSlip(tx, company, user, id);
+        else if (items || customerId || referenceOs !== undefined)
+          await this.fulfillment.assertOrderSlipMutable(tx, company, id);
+      }
+      if (
+        managed &&
+        !cancelled &&
+        (items || customerId || referenceOs !== undefined)
+      ) {
+        throw new BadRequestException(
+          'This document is linked to delivery. Cancel the undispatched document and generate a replacement to change its items.',
+        );
+      }
+      if (
+        customerId &&
+        !(await tx.customer.findFirst({ where: { id: customerId, company } }))
+      )
+        throw new NotFoundException('Customer record not found.');
 
       // RULE: Do not allow OS cancellation if FO exists.
-      if (existing.osNumber.startsWith('OS') && (status === 'Cancelled' || status === 'Returned')) {
-        const activeFo = await tx.orderSlip.findFirst({ where: { referenceOs: existing.osNumber, status: { notIn: ['Cancelled', 'Returned'] } } });
-        if (activeFo) throw new BadRequestException(`Cannot cancel OS. An active Final Order (${activeFo.osNumber}) exists. Cancel the Final Order first.`);
+      if (
+        existing.osNumber.startsWith('OS') &&
+        (status === 'Cancelled' || status === 'Returned')
+      ) {
+        const activeFo = await tx.orderSlip.findFirst({
+          where: {
+            company,
+            referenceOs: existing.osNumber,
+            status: { notIn: ['Cancelled', 'Returned'] },
+          },
+        });
+        if (activeFo)
+          throw new BadRequestException(
+            `Cannot cancel OS. An active Final Order (${activeFo.osNumber}) exists. Cancel the Final Order first.`,
+          );
       }
 
       // RULE: If FO is cancelled via patch, restore stock immediately.
-      if (existing.osNumber.startsWith('FO') && (status === 'Cancelled' || status === 'Returned') && existing.status !== 'Cancelled' && existing.status !== 'Returned') {
+      if (
+        !managed &&
+        existing.osNumber.startsWith('FO') &&
+        cancelled &&
+        existing.status !== 'Cancelled' &&
+        existing.status !== 'Returned'
+      ) {
         for (const item of existing.items) {
-          await tx.product.update({ where: { id: item.productId }, data: { currentStock: { increment: item.requestedQty } } });
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.requestedQty } },
+          });
         }
       }
 
       if (items && Array.isArray(items)) {
         // RULE: Reconcile stock modifications if FO items are edited
-       if ((existing.osNumber.startsWith('FO') || existing.osNumber.startsWith('PL')) && status !== 'Cancelled' && status !== 'Returned') {
+        if (
+          !managed &&
+          (existing.osNumber.startsWith('FO') ||
+            existing.osNumber.startsWith('PL')) &&
+          !cancelled
+        ) {
           for (const oldItem of existing.items) {
-            await tx.product.update({ where: { id: oldItem.productId }, data: { currentStock: { increment: oldItem.requestedQty } } });
+            await tx.product.update({
+              where: { id: oldItem.productId },
+              data: { currentStock: { increment: oldItem.requestedQty } },
+            });
           }
         }
 
         await tx.orderSlipItem.deleteMany({ where: { orderSlipId: id } });
         const productIds = items.map((i: any) => Number(i.productId));
-        const dbProducts = await tx.product.findMany({ where: { id: { in: productIds }, company: existing.company } });
+        const dbProducts = await tx.product.findMany({
+          where: { id: { in: productIds }, company: existing.company },
+        });
 
         let calculatedSubtotal = 0;
-        const cleanItems: any[] = [];
+        const cleanItems: Prisma.OrderSlipItemUncheckedCreateWithoutOrderSlipInput[] =
+          [];
 
         for (const item of items) {
           const requestedQty = Number(item.requestedQty);
           if (!item.productId || !requestedQty || requestedQty <= 0) continue;
-          const product = dbProducts.find(p => p.id === Number(item.productId));
+          const product = dbProducts.find(
+            (p) => p.id === Number(item.productId),
+          );
           if (!product) continue;
 
-          const unitPrice = Number(item.unitPrice) || Number(product.sellingPrice);
-          const lineTotal = Math.round((requestedQty * unitPrice) * 100) / 100;
+          const unitPrice =
+            Number(item.unitPrice) || Number(product.sellingPrice);
+          const lineTotal = Math.round(requestedQty * unitPrice * 100) / 100;
           calculatedSubtotal += lineTotal;
-          cleanItems.push({ productId: product.id, sku: product.sku, productName: product.name, requestedQty, unitPrice, lineTotal });
+          cleanItems.push({
+            productId: product.id,
+            sku: product.sku,
+            productName: product.name,
+            requestedQty,
+            unitPrice,
+            lineTotal,
+          });
         }
 
         // Apply new deductions if FO is edited
-        if ((existing.osNumber.startsWith('FO') || existing.osNumber.startsWith('PL')) && status !== 'Cancelled' && status !== 'Returned') {
+        if (
+          !managed &&
+          (existing.osNumber.startsWith('FO') ||
+            existing.osNumber.startsWith('PL')) &&
+          !cancelled
+        ) {
           for (const newItem of cleanItems) {
-            await tx.product.update({ where: { id: newItem.productId }, data: { currentStock: { decrement: newItem.requestedQty } } });
+            const product = await lockProduct(tx, company, newItem.productId);
+            await assertLegacyStockFloor(
+              tx,
+              company,
+              newItem.productId,
+              'MASTER',
+              product.currentStock - newItem.requestedQty,
+            );
+            await tx.product.update({
+              where: { id: newItem.productId },
+              data: { currentStock: { decrement: newItem.requestedQty } },
+            });
           }
         }
 
         calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
-        const applyVat = isVatApplied !== undefined ? isVatApplied : existing.vatApplied;
-        const calculatedVat = applyVat ? Math.round((calculatedSubtotal * Number(vatRate)) * 100) / 100 : 0;
-        const calculatedGrandTotal = Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+        const applyVat =
+          isVatApplied !== undefined ? isVatApplied : existing.vatApplied;
+        const calculatedVat = applyVat
+          ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+          : 0;
+        const calculatedGrandTotal =
+          Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
 
         const updatedOs = await tx.orderSlip.update({
           where: { id },
-          data: { 
-            status: status || existing.status, referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, customerId: customerId || existing.customerId, updatedBy: user,
-            subtotal: calculatedSubtotal, vatApplied: applyVat, vatAmount: calculatedVat, grandTotal: calculatedGrandTotal,
-            items: { create: cleanItems }
+          data: {
+            status: status || existing.status,
+            referenceOs:
+              referenceOs !== undefined ? referenceOs : existing.referenceOs,
+            customerId: customerId || existing.customerId,
+            updatedBy: user,
+            subtotal: calculatedSubtotal,
+            vatApplied: applyVat,
+            vatAmount: calculatedVat,
+            grandTotal: calculatedGrandTotal,
+            items: { create: cleanItems },
           },
-          include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
+          include: {
+            items: { include: { product: { select: { currentStock: true } } } },
+            customer: true,
+          },
         });
-        return { ...updatedOs, items: updatedOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 })) };
+        return {
+          ...updatedOs,
+          items: updatedOs.items.map((i: any) => ({
+            ...i,
+            officeStock: i.product?.currentStock || 0,
+          })),
+        };
       }
 
       const updatedStatusOs = await tx.orderSlip.update({
         where: { id },
-        data: { status, referenceOs: referenceOs !== undefined ? referenceOs : existing.referenceOs, customerId: customerId || existing.customerId, updatedBy: user },
-        include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true }
+        data: {
+          status,
+          referenceOs:
+            referenceOs !== undefined ? referenceOs : existing.referenceOs,
+          customerId: customerId || existing.customerId,
+          updatedBy: user,
+        },
+        include: {
+          items: { include: { product: { select: { currentStock: true } } } },
+          customer: true,
+        },
       });
 
-      return { ...updatedStatusOs, items: updatedStatusOs.items.map((i: any) => ({ ...i, officeStock: i.product?.currentStock || 0 })) };
+      return {
+        ...updatedStatusOs,
+        items: updatedStatusOs.items.map((i: any) => ({
+          ...i,
+          officeStock: i.product?.currentStock || 0,
+        })),
+      };
     });
   }
 
   @Delete(':id/cancel')
-  async cancelOrderSlip(@Param('id') id: string, @Body('user') user: string) {
-    return await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.orderSlip.findUnique({ where: { id }, include: { items: true } });
+  @UseGuards(FulfillmentAuthGuard)
+  async cancelOrderSlip(
+    @Param('id') id: string,
+    @Req() request: FulfillmentRequest,
+  ) {
+    const company = String(request.headers['x-company']);
+    const user = request.user.username;
+    return await this.mutate(async (tx) => {
+      const existing = await tx.orderSlip.findFirst({
+        where: { id, company },
+        include: { items: true },
+      });
       if (!existing) throw new NotFoundException('Order Slip not found.');
-      if (existing.status === 'Cancelled') return existing;
+      if (existing.status === 'Cancelled' || existing.status === 'Returned')
+        return existing;
+      const outbound =
+        existing.osNumber.startsWith('FO') ||
+        existing.osNumber.startsWith('PL');
+      const managed = outbound
+        ? await this.fulfillment.cancelDocument(
+            tx,
+            company,
+            user,
+            existing.osNumber.startsWith('FO') ? 'FO' : 'PL',
+            id,
+          )
+        : false;
 
       if (existing.osNumber.startsWith('OS')) {
-        const activeFo = await tx.orderSlip.findFirst({ where: { referenceOs: existing.osNumber, status: { notIn: ['Cancelled', 'Returned'] } } });
-        if (activeFo) throw new BadRequestException(`Cannot cancel OS. An active Final Order (${activeFo.osNumber}) exists. Cancel the Final Order first.`);
+        const activeFo = await tx.orderSlip.findFirst({
+          where: {
+            company,
+            referenceOs: existing.osNumber,
+            status: { notIn: ['Cancelled', 'Returned'] },
+          },
+        });
+        if (activeFo)
+          throw new BadRequestException(
+            `Cannot cancel OS. An active Final Order (${activeFo.osNumber}) exists. Cancel the Final Order first.`,
+          );
+        await this.fulfillment.cancelOrderSlip(tx, company, user, id);
       }
 
-      if (existing.osNumber.startsWith('FO')) {
+      if (!managed && existing.osNumber.startsWith('FO')) {
         for (const item of existing.items) {
-          await tx.product.update({ where: { id: item.productId }, data: { currentStock: { increment: item.requestedQty } } });
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.requestedQty } },
+          });
         }
       }
 
-      return await tx.orderSlip.update({ where: { id }, data: { status: 'Cancelled', updatedBy: user } });
+      const cancelledOrder = await tx.orderSlip.update({
+        where: { id },
+        data: { status: 'Cancelled', updatedBy: user },
+      });
+      return { ...cancelledOrder, deliveryManaged: managed };
     });
   }
 
   @Delete(':id')
-  async hardDeleteOrderSlip(@Param('id') id: string) {
-    return await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.orderSlip.findUnique({ where: { id }, include: { items: true } });
+  @UseGuards(FulfillmentAuthGuard)
+  async hardDeleteOrderSlip(
+    @Param('id') id: string,
+    @Req() request: FulfillmentRequest,
+  ) {
+    const company = String(request.headers['x-company']);
+    const user = request.user.username;
+    return await this.mutate(async (tx) => {
+      const existing = await tx.orderSlip.findFirst({
+        where: { id, company },
+        include: { items: true },
+      });
       if (!existing) throw new NotFoundException('Order Slip not found.');
+      const outbound =
+        existing.osNumber.startsWith('FO') ||
+        existing.osNumber.startsWith('PL');
+      const managed = outbound
+        ? await this.fulfillment.cancelDocument(
+            tx,
+            company,
+            user,
+            existing.osNumber.startsWith('FO') ? 'FO' : 'PL',
+            id,
+          )
+        : false;
 
       if (existing.osNumber.startsWith('OS')) {
-        const linkedFo = await tx.orderSlip.findFirst({ where: { referenceOs: existing.osNumber } });
-        if (linkedFo) throw new BadRequestException(`Cannot delete OS. A Final Order (${linkedFo.osNumber}) is tied to it. Delete the Final Order first.`);
+        const linkedFo = await tx.orderSlip.findFirst({
+          where: { company, referenceOs: existing.osNumber },
+        });
+        if (linkedFo)
+          throw new BadRequestException(
+            `Cannot delete OS. A Final Order (${linkedFo.osNumber}) is tied to it. Delete the Final Order first.`,
+          );
+        await this.fulfillment.cancelOrderSlip(tx, company, user, id);
       }
 
-      if (existing.osNumber.startsWith('FO') && existing.status !== 'Cancelled' && existing.status !== 'Returned') {
+      if (
+        !managed &&
+        existing.osNumber.startsWith('FO') &&
+        existing.status !== 'Cancelled' &&
+        existing.status !== 'Returned'
+      ) {
         for (const item of existing.items) {
-          await tx.product.update({ where: { id: item.productId }, data: { currentStock: { increment: item.requestedQty } } });
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.requestedQty } },
+          });
         }
       }
 

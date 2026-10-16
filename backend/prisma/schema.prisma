@@ -193,6 +193,8 @@ model Product {
   imageUrl      String?
   barcode       String?
   currentStock  Int       @default(0)
+  expiryControlled Boolean @default(false)
+  serialControlled Boolean @default(false)
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
 
@@ -226,6 +228,11 @@ model InventoryMovement {
 
   batchNumber    String?
   expirationDate DateTime?
+  serialNumber   String?
+  lotId          String?
+  lot            WarehouseLot? @relation(fields: [lotId], references: [id])
+  binId          String?
+  bin            WarehouseBin? @relation(fields: [binId], references: [id])
   
   warehouseId    Int?
   warehouse      Warehouse? @relation(fields: [warehouseId], references: [id])
@@ -340,6 +347,7 @@ model WarehouseStock {
   quantity    Int      @default(0)
   company     String
   lastUpdated DateTime @default(now())
+  lots        WarehouseLot[]
 
   @@unique([warehouseId, productId])
 }
@@ -737,11 +745,225 @@ model GoodsReceiptLine {
   notes String?
   inspectedBy String
   updatedAt DateTime @updatedAt
+  lots WarehouseLot[]
   @@unique([receiptId, shipmentLineId])
   @@index([shipmentLineId])
 }
 
 // --- NEW DOCUMENT REMINDERS MODEL ---
+model WarehouseBin {
+  id String @id @default(uuid())
+  company String
+  warehouseId String
+  code String
+  building String
+  floor String
+  zone String
+  rack String
+  shelf String
+  bin String
+  createdAt DateTime @default(now())
+  lots WarehouseLot[]
+  movements InventoryMovement[]
+  @@unique([company, code])
+  @@index([company, warehouseId])
+}
+
+model WarehouseLot {
+  id String @id @default(uuid())
+  company String
+  productId Int
+  warehouseId String
+  warehouseStockId String?
+  warehouseStock WarehouseStock? @relation(fields: [warehouseStockId], references: [id])
+  binId String?
+  bin WarehouseBin? @relation(fields: [binId], references: [id])
+  receiptLineId String?
+  receiptLine GoodsReceiptLine? @relation(fields: [receiptLineId], references: [id])
+  batchNumber String?
+  serialNumber String?
+  expirationDate DateTime?
+  status String @default("AVAILABLE")
+  quantity Int @default(0)
+  reservedQty Int @default(0)
+  version Int @default(0)
+  receivedAt DateTime @default(now())
+  createdBy String
+  reservations StockReservation[]
+  movements InventoryMovement[]
+  countLines CycleCountLine[]
+  picks DeliveryPick[]
+  @@unique([company, productId, serialNumber])
+  @@index([company, productId, warehouseId, status])
+}
+
+model CycleCount {
+  id String @id @default(uuid())
+  adjNumber String @unique
+  company String
+  status String @default("Draft")
+  notes String?
+  recountReason String?
+  createdBy String
+  submittedAt DateTime?
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lines CycleCountLine[]
+  @@index([company, status])
+}
+
+model CycleCountLine {
+  id String @id @default(uuid())
+  cycleCountId String
+  cycleCount CycleCount @relation(fields: [cycleCountId], references: [id], onDelete: Cascade)
+  lotId String
+  lot WarehouseLot @relation(fields: [lotId], references: [id])
+  expectedQty Int
+  expectedReservedQty Int
+  expectedVersion Int
+  countedQty Int?
+  countedBy String?
+  countedAt DateTime?
+  @@unique([cycleCountId, lotId])
+}
+
+model CustomerOrder {
+  id String @id @default(uuid())
+  soNumber String @unique
+  company String
+  customerId String
+  hospitalPoNumber String?
+  sourceOrderSlipId String? @unique
+  sourceOsNumber String?
+  status String @default("Draft")
+  notes String?
+  createdBy String
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  items CustomerOrderLine[]
+  deliveries Delivery[]
+  @@index([company, status])
+}
+
+model CustomerOrderLine {
+  id String @id @default(uuid())
+  orderId String
+  order CustomerOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId Int
+  quantity Int
+  deliveredQty Int @default(0)
+  reservations StockReservation[]
+  incoming IncomingAllocation[]
+  deliveryItems DeliveryItem[]
+  @@unique([orderId, productId])
+}
+
+model StockReservation {
+  id String @id @default(uuid())
+  orderLineId String
+  orderLine CustomerOrderLine @relation(fields: [orderLineId], references: [id])
+  lotId String
+  lot WarehouseLot @relation(fields: [lotId], references: [id])
+  quantity Int
+  dispatchedQty Int @default(0)
+  releasedQty Int @default(0)
+  createdAt DateTime @default(now())
+  picks DeliveryPick[]
+  @@index([orderLineId, lotId])
+}
+
+model IncomingAllocation {
+  id String @id @default(uuid())
+  orderLineId String
+  orderLine CustomerOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  shipmentLineId String
+  quantity Int
+  createdAt DateTime @default(now())
+  @@unique([orderLineId, shipmentLineId])
+  @@index([shipmentLineId])
+}
+
+model Delivery {
+  id String @id @default(uuid())
+  delNumber String @unique
+  company String
+  orderId String
+  order CustomerOrder @relation(fields: [orderId], references: [id])
+  status String @default("Draft")
+  scheduledAt DateTime?
+  carrier String?
+  trackingNumber String?
+  notes String?
+  dispatchedAt DateTime?
+  dispatchedBy String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  items DeliveryItem[]
+  sources DeliverySource[]
+  pods DeliveryPod[]
+  @@index([company, status])
+}
+
+model DeliveryItem {
+  id String @id @default(uuid())
+  deliveryId String
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  orderLineId String
+  orderLine CustomerOrderLine @relation(fields: [orderLineId], references: [id])
+  productId Int
+  quantity Int
+  deliveredQty Int @default(0)
+  picks DeliveryPick[]
+  @@unique([deliveryId, orderLineId])
+}
+
+model DeliveryPick {
+  id String @id @default(uuid())
+  deliveryItemId String
+  deliveryItem DeliveryItem @relation(fields: [deliveryItemId], references: [id], onDelete: Cascade)
+  reservationId String
+  reservation StockReservation @relation(fields: [reservationId], references: [id])
+  lotId String
+  lot WarehouseLot @relation(fields: [lotId], references: [id])
+  quantity Int
+  verifiedQty Int @default(0)
+  verifiedBy String?
+  verifiedAt DateTime?
+  @@unique([deliveryItemId, reservationId])
+}
+
+model DeliverySource {
+  id String @id @default(uuid())
+  company String
+  sourceType String
+  sourceId String
+  documentNumber String
+  cancelledAt DateTime?
+  deliveryId String
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+  @@unique([company, sourceType, sourceId])
+}
+
+model DeliveryPod {
+  id String @id @default(uuid())
+  deliveryId String
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+  recipient String
+  receivedAt DateTime
+  receiptUrl String? @db.Text
+  documentId Int?
+  notes String?
+  items Json
+  createdBy String
+  createdAt DateTime @default(now())
+  @@index([deliveryId])
+}
+
 model DocumentReminder {
   id              Int      @id @default(autoincrement())
   documentId      Int

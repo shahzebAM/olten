@@ -4,7 +4,6 @@ import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSens
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import ProductQRModule from './ProductQRModule';
 
 // --- DRAG AND DROP WRAPPER COMPONENT ---
 function SortableModuleCard({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
@@ -99,12 +98,14 @@ useEffect(() => {
     if (!isGateway || isDraggingGrid) return; 
 
     const activeIds: string[] = [];
-    if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders');
+    if (hasSales) activeIds.push('customers', 'create_os', 'sales_orders', 'customer_pos');
+    if (hasSales || hasInventory || hasWarehouses) activeIds.push('deliveries');
     if (hasPurchasing) activeIds.push('suppliers', 'purchase_orders'); 
     if (hasImportation) activeIds.push('importation');
     
     // ADD 'generate_qr' RIGHT HERE:
-    if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory', 'generate_qr'); 
+    if (hasProducts || hasInventory || hasWarehouses) activeIds.push('inventory', 'generate_qr');
+    if (hasInventory || hasWarehouses) activeIds.push('warehouse_ops');
     
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
@@ -345,6 +346,13 @@ useEffect(() => {
             </div><div className="ml-4 text-slate-300">{rightArrow}</div>
           </button>
         );
+      case 'warehouse_ops':
+      case 'customer_pos':
+      case 'deliveries': {
+        const title = id === 'warehouse_ops' ? 'Warehouse & Cycle Counts' : id === 'customer_pos' ? 'Hospital / Customer POs' : 'Delivery & Proof of Delivery';
+        const description = id === 'warehouse_ops' ? 'Bins, stock conditions, transfers and counts.' : id === 'customer_pos' ? 'Reserve stock and track partial fulfillment.' : 'FEFO picking, dispatch schedules and signed PODs.';
+        return <button onClick={() => onSelectModule(id)} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10"><div className="flex items-center gap-4 min-w-0 flex-1"><div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">{id === 'warehouse_ops' ? '▦' : id === 'customer_pos' ? '≡' : '→'}</div><div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800">{title}</h3><p className="text-xs font-medium text-slate-500 mt-0.5">{description}</p></div></div><div className="ml-4 text-slate-300">{rightArrow}</div></button>;
+      }
       case 'inventory':
         return (
           <button onClick={() => onSelectModule('inventory')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
