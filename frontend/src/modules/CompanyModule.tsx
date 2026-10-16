@@ -349,8 +349,8 @@ useEffect(() => {
       case 'warehouse_ops':
       case 'customer_pos':
       case 'deliveries': {
-        const title = id === 'warehouse_ops' ? 'Warehouse & Cycle Counts' : id === 'customer_pos' ? 'Hospital / Customer POs' : 'Delivery & Proof of Delivery';
-        const description = id === 'warehouse_ops' ? 'Bins, stock conditions, transfers and counts.' : id === 'customer_pos' ? 'Reserve stock and track partial fulfillment.' : 'FEFO picking, dispatch schedules and signed PODs.';
+        const title = id === 'warehouse_ops' ? 'Warehouse & Cycle Counts' : id === 'customer_pos' ? 'Customer Orders & Fulfillment' : 'Delivery & Proof of Delivery';
+        const description = id === 'warehouse_ops' ? 'Bins, stock conditions, transfers and counts.' : id === 'customer_pos' ? 'Track Order Slip reservations and partial deliveries.' : 'FEFO picking, dispatch schedules and signed PODs.';
         return <button onClick={() => onSelectModule(id)} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10"><div className="flex items-center gap-4 min-w-0 flex-1"><div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">{id === 'warehouse_ops' ? '▦' : id === 'customer_pos' ? '≡' : '→'}</div><div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800">{title}</h3><p className="text-xs font-medium text-slate-500 mt-0.5">{description}</p></div></div><div className="ml-4 text-slate-300">{rightArrow}</div></button>;
       }
       case 'inventory':

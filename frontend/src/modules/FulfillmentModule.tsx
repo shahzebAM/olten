@@ -52,6 +52,7 @@ type Order = {
   hospitalPoNumber: string;
   status: string;
   sourceOrderSlipId?: string;
+  sourceOsNumber?: string;
   items: OrderLine[];
 };
 type DeliveryItem = {
@@ -380,6 +381,7 @@ export default function FulfillmentModule({
   canApprove,
   canWarehouse,
   canSales,
+  onCreateOrderSlip,
   onBack,
 }: {
   selectedCompany: string;
@@ -388,6 +390,7 @@ export default function FulfillmentModule({
   canApprove: boolean;
   canWarehouse: boolean;
   canSales: boolean;
+  onCreateOrderSlip?: () => void;
   onBack: () => void;
 }) {
   const [view, setView] = useState<View>(initialView);
@@ -413,8 +416,6 @@ export default function FulfillmentModule({
   const [countScan, setCountScan] = useState('');
   const [pickScan, setPickScan] = useState('');
   const [incomingLineId, setIncomingLineId] = useState('');
-  const rowKey = useRef(1);
-  const [orderRows, setOrderRows] = useState([{ key: 0 }]);
   const api = useCallback(
     async <T,>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> => {
       const isFile = body instanceof FormData;
@@ -541,7 +542,7 @@ export default function FulfillmentModule({
             <button type="button" className="mb-3 text-sm font-semibold text-cyan-700" onClick={onBack}>
               ← Workspace
             </button>
-            <h1 className="text-2xl font-bold">Warehouse, Customer POs & Delivery</h1>
+            <h1 className="text-2xl font-bold">Warehouse, Customer Orders & Delivery</h1>
             <p className="mt-1 text-sm text-slate-500">{selectedCompany} · Stock is reserved at approval and issued at dispatch.</p>
           </div>
           <button
@@ -562,7 +563,7 @@ export default function FulfillmentModule({
           {(
             [
               ['warehouse', 'Warehouse & Cycle Counts', canWarehouse],
-              ['orders', 'Hospital / Customer POs', canSales],
+              ['orders', 'Customer Orders & Fulfillment', canSales],
               ['delivery', 'Delivery & POD', canSales || canWarehouse],
             ] as const
           )
@@ -1225,83 +1226,28 @@ export default function FulfillmentModule({
           )}
           {view === 'orders' && canSales && (
             <>
-              <details className={panel}>
-                <summary className="cursor-pointer font-bold">Create hospital / customer PO</summary>
-                <form
-                  className="mt-4 space-y-4"
-                  onSubmit={(event) =>
-                    submit(
-                      event,
-                      (values, form) =>
-                        void mutate(
-                          '/orders',
-                          {
-                            customerId: textOf(values, 'customerId'),
-                            hospitalPoNumber: textOf(values, 'hospitalPoNumber'),
-                            notes: textOf(values, 'notes'),
-                            items: orderRows.map((row) => ({
-                              productId: numberOf(values, `product-${row.key}`),
-                              quantity: numberOf(values, `quantity-${row.key}`),
-                            })),
-                          },
-                          'Customer PO created. Approve / reserve to allocate available stock.',
-                          'POST',
-                          () => {
-                            form.reset();
-                            setOrderRows([{ key: rowKey.current++ }]);
-                          },
-                        ),
-                    )
-                  }
-                >
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <SearchChoice
-                      options={data.customers}
-                      name="customerId"
-                      label="Hospital / customer"
-                      placeholder="Search customer name"
-                      optionLabel={(customer) => customer.name}
-                    />
-                    <Field label="Customer PO number">
-                      <input required name="hospitalPoNumber" className={input} maxLength={150} />
-                    </Field>
-                    <Field label="Notes">
-                      <input name="notes" className={input} maxLength={2000} />
-                    </Field>
+              <section className={panel}>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="max-w-3xl">
+                    <h2 className="font-bold">One Order Slip, one fulfillment record</h2>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Create the order in Create Order Slip, use Approve & reserve, then generate your FO/P.O. or Packing List (PL).
+                      Track reservations, partial deliveries and POD against that same order here.
+                    </p>
                   </div>
-                  {orderRows.map((row) => (
-                    <div
-                      key={row.key}
-                      className="grid items-end gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_160px_auto]"
-                    >
-                      <ProductChoice products={data.products} name={`product-${row.key}`} />
-                      <Field label="Ordered quantity">
-                        <input required type="number" name={`quantity-${row.key}`} min="1" step="1" defaultValue="1" className={input} />
-                      </Field>
-                      <button
-                        type="button"
-                        className={secondary}
-                        disabled={orderRows.length === 1}
-                        onClick={() => setOrderRows(orderRows.filter((item) => item.key !== row.key))}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                  <div className="flex gap-2">
-                    <button type="button" className={secondary} onClick={() => setOrderRows([...orderRows, { key: rowKey.current++ }])}>
-                      Add product
+                  {onCreateOrderSlip && (
+                    <button type="button" className={primary} onClick={onCreateOrderSlip}>
+                      Create Order Slip
                     </button>
-                    <button className={primary}>Create customer PO</button>
-                  </div>
-                </form>
-              </details>
+                  )}
+                </div>
+              </section>
               <p className="text-sm text-slate-500">
                 Order slips enter this tracker when approved and reserved in Create Order Slip or the O.S. Ledger. Incoming quantities are
                 planned supply and become reservable only after receiving and QC.
               </p>
               <section className={panel}>
-                <h2 className="font-bold">Customer PO tracker</h2>
+                <h2 className="font-bold">Customer order tracker</h2>
                 <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_2fr]">
                   <div className="max-h-[36rem] space-y-2 overflow-auto">
                     {data.orders.length ? (
@@ -1317,13 +1263,14 @@ export default function FulfillmentModule({
                         >
                           <p className="text-sm font-bold">{item.soNumber}</p>
                           <p className="mb-2 text-xs text-slate-500">
-                            {item.customer?.name} · PO {item.hospitalPoNumber || 'Order slip'}
+                            {item.customer?.name}{item.sourceOsNumber ? ` · ${item.sourceOsNumber}` : ''}
+                            {item.hospitalPoNumber ? ` · PO reference ${item.hospitalPoNumber}` : ''}
                           </p>
                           <Status value={item.status} />
                         </button>
                       ))
                     ) : (
-                      <Empty>No customer POs yet.</Empty>
+                      <Empty>No customer orders yet. Approve & reserve an Order Slip to begin.</Empty>
                     )}
                   </div>
                   {order ? (
@@ -1333,8 +1280,8 @@ export default function FulfillmentModule({
                           {order.soNumber} · {order.customer?.name}
                         </h3>
                         <p className="mt-1 text-sm text-slate-500">
-                          Customer PO {order.hospitalPoNumber || '—'}
-                          {order.sourceOrderSlipId ? ' · Linked to an approved order slip' : ''}
+                          PO reference {order.hospitalPoNumber || '—'}
+                          {order.sourceOsNumber ? ` · ${order.sourceOsNumber}` : order.sourceOrderSlipId ? ' · Linked to an approved order slip' : ''}
                         </p>
                       </div>
                       <div className="overflow-x-auto">
@@ -1384,15 +1331,15 @@ export default function FulfillmentModule({
                               type="button"
                               className={secondary}
                               onClick={() => {
-                                if (window.confirm('Cancel this customer PO and release its undelivered reservations?'))
+                                if (window.confirm('Cancel this customer order and release its undelivered reservations?'))
                                   void mutate(
                                     `/orders/${order.id}/cancel`,
                                     {},
-                                    'Customer PO cancelled and eligible reservations released.',
+                                    'Customer order cancelled and eligible reservations released.',
                                   );
                               }}
                             >
-                              Cancel PO & release stock
+                              Cancel order & release stock
                             </button>
                           </div>
                           <details className="rounded-lg border border-slate-200 p-3">
@@ -1415,7 +1362,7 @@ export default function FulfillmentModule({
                                 )
                               }
                             >
-                              <Field label="Customer PO item">
+                              <Field label="Customer order item">
                                 <select
                                   required
                                   className={input}
@@ -1518,7 +1465,7 @@ export default function FulfillmentModule({
                       )}
                     </div>
                   ) : (
-                    <Empty>Select a customer PO to inspect allocations and balances.</Empty>
+                    <Empty>Select a customer order to inspect allocations and balances.</Empty>
                   )}
                 </div>
               </section>
@@ -1529,9 +1476,9 @@ export default function FulfillmentModule({
               <details className={panel}>
                 <summary className="cursor-pointer font-bold">Create a partial delivery from reserved stock</summary>
                 <div className="mt-4 space-y-4">
-                  <Field label="Customer PO">
+                  <Field label="Customer order">
                     <select value={orderId} className={input} onChange={(event) => setOrderId(event.target.value)}>
-                      <option value="">Select customer PO</option>
+                      <option value="">Select customer order</option>
                       {selectableOrders.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.soNumber} · {item.customer?.name} · {item.hospitalPoNumber}
@@ -1584,7 +1531,7 @@ export default function FulfillmentModule({
                               {selectedCompany} · {delivery.order?.customer?.name} · {delivery.order?.soNumber}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {(delivery.sources || []).map((source) => source.documentNumber).join(' · ') || 'Customer PO delivery'} ·{' '}
+                              {(delivery.sources || []).map((source) => source.documentNumber).join(' · ') || 'Customer order delivery'} ·{' '}
                               {delivery.carrier || 'Carrier pending'} · {dispatchTime(delivery.scheduledAt)}
                             </p>
                           </div>
@@ -1719,7 +1666,7 @@ export default function FulfillmentModule({
                               onClick={() => {
                                 if (
                                   window.confirm(
-                                    'Cancel this unissued delivery? Its customer PO reservations remain available for a later delivery.',
+                                    'Cancel this unissued delivery? Its customer order reservations remain available for a later delivery.',
                                   )
                                 )
                                   void mutate(`/deliveries/${delivery.id}/cancel`, {}, 'Draft delivery cancelled.');
