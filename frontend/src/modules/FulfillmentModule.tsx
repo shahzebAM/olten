@@ -188,24 +188,31 @@ function Status({ value }: { value: string }) {
 function Empty({ children }: { children: ReactNode }) {
   return <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">{children}</p>;
 }
-function ProductChoice({
-  products,
-  name = 'productId',
+function SearchChoice<T extends { id: string | number }>({
+  options,
+  name,
+  label,
+  placeholder,
+  optionLabel,
   onSelect,
 }: {
-  products: Product[];
-  name?: string;
-  onSelect?: (product?: Product) => void;
+  options: T[];
+  name: string;
+  label: string;
+  placeholder: string;
+  optionLabel: (option: T) => string;
+  onSelect?: (option?: T) => void;
 }) {
   const id = useId();
   const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<T['id']>();
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
-  const selected = products.find((product) => labelProduct(product) === query);
-  const matches = products.filter((product) => labelProduct(product).toLowerCase().includes(query.toLowerCase())).slice(0, 30);
+  const selected = options.find((option) => option.id === selectedId);
+  const matches = options.filter((option) => optionLabel(option).toLowerCase().includes(query.trim().toLowerCase())).slice(0, 30);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    ref.current?.setCustomValidity(selected ? '' : 'Select a product from the search results.');
+    ref.current?.setCustomValidity(selected ? '' : 'Select an option from the search results.');
   }, [selected]);
   useEffect(() => {
     if (open) document.getElementById(`${id}-${highlighted}`)?.scrollIntoView({ block: 'nearest' });
@@ -214,20 +221,23 @@ function ProductChoice({
     const form = ref.current?.form;
     const reset = () => {
       setQuery('');
+      setSelectedId(undefined);
+      setHighlighted(0);
       setOpen(false);
     };
     form?.addEventListener('reset', reset);
     return () => form?.removeEventListener('reset', reset);
   }, []);
-  function choose(product: Product) {
-    setQuery(labelProduct(product));
+  function choose(option: T) {
+    setQuery(optionLabel(option));
+    setSelectedId(option.id);
     setHighlighted(0);
     setOpen(false);
-    onSelect?.(product);
+    onSelect?.(option);
   }
   return (
     <div className="relative">
-      <Field label="Product">
+      <Field label={label}>
         <input
           ref={ref}
           required
@@ -238,10 +248,11 @@ function ProductChoice({
           aria-activedescendant={open && matches[highlighted] ? `${id}-${highlighted}` : undefined}
           aria-autocomplete="list"
           value={query}
-          placeholder="Search SKU or product name"
+          placeholder={placeholder}
           autoComplete="off"
           onChange={(event) => {
             setQuery(event.target.value);
+            setSelectedId(undefined);
             setHighlighted(0);
             setOpen(true);
             onSelect?.(undefined);
@@ -266,36 +277,56 @@ function ProductChoice({
           }}
         />
       </Field>
-      <input type="hidden" name={name} value={selected?.id || ''} />
+      <input type="hidden" name={name} value={selected?.id ?? ''} />
       {open && (
         <div
           id={id}
           role="listbox"
-          aria-label="Matching products"
+          aria-label={`${label} search results`}
           className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-300 bg-white shadow-lg"
         >
           {matches.length ? (
-            matches.map((product, index) => (
+            matches.map((option, index) => (
               <button
-                key={product.id}
+                key={option.id}
                 id={`${id}-${index}`}
                 type="button"
                 role="option"
                 tabIndex={-1}
                 aria-selected={index === highlighted}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(product)}
+                onClick={() => choose(option)}
                 className={`block w-full px-3 py-2 text-left text-sm hover:bg-cyan-50 ${index === highlighted ? 'bg-cyan-50' : ''}`}
               >
-                {labelProduct(product)}
+                {optionLabel(option)}
               </button>
             ))
           ) : (
-            <p className="px-3 py-2 text-sm text-slate-500">No products found.</p>
+            <p className="px-3 py-2 text-sm text-slate-500">No matches found.</p>
           )}
         </div>
       )}
     </div>
+  );
+}
+function ProductChoice({
+  products,
+  name = 'productId',
+  onSelect,
+}: {
+  products: Product[];
+  name?: string;
+  onSelect?: (product?: Product) => void;
+}) {
+  return (
+    <SearchChoice
+      options={products}
+      name={name}
+      label="Product"
+      placeholder="Search SKU or product name"
+      optionLabel={labelProduct}
+      onSelect={onSelect}
+    />
   );
 }
 function FacilityFields({ data, prefix = '', initial = 'MASTER' }: { data: Overview; prefix?: string; initial?: string }) {
@@ -1224,16 +1255,13 @@ export default function FulfillmentModule({
                   }
                 >
                   <div className="grid gap-3 sm:grid-cols-3">
-                    <Field label="Hospital / customer">
-                      <select required name="customerId" className={input}>
-                        <option value="">Select customer</option>
-                        {data.customers.map((customer) => (
-                          <option key={customer.id} value={customer.id}>
-                            {customer.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
+                    <SearchChoice
+                      options={data.customers}
+                      name="customerId"
+                      label="Hospital / customer"
+                      placeholder="Search customer name"
+                      optionLabel={(customer) => customer.name}
+                    />
                     <Field label="Customer PO number">
                       <input required name="hospitalPoNumber" className={input} maxLength={150} />
                     </Field>
