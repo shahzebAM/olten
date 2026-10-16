@@ -55,12 +55,33 @@ export class EmployeesController {
     return await this.employeesService.deleteAttendance(Number(id));
   }
 
-  // ==========================================
+// ==========================================
   // PAYROLLS
   // ==========================================
   @Get('employees/payroll/all')
-  async getPayrolls() {
-    return await this.employeesService.getPayrolls();
+  async getPayrolls(
+    @Query('company') company?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateType') dateType?: 'payroll_date' | 'cutoff',
+    @Query('search') search?: string,
+    @Query('declaredOnly') declaredOnly?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    if (!company && !startDate && !endDate && !search && !declaredOnly && !page && !limit) {
+      return await this.employeesService.getPayrolls();
+    }
+    return await this.employeesService.getPayrolls({
+      company,
+      startDate,
+      endDate,
+      dateType,
+      search,
+      declaredOnly,
+      page,
+      limit,
+    });
   }
 
   @Post('employees/payroll')

@@ -1,6 +1,9 @@
 import { calculateAttendanceMetrics } from './attendance-calculator';
 import { calculatePhilippinePayrollTax } from './employees.service';
-
+import {
+  filterAndAggregatePayrollRecords,
+  toManilaDateYMD,
+} from './employees.service';
 describe('Attendance & Lunch Deduction Calculator', () => {
   it('Prompt Test Case: Oct 1, 2026 (09:02 AM to 11:56 AM) -> 2h 54m, 0m lunch, 2.90 hrs', () => {
     const res = calculateAttendanceMetrics({
@@ -32,6 +35,197 @@ describe('Attendance & Lunch Deduction Calculator', () => {
     expect(res.regularFormatted).toBe('8h');
     expect(res.decimalHours).toBe('8.00');
   });
+
+  describe('Tax Reports Module — Date Filter, Employee Search & Dynamic Total Collected', () => {
+  const mockEmployees = [
+    {
+      id: 1,
+      employeeId: 'EMP-001',
+      firstName: 'Zerwa',
+      middleName: 'Isabel',
+      lastName: 'Mughal',
+      company: 'Surgicom',
+    },
+    {
+      id: 2,
+      employeeId: 'EMP-002',
+      firstName: 'Juan',
+      middleName: 'Santos',
+      lastName: 'Dela Cruz',
+      company: 'Surgicom',
+    },
+    {
+      id: 3,
+      employeeId: 'EMP-003',
+      firstName: 'Maria',
+      middleName: null,
+      lastName: 'Clara',
+      company: 'OtherCorp',
+    },
+  ];
+
+  const mockPayrolls = [
+    {
+      id: 101,
+      employeeId: 1,
+      daysWorked: 13,
+      totalHours: 104,
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 750,
+      philhealthDeduct: 0,
+      pagIbigDeduct: 0,
+      tax: 2254.10,
+      netPay: 20995.90,
+      // 2026-10-05 00:30 AM in Asia/Manila (2026-10-04T16:30:00Z in UTC)
+      createdAt: '2026-10-04T16:30:00.000Z',
+      cutoffStart: '2026-10-01',
+      cutoffEnd: '2026-10-15',
+    },
+    {
+      id: 102,
+      employeeId: 1,
+      daysWorked: 13,
+      totalHours: 104,
+      grossPay: 24250,
+      sssDeduction: 1000,
+      sssProvident: 750,
+      philhealthDeduct: 0,
+      pagIbigDeduct: 0,
+      tax: 2104.10,
+      netPay: 20395.90,
+      // 2026-10-20 02:00 PM in Asia/Manila
+      createdAt: '2026-10-20T06:00:00.000Z',
+      cutoffStart: '2026-10-16',
+      cutoffEnd: '2026-10-31',
+    },
+    {
+      id: 103,
+      employeeId: 2,
+      daysWorked: 13,
+      totalHours: 104,
+      grossPay: 25000,
+      sssDeduction: 1000,
+      sssProvident: 0,
+      philhealthDeduct: 0,
+      pagIbigDeduct: 0,
+      tax: 2404.10,
+      netPay: 21595.90,
+      createdAt: '2026-10-10T04:00:00.000Z',
+      cutoffStart: '2026-10-01',
+      cutoffEnd: '2026-10-15',
+    },
+    {
+      id: 104,
+      employeeId: 3, // Unauthorized company (OtherCorp)
+      daysWorked: 13,
+      totalHours: 104,
+      grossPay: 30000,
+      sssDeduction: 1000,
+      sssProvident: 0,
+      philhealthDeduct: 0,
+      pagIbigDeduct: 0,
+      tax: 3404.10,
+      netPay: 25595.90,
+      createdAt: '2026-10-10T04:00:00.000Z',
+    },
+  ];
+
+  it('1 & 12. No filter + Security: Displays all authorized company records and blocks unauthorized company records', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(3);
+    expect(res.data.every(r => r.employeeId !== 3)).toBe(true);
+    // 2254.10 + 2104.10 + 2404.10 = 6762.30
+    expect(res.totalCollected).toBe(6762.30);
+  });
+
+  it('2 & 10. Specific date & Asia/Manila timezone boundary: Matches Oct 5 Manila time even when UTC is Oct 4', () => {
+    expect(toManilaDateYMD('2026-10-04T16:30:00.000Z')).toBe('2026-10-05');
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      startDate: '2026-10-05',
+      endDate: '2026-10-05',
+      dateType: 'payroll_date',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(1);
+    expect(res.data[0].id).toBe(101);
+    expect(res.totalCollected).toBe(2254.10);
+  });
+
+  it('3. Date range: Displays records within Oct 1 to Oct 15, 2026', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      startDate: '2026-10-01',
+      endDate: '2026-10-15',
+      dateType: 'payroll_date',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(2); // IDs 103 and 101
+    expect(res.totalCollected).toBe(4658.20); // 2254.10 + 2404.10
+  });
+
+  it('4, 6 & 9. Employee search + Multiple records + Dynamic Total Collected: Searching "  zerwa  " returns both Zerwa records totaling ₱4,358.20', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      search: '  zerwa  ',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(2);
+    expect(res.totalCollected).toBe(4358.20); // 2254.10 + 2104.10
+  });
+
+  it('5 & 9. Combined filtering: Oct 1 to Oct 15, 2026 + search "ZERWA" returns only record #101 with Total Collected = ₱2,254.10', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      startDate: '2026-10-01',
+      endDate: '2026-10-15',
+      search: 'ZERWA',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(1);
+    expect(res.data[0].id).toBe(101);
+    expect(res.totalCollected).toBe(2254.10);
+  });
+
+  it('7. No results: Returns empty array and 0.00 total when no records match', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      search: 'NON_EXISTENT_EMPLOYEE',
+      declaredOnly: true,
+    });
+    expect(res.totalCount).toBe(0);
+    expect(res.data).toEqual([]);
+    expect(res.totalCollected).toBe(0);
+  });
+
+  it('11. Pagination: Preserves accurate Total Collected across all matching pages even when limit=1', () => {
+    const res = filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+      company: 'Surgicom',
+      search: 'Isabel', // middle name search for Zerwa Isabel Mughal
+      declaredOnly: true,
+      page: 1,
+      limit: 1,
+    });
+    expect(res.data.length).toBe(1);
+    expect(res.totalCount).toBe(2);
+    expect(res.totalPages).toBe(2);
+    expect(res.totalCollected).toBe(4358.20);
+  });
+
+  it('Rejects invalid date ranges where Date From is later than Date To', () => {
+    expect(() =>
+      filterAndAggregatePayrollRecords(mockPayrolls, mockEmployees, {
+        company: 'Surgicom',
+        startDate: '2026-10-20',
+        endDate: '2026-10-01',
+      }),
+    ).toThrow('Invalid date range: Date From cannot be later than Date To.');
+  });
+});
 
   it('Half-day afternoon (clocks in at 01:00 PM after lunch ends) deducts 0m lunch -> 4h (4.00 hrs)', () => {
     const res = calculateAttendanceMetrics({

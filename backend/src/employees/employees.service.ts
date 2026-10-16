@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -77,6 +77,188 @@ export interface PayrollTaxResult {
 export const toMoneyCents = (val: any): number => {
   const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
   return Number.isFinite(num) ? Math.round(num * 100) : 0;
+};
+
+// ==========================================
+// TAX REPORT FILTERING & TIMEZONE HELPERS
+// ==========================================
+
+export interface PayrollFilterQuery {
+  company?: string;
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;   // YYYY-MM-DD
+  dateType?: 'payroll_date' | 'cutoff';
+  search?: string;
+  declaredOnly?: boolean | string;
+  page?: number | string;
+  limit?: number | string;
+}
+
+/**
+ * Converts a Date or ISO timestamp into a YYYY-MM-DD string in Philippine Time (Asia/Manila, UTC+8).
+ */
+export const toManilaDateYMD = (dateInput?: Date | string | null): string => {
+  if (!dateInput) return '';
+  if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim())) {
+    return dateInput.trim();
+  }
+  const parsed = new Date(dateInput);
+  if (isNaN(parsed.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed);
+};
+
+export const matchesEmployeeSearch = (emp: any, rawSearch?: string): boolean => {
+  if (!rawSearch || !rawSearch.trim()) return true;
+  if (!emp) return false;
+  const query = rawSearch.trim().toLowerCase().replace(/\s+/g, ' ');
+  const first = (emp.firstName || '').trim().toLowerCase();
+  const middle = (emp.middleName || '').trim().toLowerCase();
+  const last = (emp.lastName || '').trim().toLowerCase();
+  const empCode = String(emp.employeeId || '').trim().toLowerCase();
+  const sysId = String(emp.id || '').trim().toLowerCase();
+
+  const fullFML = [first, middle, last].filter(Boolean).join(' ');
+  const fullFL = [first, last].filter(Boolean).join(' ');
+  const fullLF = [last, first].filter(Boolean).join(', ');
+  const fullLFM = [last, first, middle].filter(Boolean).join(' ');
+
+  return (
+    first.includes(query) ||
+    middle.includes(query) ||
+    last.includes(query) ||
+    empCode.includes(query) ||
+    sysId === query ||
+    fullFML.includes(query) ||
+    fullFL.includes(query) ||
+    fullLF.includes(query) ||
+    fullLFM.includes(query)
+  );
+};
+
+export const filterAndAggregatePayrollRecords = (
+  payrolls: any[],
+  employees: any[],
+  query: PayrollFilterQuery = {},
+  taxBrackets: TaxBracket[] = BIR_SEMI_MONTHLY_TAX_BRACKETS,
+) => {
+  const startDate = query.startDate?.trim() || '';
+  const endDate = query.endDate?.trim() || '';
+  const dateType = query.dateType === 'cutoff' ? 'cutoff' : 'payroll_date';
+  const declaredOnly =
+    query.declaredOnly === true || String(query.declaredOnly).toLowerCase() === 'true';
+
+  if (startDate && endDate && startDate > endDate) {
+    throw new BadRequestException('Invalid date range: Date From cannot be later than Date To.');
+  }
+
+  const empMap = new Map<number, any>(employees.map(e => [Number(e.id), e]));
+
+  const matched = payrolls.filter(pr => {
+    const emp = empMap.get(Number(pr.employeeId));
+
+    // 1. Strict company / workspace isolation
+    if (query.company) {
+      if (!emp || emp.company !== query.company) return false;
+    }
+
+    // 2. Declared tax filter (for Tax Computation Report)
+    if (declaredOnly && !(Number(pr.tax || 0) > 0)) {
+      return false;
+    }
+
+    // 3. Employee name / ID search
+    if (!matchesEmployeeSearch(emp, query.search)) {
+      return false;
+    }
+
+    // 4. Inclusive date-range filter in Asia/Manila timezone
+    if (startDate || endDate) {
+      const hasExplicitCutoff = Boolean(pr.cutoffStart && pr.cutoffEnd);
+
+      if (dateType === 'cutoff' && hasExplicitCutoff) {
+        const cStart = toManilaDateYMD(pr.cutoffStart);
+        const cEnd = toManilaDateYMD(pr.cutoffEnd);
+        if (startDate && cEnd < startDate) return false;
+        if (endDate && cStart > endDate) return false;
+      } else {
+        const recordManilaDate = toManilaDateYMD(pr.createdAt);
+        if (!recordManilaDate) return false;
+        if (startDate && recordManilaDate < startDate) return false;
+        if (endDate && recordManilaDate > endDate) return false;
+      }
+    }
+
+    return true;
+  });
+
+  // Sort chronologically (newest first, deterministic tie-breaker by id)
+  matched.sort((a, b) => {
+    const tA = new Date(a.createdAt || 0).getTime();
+    const tB = new Date(b.createdAt || 0).getTime();
+    return tB !== tA ? tB - tA : Number(b.id) - Number(a.id);
+  });
+
+  // Calculate Total Collected across ALL matching records (even across pagination pages)
+  let totalCollectedCents = 0;
+  let totalTaxableIncomeCents = 0;
+
+  const enriched = matched.map(pr => {
+    const emp = empMap.get(Number(pr.employeeId));
+    const taxCalc = calculatePhilippinePayrollTax({
+      grossPay: pr.grossPay,
+      sssDeduction: pr.sssDeduction,
+      philhealthDeduct: pr.philhealthDeduct,
+      pagIbigDeduct: pr.pagIbigDeduct,
+      sssProvident: pr.sssProvident || 0,
+      isSssProvidentMandatory: true,
+      isDeclared: Number(pr.tax || 0) > 0,
+      brackets: taxBrackets,
+    });
+
+    // Preserve stored payroll tax if already finalized; also expose bracket breakdown
+    const effectiveTaxCents = toMoneyCents(pr.tax ?? taxCalc.withholdingTax);
+    totalCollectedCents += effectiveTaxCents;
+    totalTaxableIncomeCents += toMoneyCents(taxCalc.taxableIncome);
+
+    return {
+      ...pr,
+      payrollDateManila: toManilaDateYMD(pr.createdAt),
+      cutoffStart: pr.cutoffStart || null,
+      cutoffEnd: pr.cutoffEnd || null,
+      taxBreakdown: {
+        taxableIncome: taxCalc.taxableIncome,
+        bracketMin: taxCalc.bracketMin,
+        taxBase: taxCalc.taxBase,
+        rate: taxCalc.rate,
+        taxOnExcess: fromMoneyCents(
+          Math.max(0, effectiveTaxCents - toMoneyCents(taxCalc.minTax)),
+        ),
+        minTax: taxCalc.minTax,
+        withholdingTax: fromMoneyCents(effectiveTaxCents),
+      },
+    };
+  });
+
+  const page = Math.max(1, parseInt(String(query.page || '1'), 10) || 1);
+  const limit = Math.max(1, parseInt(String(query.limit || '5000'), 10) || 5000);
+  const totalCount = enriched.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+  const paginatedData = enriched.slice((page - 1) * limit, page * limit);
+
+  return {
+    data: paginatedData,
+    totalCount,
+    totalCollected: fromMoneyCents(totalCollectedCents),
+    totalTaxableIncome: fromMoneyCents(totalTaxableIncomeCents),
+    page,
+    limit,
+    totalPages,
+  };
 };
 
 export const fromMoneyCents = (cents: number): number => {
@@ -596,8 +778,16 @@ export class EmployeesService {
 // ==========================================
   // PAYROLLS
   // ==========================================
-  async getPayrolls() {
-    return await prisma.payroll.findMany(); 
+// ==========================================
+  // PAYROLLS
+  // ==========================================
+  async getPayrolls(query?: PayrollFilterQuery) {
+    const allPayrolls = await prisma.payroll.findMany();
+    if (!query || Object.keys(query).length === 0) {
+      return allPayrolls;
+    }
+    const employees = await prisma.employee.findMany();
+    return filterAndAggregatePayrollRecords(allPayrolls, employees, query);
   }
 
   async createPayroll(data: any) {
