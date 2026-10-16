@@ -1,24 +1,46 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import type { Attendance, Settings } from '@prisma/client';
+import type { AttendanceCalcResult } from './attendance-calculator';
+import {
+  aggregateAttendanceRecords,
+  attendanceSessionKey,
+  calculateAttendanceMetrics,
+  calculateAttendancePayroll,
+  parseTimeToMinutes,
+  toAttendanceDateYMD,
+} from './attendance-calculator';
+export {
+  calculateAttendanceMetrics,
+  formatMinutesToHM,
+  getIntervalOverlapMinutes,
+  parseTimeToMinutes,
+} from './attendance-calculator';
+export type {
+  AttendanceCalcOptions,
+  AttendanceCalcResult,
+} from './attendance-calculator';
 
 const prisma = new PrismaClient();
 
-// ==========================================
-// ATTENDANCE & LUNCH OVERLAP CALCULATOR
-// ==========================================
+type AttendanceWriteInput = Partial<
+  Omit<Attendance, 'id' | 'createdAt' | 'employeeId'>
+> & {
+  employeeId?: number | string;
+  id?: number;
+};
 
-export interface AttendanceCalcOptions {
-  timeIn: string;
-  timeOut: string;
-  shiftStart?: string;                  // default "08:00"
-  shiftEnd?: string;                    // default "17:00"
-  lunchStart?: string;                  // default "12:00"
-  lunchEnd?: string;                    // default "13:00"
-  breakOut?: string | null;             // optional actual break-out punch "HH:MM"
-  breakIn?: string | null;              // optional actual break-in punch "HH:MM"
-  lunchOverrideMinutes?: number | null; // optional approved manual override in minutes
-  maxRegularMinutes?: number;           // default 480 (8 hours)
-}
+type PayrollCutoffSource = {
+  cutoffStart?: string | Date | null;
+  cutoffEnd?: string | Date | null;
+  attendanceSummary?: { cutoffStart?: string; cutoffEnd?: string } | null;
+};
+
+const getPayrollCutoff = (payroll: PayrollCutoffSource) => ({
+  cutoffStart:
+    payroll.cutoffStart ?? payroll.attendanceSummary?.cutoffStart ?? null,
+  cutoffEnd: payroll.cutoffEnd ?? payroll.attendanceSummary?.cutoffEnd ?? null,
+});
 
 // ==========================================
 // PHILIPPINE BIR WITHHOLDING TAX CALCULATOR
@@ -178,11 +200,14 @@ export const filterAndAggregatePayrollRecords = (
 
     // 4. Inclusive date-range filter in Asia/Manila timezone
     if (startDate || endDate) {
-      const hasExplicitCutoff = Boolean(pr.cutoffStart && pr.cutoffEnd);
+      const { cutoffStart, cutoffEnd } = getPayrollCutoff(
+        pr as PayrollCutoffSource,
+      );
+      const hasExplicitCutoff = Boolean(cutoffStart && cutoffEnd);
 
       if (dateType === 'cutoff' && hasExplicitCutoff) {
-        const cStart = toManilaDateYMD(pr.cutoffStart);
-        const cEnd = toManilaDateYMD(pr.cutoffEnd);
+        const cStart = toManilaDateYMD(cutoffStart);
+        const cEnd = toManilaDateYMD(cutoffEnd);
         if (startDate && cEnd < startDate) return false;
         if (endDate && cStart > endDate) return false;
       } else {
@@ -207,7 +232,7 @@ export const filterAndAggregatePayrollRecords = (
   let totalCollectedCents = 0;
   let totalTaxableIncomeCents = 0;
 
-  const enriched = matched.map(pr => {
+  const enriched = matched.map((pr) => {
     const emp = empMap.get(Number(pr.employeeId));
     const taxCalc = calculatePhilippinePayrollTax({
       grossPay: pr.grossPay,
@@ -228,8 +253,7 @@ export const filterAndAggregatePayrollRecords = (
     return {
       ...pr,
       payrollDateManila: toManilaDateYMD(pr.createdAt),
-      cutoffStart: pr.cutoffStart || null,
-      cutoffEnd: pr.cutoffEnd || null,
+      ...getPayrollCutoff(pr as PayrollCutoffSource),
       taxBreakdown: {
         taxableIncome: taxCalc.taxableIncome,
         bracketMin: taxCalc.bracketMin,
@@ -335,216 +359,6 @@ export const calculatePhilippinePayrollTax = (
   };
 };
 
-export interface AttendanceCalcResult {
-  grossMinutes: number;
-  lunchDeductionMinutes: number;
-  netMinutes: number;
-  regularMinutes: number;
-  otMinutes: number;
-  earlyOtMinutes: number;
-  lateOtMinutes: number;
-  lateMinutes: number;
-  undertimeMinutes: number;
-  reg: number;
-  ot: number;
-  earlyOt: number;
-  lateOt: number;
-  total: number;
-  decimalHours: string;     // e.g. "2.90"
-  regularFormatted: string; // e.g. "2h 54m"
-  actualFormatted: string;  // e.g. "2h 54m"
-}
-
-export const parseTimeToMinutes = (timeStr?: string | null): number | null => {
-  if (!timeStr || typeof timeStr !== 'string' || !timeStr.includes(':')) return null;
-  const clean = timeStr.trim().toUpperCase();
-  const match = clean.match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  const period = match[3]?.toUpperCase();
-  if (isNaN(hours) || isNaN(minutes) || minutes < 0 || minutes > 59) return null;
-  if (period) {
-    if (period === 'PM' && hours < 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
-  }
-  return hours * 60 + minutes;
-};
-
-export const formatMinutesToHM = (totalMinutes: number): string => {
-  const safeMins = Math.max(0, Math.round(totalMinutes));
-  if (safeMins === 0) return '0m';
-  const h = Math.floor(safeMins / 60);
-  const m = safeMins % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
-};
-
-export const getIntervalOverlapMinutes = (
-  startA: number,
-  endA: number,
-  startB: number,
-  endB: number,
-): number => {
-  return Math.max(0, Math.min(endA, endB) - Math.max(startA, startB));
-};
-
-export const calculateAttendanceMetrics = (
-  options: AttendanceCalcOptions,
-): AttendanceCalcResult => {
-  const zeroResult: AttendanceCalcResult = {
-    grossMinutes: 0,
-    lunchDeductionMinutes: 0,
-    netMinutes: 0,
-    regularMinutes: 0,
-    otMinutes: 0,
-    earlyOtMinutes: 0,
-    lateOtMinutes: 0,
-    lateMinutes: 0,
-    undertimeMinutes: 0,
-    reg: 0,
-    ot: 0,
-    earlyOt: 0,
-    lateOt: 0,
-    total: 0,
-    decimalHours: '0.00',
-    regularFormatted: '0m',
-    actualFormatted: '0m',
-  };
-
-  const inRaw = parseTimeToMinutes(options.timeIn);
-  const outRaw = parseTimeToMinutes(options.timeOut);
-  if (inRaw === null || outRaw === null) return zeroResult;
-
-  const sInRaw = parseTimeToMinutes(options.shiftStart || '08:00') ?? 480;
-  const sOutRaw = parseTimeToMinutes(options.shiftEnd || '17:00') ?? 1020;
-  const lStartRaw = parseTimeToMinutes(options.lunchStart || '12:00');
-  const lEndRaw = parseTimeToMinutes(options.lunchEnd || '13:00');
-  const maxRegularMinutes = options.maxRegularMinutes ?? 480;
-
-  let tIn = inRaw;
-  let tOut = outRaw;
-  let sIn = sInRaw;
-  let sOut = sOutRaw;
-
-  // Handle overnight rollover in integer minutes (1440 mins = 24 hours)
-  if (tOut < tIn) tOut += 1440;
-  if (sOut < sIn) sOut += 1440;
-
-  // Align shift window with overnight attendance punches
-  if (tIn < sIn && sIn - tIn >= 720) {
-    tIn += 1440;
-    tOut += 1440;
-  } else if (tIn > sOut && tIn - sOut >= 720) {
-    tIn -= 1440;
-    tOut -= 1440;
-  }
-
-  const grossMinutes = Math.max(0, tOut - tIn);
-  if (grossMinutes === 0) return zeroResult;
-
-  const computeWindowOverlap = (
-    spanStart: number,
-    spanEnd: number,
-    winStartRaw: number,
-    winEndRaw: number,
-  ): number => {
-    let baseStart = winStartRaw;
-    let baseEnd = winEndRaw;
-    if (baseEnd < baseStart) baseEnd += 1440;
-    const winDuration = Math.max(0, baseEnd - baseStart);
-    if (winDuration === 0) return 0;
-
-    let overlapTotal = 0;
-    for (const offset of [-1440, 0, 1440]) {
-      overlapTotal += getIntervalOverlapMinutes(
-        spanStart,
-        spanEnd,
-        baseStart + offset,
-        baseEnd + offset,
-      );
-    }
-    return Math.min(overlapTotal, grossMinutes);
-  };
-
-  let lunchDeductionMinutes = 0;
-
-  if (
-    options.lunchOverrideMinutes !== undefined &&
-    options.lunchOverrideMinutes !== null &&
-    !isNaN(Number(options.lunchOverrideMinutes))
-  ) {
-    lunchDeductionMinutes = Math.max(
-      0,
-      Math.min(grossMinutes, Math.round(Number(options.lunchOverrideMinutes))),
-    );
-  } else if (options.breakOut && options.breakIn) {
-    const bOutRaw = parseTimeToMinutes(options.breakOut);
-    const bInRaw = parseTimeToMinutes(options.breakIn);
-    if (bOutRaw !== null && bInRaw !== null) {
-      lunchDeductionMinutes = computeWindowOverlap(tIn, tOut, bOutRaw, bInRaw);
-    }
-  } else if (lStartRaw !== null && lEndRaw !== null) {
-    lunchDeductionMinutes = computeWindowOverlap(tIn, tOut, lStartRaw, lEndRaw);
-  }
-
-  const netMinutes = Math.max(0, grossMinutes - lunchDeductionMinutes);
-  const regularMinutes = Math.min(netMinutes, maxRegularMinutes);
-  const otMinutes = Math.max(0, netMinutes - maxRegularMinutes);
-
-  let earlyOtMinutes = 0;
-  let lateOtMinutes = 0;
-  if (otMinutes > 0) {
-    if (tIn < sIn) {
-      earlyOtMinutes = Math.min(otMinutes, sIn - tIn);
-      lateOtMinutes = otMinutes - earlyOtMinutes;
-    } else {
-      lateOtMinutes = otMinutes;
-    }
-  }
-
-  let lateMinutes = 0;
-  if (tIn > sIn) {
-    const lateLunchOverlap =
-      lStartRaw !== null && lEndRaw !== null
-        ? computeWindowOverlap(sIn, tIn, lStartRaw, lEndRaw)
-        : 0;
-    lateMinutes = Math.max(0, tIn - sIn - lateLunchOverlap);
-  }
-
-  let undertimeMinutes = 0;
-  if (tOut < sOut) {
-    const earlyOutLunchOverlap =
-      lStartRaw !== null && lEndRaw !== null
-        ? computeWindowOverlap(tOut, sOut, lStartRaw, lEndRaw)
-        : 0;
-    undertimeMinutes = Math.max(0, sOut - tOut - earlyOutLunchOverlap);
-  }
-
-  const toDec = (mins: number) => Math.round((mins / 60) * 10000) / 10000;
-
-  return {
-    grossMinutes,
-    lunchDeductionMinutes,
-    netMinutes,
-    regularMinutes,
-    otMinutes,
-    earlyOtMinutes,
-    lateOtMinutes,
-    lateMinutes,
-    undertimeMinutes,
-    reg: toDec(regularMinutes),
-    ot: toDec(otMinutes),
-    earlyOt: toDec(earlyOtMinutes),
-    lateOt: toDec(lateOtMinutes),
-    total: toDec(netMinutes),
-    decimalHours: (netMinutes / 60).toFixed(2),
-    regularFormatted: formatMinutesToHM(regularMinutes),
-    actualFormatted: formatMinutesToHM(grossMinutes),
-  };
-};
-
 @Injectable()
 export class EmployeesService {
   
@@ -612,70 +426,168 @@ export class EmployeesService {
   // ==========================================
   // ATTENDANCES
   // ==========================================
-  async getAttendances() {
-    return await prisma.attendance.findMany();
+  async getAttendances(company?: string) {
+    const [logs, employees] = await Promise.all([
+      prisma.attendance.findMany({
+        where: company ? { employee: { company } } : undefined,
+      }),
+      prisma.employee.findMany({ where: company ? { company } : undefined }),
+    ]);
+    const result: Array<
+      (typeof logs)[number] & { metrics: AttendanceCalcResult }
+    > = [];
+    const settingsByCompany = new Map<
+      string,
+      Awaited<ReturnType<EmployeesService['getSettings']>>
+    >();
+    for (const employee of employees) {
+      if (company && employee.company !== company) continue;
+      const employeeLogs = logs.filter((log) => log.employeeId === employee.id);
+      if (!employeeLogs.length) continue;
+      let settings = settingsByCompany.get(employee.company);
+      if (!settings) {
+        settings = await this.getSettings(employee.company);
+        settingsByCompany.set(employee.company, settings);
+      }
+      const summary = aggregateAttendanceRecords(employeeLogs, settings);
+      result.push(
+        ...summary.records.map((log) => ({ ...log, hours: log.metrics.total })),
+      );
+    }
+    return result;
   }
 
-  private async computeNormalizedAttendanceData(data: any, existingRecord?: any) {
-    const timeIn = data.timeIn ?? existingRecord?.timeIn ?? '';
-    const timeOut = data.timeOut ?? existingRecord?.timeOut ?? '';
-    const isLeave = timeIn === 'LEAVE';
-
-    if (isLeave) {
-      return {
-        ...data,
-        hours: timeOut === 'PAID' ? 8 : 0,
-      };
+  private async computeNormalizedAttendanceData(
+    data: AttendanceWriteInput,
+    existingRecord?: Attendance,
+  ) {
+    const employeeId = Number(data.employeeId ?? existingRecord?.employeeId);
+    if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
+      throw new BadRequestException('A valid employee is required.');
     }
-
-    if (timeIn && timeOut && timeIn.includes(':') && timeOut.includes(':')) {
-      const settings: any = await this.getSettings();
-      const shiftStart = data.shiftStart || existingRecord?.shiftStart || settings?.shiftStart || '08:00';
-      const shiftEnd = data.shiftEnd || existingRecord?.shiftEnd || settings?.shiftEnd || '17:00';
-      const lunchStart = data.lunchStart || settings?.lunchStart || '12:00';
-      const lunchEnd = data.lunchEnd || settings?.lunchEnd || '13:00';
-
-      const metrics = calculateAttendanceMetrics({
-        timeIn,
-        timeOut,
-        shiftStart,
-        shiftEnd,
-        lunchStart,
-        lunchEnd,
-        breakOut: data.breakOut,
-        breakIn: data.breakIn,
-        lunchOverrideMinutes: data.lunchOverrideMinutes,
-      });
-
-      const {
-        lunchStart: _ls,
-        lunchEnd: _le,
-        breakOut: _bo,
-        breakIn: _bi,
-        lunchOverrideMinutes: _lom,
-        ...cleanPrismaData
-      } = data;
-
-      return {
-        ...cleanPrismaData,
-        shiftStart,
-        shiftEnd,
-        hours: metrics.total,
-      };
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+    });
+    if (!employee) throw new BadRequestException('Employee not found.');
+    const date = toAttendanceDateYMD(data.date ?? existingRecord?.date);
+    if (!date)
+      throw new BadRequestException('A valid attendance date is required.');
+    const settings = await this.getSettings(employee.company);
+    const normalizePunch = (value: unknown): string => {
+      if (value === null || value === undefined || value === '') return '';
+      if (typeof value !== 'string')
+        throw new BadRequestException('Invalid attendance time.');
+      const text = value.trim().toUpperCase();
+      if (['LEAVE', 'PAID', 'UNPAID'].includes(text)) return text;
+      const minutes = parseTimeToMinutes(text);
+      if (minutes === null)
+        throw new BadRequestException('Invalid attendance time.');
+      return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+    };
+    const timeIn = normalizePunch(
+      data.timeIn !== undefined ? data.timeIn : existingRecord?.timeIn,
+    );
+    const timeOut = normalizePunch(
+      data.timeOut !== undefined ? data.timeOut : existingRecord?.timeOut,
+    );
+    if (
+      (timeIn === 'LEAVE' && !['PAID', 'UNPAID'].includes(timeOut)) ||
+      (timeIn !== 'LEAVE' &&
+        (['PAID', 'UNPAID', 'LEAVE'].includes(timeIn) ||
+          ['PAID', 'UNPAID', 'LEAVE'].includes(timeOut)))
+    ) {
+      throw new BadRequestException('Invalid leave attendance.');
     }
-
-    return data;
+    const sourceValue = <K extends keyof AttendanceWriteInput>(field: K) =>
+      data[field] !== undefined ? data[field] : existingRecord?.[field];
+    const shiftStart = normalizePunch(
+      sourceValue('shiftStart') || settings.shiftStart,
+    );
+    const shiftEnd = normalizePunch(
+      sourceValue('shiftEnd') || settings.shiftEnd,
+    );
+    const lunchStart = normalizePunch(
+      sourceValue('lunchStart') ?? settings.lunchStart,
+    );
+    const lunchEnd = normalizePunch(
+      sourceValue('lunchEnd') ?? settings.lunchEnd,
+    );
+    const breakOut = normalizePunch(sourceValue('breakOut')) || null;
+    const breakIn = normalizePunch(sourceValue('breakIn')) || null;
+    if (
+      [shiftStart, shiftEnd, lunchStart, lunchEnd, breakOut, breakIn].some(
+        (time) => time && parseTimeToMinutes(time) === null,
+      )
+    ) {
+      throw new BadRequestException('Invalid shift or break time.');
+    }
+    const override = sourceValue('lunchOverrideMinutes');
+    const lunchOverrideMinutes =
+      override === null || override === undefined ? null : Number(override);
+    if (
+      lunchOverrideMinutes !== null &&
+      (!Number.isInteger(lunchOverrideMinutes) ||
+        lunchOverrideMinutes < 0 ||
+        lunchOverrideMinutes > 2147483647)
+    ) {
+      throw new BadRequestException(
+        'Lunch override must be a non-negative integer number of minutes.',
+      );
+    }
+    const metrics = calculateAttendanceMetrics({
+      timeIn,
+      timeOut,
+      shiftStart,
+      shiftEnd,
+      lunchStart,
+      lunchEnd,
+      breakOut,
+      breakIn,
+      lunchOverrideMinutes,
+    });
+    return {
+      employeeId,
+      date,
+      timeIn,
+      timeOut,
+      shiftStart,
+      shiftEnd,
+      lunchStart,
+      lunchEnd,
+      breakOut,
+      breakIn,
+      lunchOverrideMinutes,
+      reason:
+        data.reason !== undefined
+          ? data.reason
+          : (existingRecord?.reason ?? null),
+      hours: timeIn === 'LEAVE' ? (timeOut === 'PAID' ? 8 : 0) : metrics.total,
+    };
   }
 
   async createAttendance(data: any) {
-    const normalized = await this.computeNormalizedAttendanceData(data);
+    const normalized = await this.computeNormalizedAttendanceData(
+      data as AttendanceWriteInput,
+    );
+    const existing = await prisma.attendance.findMany({
+      where: { employeeId: normalized.employeeId },
+    });
+    const duplicate = existing.find(
+      (log) => attendanceSessionKey(log) === attendanceSessionKey(normalized),
+    );
+    if (duplicate) return duplicate;
     return await prisma.attendance.create({ data: normalized });
   }
 
   async updateAttendance(id: number, data: any) {
-    const { id: _id, ...cleanData } = data;
+    const { id: _id, ...cleanData } = data as AttendanceWriteInput;
     const existing = await prisma.attendance.findUnique({ where: { id } });
-    const normalized = await this.computeNormalizedAttendanceData(cleanData, existing);
+    if (!existing)
+      throw new BadRequestException('Attendance record not found.');
+    const normalized = await this.computeNormalizedAttendanceData(
+      cleanData,
+      existing,
+    );
     return await prisma.attendance.update({
       where: { id },
       data: normalized,
@@ -692,82 +604,75 @@ export class EmployeesService {
   // HISTORICAL AUDIT & SAFE RECALCULATION
   // ==========================================
   async auditHistoricalAttendance(company?: string) {
-    const settings: any = await this.getSettings();
-    const allLogs = await prisma.attendance.findMany();
-    const employees = await prisma.employee.findMany();
-    const empMap = new Map(employees.map(e => [e.id, e]));
-
-    const affectedRecords: any[] = [];
-
-    for (const log of allLogs) {
-      const emp = empMap.get(log.employeeId);
-      if (company && emp && emp.company !== company) continue;
-      if (!log.timeIn || !log.timeOut || log.timeIn === 'LEAVE' || !log.timeIn.includes(':') || !log.timeOut.includes(':')) {
-        continue;
-      }
-
-      const calc = calculateAttendanceMetrics({
-        timeIn: log.timeIn,
-        timeOut: log.timeOut,
-        shiftStart: log.shiftStart || settings?.shiftStart || '08:00',
-        shiftEnd: log.shiftEnd || settings?.shiftEnd || '17:00',
-        lunchStart: settings?.lunchStart || '12:00',
-        lunchEnd: settings?.lunchEnd || '13:00',
-      });
-
-      const storedMinutes = Math.round((Number(log.hours) || 0) * 60);
-      if (storedMinutes !== calc.netMinutes) {
-        affectedRecords.push({
+    const [allLogs, employees, recalculated] = await Promise.all([
+      prisma.attendance.findMany(),
+      prisma.employee.findMany(),
+      this.getAttendances(company),
+    ]);
+    const sourceById = new Map(allLogs.map((log) => [log.id, log]));
+    const employeeById = new Map(
+      employees.map((employee) => [employee.id, employee]),
+    );
+    const affectedRecords = recalculated.flatMap((log) => {
+      const source = sourceById.get(log.id);
+      if (!source) return [];
+      const previousMinutes = Math.round((Number(source.hours) || 0) * 60);
+      const correctedMinutes = Math.round(log.hours * 60);
+      if (previousMinutes === correctedMinutes) return [];
+      const employee = employeeById.get(log.employeeId);
+      return [
+        {
           id: log.id,
           employeeId: log.employeeId,
-          employeeName: emp ? `${emp.lastName}, ${emp.firstName}` : `ID #${log.employeeId}`,
+          employeeName: employee
+            ? employee.lastName + ', ' + employee.firstName
+            : 'ID #' + log.employeeId,
           date: log.date,
           timeIn: log.timeIn,
           timeOut: log.timeOut,
-          previousHours: Number((Number(log.hours) || 0).toFixed(2)),
-          correctedHours: Number(calc.decimalHours),
-          previousMinutes: storedMinutes,
-          correctedMinutes: calc.netMinutes,
-          lunchDeductionMinutes: calc.lunchDeductionMinutes,
-          differenceMinutes: calc.netMinutes - storedMinutes,
-        });
-      }
-    }
-
+          previousHours: Number(source.hours) || 0,
+          correctedHours: log.hours,
+          previousMinutes,
+          correctedMinutes,
+          lunchDeductionMinutes: log.metrics.lunchDeductionMinutes,
+          differenceMinutes: correctedMinutes - previousMinutes,
+        },
+      ];
+    });
     return {
-      totalScanned: allLogs.length,
+      totalScanned: recalculated.length,
       affectedCount: affectedRecords.length,
       affectedRecords,
     };
   }
 
-  async recalculateHistoricalAttendance(options: { company?: string; recordIds?: number[]; dryRun?: boolean }) {
-    const audit = await this.auditHistoricalAttendance(options.company);
+  async recalculateHistoricalAttendance(options: {
+    company?: string;
+    recordIds?: number[];
+    dryRun?: boolean;
+  }) {
+    const audit = await this.auditHistoricalAttendance(options?.company);
     const targets = options?.recordIds?.length
-      ? audit.affectedRecords.filter(r => options.recordIds!.includes(r.id))
+      ? audit.affectedRecords.filter((r) => options.recordIds!.includes(r.id))
       : audit.affectedRecords;
 
     if (options?.dryRun !== false) {
       return { mode: 'DRY_RUN', updatedCount: 0, preview: targets };
     }
+    if (!options.recordIds?.length) {
+      throw new BadRequestException(
+        'Review the attendance audit and supply explicit recordIds before applying corrections.',
+      );
+    }
 
-    const settings: any = await this.getSettings();
+    const recalculated = await this.getAttendances(options.company);
     let updatedCount = 0;
-
     for (const item of targets) {
-      const log = await prisma.attendance.findUnique({ where: { id: item.id } });
+      const log = recalculated.find((record) => record.id === item.id);
       if (!log) continue;
-      const calc = calculateAttendanceMetrics({
-        timeIn: log.timeIn,
-        timeOut: log.timeOut,
-        shiftStart: log.shiftStart || settings?.shiftStart || '08:00',
-        shiftEnd: log.shiftEnd || settings?.shiftEnd || '17:00',
-        lunchStart: settings?.lunchStart || '12:00',
-        lunchEnd: settings?.lunchEnd || '13:00',
-      });
       await prisma.attendance.update({
         where: { id: log.id },
-        data: { hours: calc.total },
+        data: { hours: log.hours },
       });
       updatedCount++;
     }
@@ -791,11 +696,57 @@ export class EmployeesService {
   }
 
   async createPayroll(data: any) {
+    const attendanceInput = data as {
+      employeeId?: number | string;
+      daysWorked?: number | string;
+      cutoffStart?: string | null;
+      cutoffEnd?: string | null;
+      govHolidayAmt?: number | string | null;
+    };
+    const employeeId = Number(attendanceInput.employeeId);
+    const daysWorked = Number(attendanceInput.daysWorked);
+    const cutoffStart = toAttendanceDateYMD(attendanceInput.cutoffStart);
+    const cutoffEnd = toAttendanceDateYMD(attendanceInput.cutoffEnd);
+    if (
+      !Number.isSafeInteger(employeeId) ||
+      employeeId <= 0 ||
+      !Number.isFinite(daysWorked) ||
+      daysWorked < 0
+    ) {
+      throw new BadRequestException(
+        'A valid employee and non-negative working days are required.',
+      );
+    }
+    if (!cutoffStart || !cutoffEnd || cutoffStart > cutoffEnd) {
+      throw new BadRequestException(
+        'A valid payroll cutoff start and end are required.',
+      );
+    }
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+    });
+    if (!employee) throw new BadRequestException('Employee not found.');
+    const settings = await this.getSettings(employee.company);
+    const logs = await prisma.attendance.findMany({ where: { employeeId } });
+    const govHolidayAmt = Number(attendanceInput.govHolidayAmt ?? 0);
+    if (!Number.isFinite(govHolidayAmt))
+      throw new BadRequestException('Invalid holiday adjustment.');
+    const attendanceSummary = calculateAttendancePayroll(logs, {
+      ...settings,
+      employeeId,
+      startDate: cutoffStart,
+      endDate: cutoffEnd,
+      daysWorked,
+      basicSalary: employee.baseRate,
+      govHolidayAmt,
+    });
     const isDeclared =
-      data.isDeclared !== undefined ? Boolean(data.isDeclared) : Number(data.tax || 0) > 0;
+      data.isDeclared !== undefined
+        ? Boolean(data.isDeclared)
+        : Number(data.tax || 0) > 0;
 
     const computed = calculatePhilippinePayrollTax({
-      grossPay: data.grossPay || 0,
+      grossPay: attendanceSummary.grossPay,
       sssDeduction: data.sssDeduction || 0,
       pagIbigDeduct: data.pagIbigDeduct || 0,
       philhealthDeduct: data.philhealthDeduct || 0,
@@ -812,11 +763,12 @@ export class EmployeesService {
       pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
     });
 
-    return await prisma.payroll.create({ 
+    return await prisma.payroll.create({
       data: {
-        employeeId: data.employeeId,
-        daysWorked: data.daysWorked,
-        totalHours: data.totalHours,
+        employeeId,
+        daysWorked,
+        totalHours: attendanceSummary.totalMinutes / 60,
+        attendanceSummary,
         cashAdvance: data.cashAdvance || 0,
         companyLoan: data.companyLoan || 0,
         sssDeduction: data.sssDeduction || 0,
@@ -832,7 +784,7 @@ export class EmployeesService {
         sssCalamityLoan: data.sssCalamityLoan || 0,
         pagIbigCalamity: data.pagIbigCalamity || 0,
         pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
-      } 
+      },
     });
   }
 
@@ -938,31 +890,54 @@ export class EmployeesService {
   // ==========================================
   // SETTINGS (Global Shift Times)
   // ==========================================
-  async getSettings() {
-    let settings = await prisma.settings.findFirst();
-    
-    if (!settings) {
-      settings = await prisma.settings.create({
-        data: { shiftStart: "08:00", shiftEnd: "17:00" }
-      });
-    }
-    return {
-      ...settings,
-    };
+  async getSettings(company?: string) {
+    const requestedCompany = company?.trim() || 'Global';
+    const configured = await prisma.settings.findUnique({
+      where: { company: requestedCompany },
+    });
+    if (configured) return configured;
+    const fallback =
+      requestedCompany === 'Global'
+        ? null
+        : await prisma.settings.findUnique({ where: { company: 'Global' } });
+    return (
+      fallback ?? {
+        id: 0,
+        company: 'Global',
+        shiftStart: '08:00',
+        shiftEnd: '17:00',
+        lunchStart: '12:00',
+        lunchEnd: '13:00',
+      }
+    );
   }
 
   async updateSettings(data: any) {
-    const existing = await prisma.settings.findFirst();
-    
-    if (existing) {
-      return await prisma.settings.update({
-        where: { id: existing.id },
-        data: { shiftStart: data.shiftStart, shiftEnd: data.shiftEnd }
-      });
-    } else {
-      return await prisma.settings.create({
-        data: { shiftStart: data.shiftStart, shiftEnd: data.shiftEnd }
-      });
+    const input = data as Partial<
+      Pick<
+        Settings,
+        'company' | 'shiftStart' | 'shiftEnd' | 'lunchStart' | 'lunchEnd'
+      >
+    >;
+    const company = input.company?.trim() || 'Global';
+    const schedule = {
+      shiftStart: input.shiftStart,
+      shiftEnd: input.shiftEnd,
+      lunchStart: input.lunchStart,
+      lunchEnd: input.lunchEnd,
+    };
+    for (const field of Object.keys(schedule) as Array<keyof typeof schedule>) {
+      if (schedule[field] === undefined) continue;
+      const minutes = parseTimeToMinutes(schedule[field]);
+      if (minutes === null)
+        throw new BadRequestException('Invalid shift or lunch time.');
+      schedule[field] =
+        `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
     }
+    return await prisma.settings.upsert({
+      where: { company },
+      create: { company, ...schedule },
+      update: schedule,
+    });
   }
 }

@@ -96,3 +96,11 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## Attendance aggregation and payroll snapshots
+
+The API and payroll interface use `src/employees/attendance-calculator.ts` for integer-minute calculations. Separate same-day sessions are retained; identical sessions and overlapping minutes count once. Unpaid breaks and the regular-hours limit apply to the scheduled workday. Cutoff dates are inclusive attendance start dates in Asia/Manila; an overnight session starting on the final date keeps its full duration. Daily overtime is kept separate from regular hours and cannot offset another day's regular-hours shortfall. Existing rates and tax formulas remain in effect.
+
+Deploy the additive `20261016000000_attendance_aggregation_snapshots` migration with `npx prisma migrate deploy` before starting the updated backend. It adds nullable attendance break-policy fields and a nullable payroll calculation snapshot. It does not update existing attendance hours, payroll amounts, or historical snapshots. New payroll requests must include `cutoffStart` and `cutoffEnd`; the backend calculates hours and earnings from current source records and saves the breakdown for later reports. Historical payrolls without a snapshot retain their saved amounts and show unavailable hour/pay breakdowns instead of reconstructing them from current attendance or salary.
+
+For review of stale stored attendance hours, use authenticated `GET /employees/attendance/audit-lunch?company=COMPANY`. This is read-only; normal attendance reads already return corrected derived hours without changing stored source records. `POST /employees/attendance/recalculate-lunch` with `{"company":"COMPANY","recordIds":[123],"dryRun":true}` previews selected corrections. Only after reviewing the audit and taking a backup should an authorized operator explicitly set `dryRun:false` with the selected IDs. This optional operation updates attendance hours only; it never recalculates saved payroll. Re-importing source CSVs skips identical employee/date/punch sessions and preserves distinct sessions; corrections to a source session use its explicit edit action.

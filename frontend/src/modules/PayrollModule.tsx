@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
+import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
 
 // ==========================================
 // 1. GLOBAL FORMATTERS & STYLES
@@ -243,9 +244,14 @@ interface AttendanceRecord {
   timeIn: string;
   timeOut: string;
   hours: number;
-  reason?: string; 
+  reason?: string | null;
   shiftStart?: string; 
   shiftEnd?: string;
+  lunchStart?: string | null;
+  lunchEnd?: string | null;
+  breakOut?: string | null;
+  breakIn?: string | null;
+  lunchOverrideMinutes?: number | null;
 }
 
 interface PayrollRecord {
@@ -269,13 +275,30 @@ interface PayrollRecord {
   sssCalamityLoan: number;
   pagIbigCalamity: number;
   pagIbigSalaryLoan: number;
+  attendanceSummary?: {
+    version: number;
+    cutoffStart: string;
+    cutoffEnd: string;
+    totalMinutes: number;
+    regularMinutes: number;
+    overtimeMinutes: number;
+    lateMinutes: number;
+    undertimeMinutes: number;
+    requiredMinutes: number;
+    basicSalary: number;
+    ratePerDay: number;
+    ratePerHour: number;
+    otPay: number;
+    undertimeDeduction: number;
+    govHolidayAmt: number;
+  } | null;
 }
 
 interface SummaryReportRow {
   emp: Employee;
   totalHours: number;
   totalDays: number;
-  otHours: number;
+  otHours: number | null;
   totalGross: number;
   totalDeductions: number;
   totalNet: number;
@@ -298,8 +321,8 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [searchQuery, setSearchQuery] = useState('');
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState(''); 
   
-  const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
-  const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
+  const [payrollStartDate, setPayrollStartDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-01`);
+  const [payrollEndDate, setPayrollEndDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-15`);
 
 const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
@@ -397,8 +420,8 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [lunchStart, setLunchStart] = useState('12:00');
   const [lunchEnd, setLunchEnd] = useState('13:00');
   const [attendanceFilter, setAttendanceFilter] = useState<'day' | 'month'>('day');
-  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [attendanceMonth, setAttendanceMonth] = useState(new Date().toISOString().slice(0, 7)); 
+  const [attendanceDate, setAttendanceDate] = useState(toAttendanceDateYMD(new Date().toISOString()));
+  const [attendanceMonth, setAttendanceMonth] = useState(toAttendanceDateYMD(new Date().toISOString()).slice(0, 7));
   const [dailyTimeLogs, setDailyTimeLogs] = useState<Record<number, { timeIn: string, timeOut: string, type: string, reason: string }>>({});
 
   const initialFormState = {
@@ -438,6 +461,8 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
       if (response.ok) {
         const data = await response.json();
         const settingsObj = Array.isArray(data) ? data[0] : data;
+        setLunchStart(settingsObj?.lunchStart || '12:00');
+        setLunchEnd(settingsObj?.lunchEnd || '13:00');
         if (settingsObj && settingsObj.shiftStart && settingsObj.shiftEnd) {
           setShiftStart(settingsObj.shiftStart);
           setShiftEnd(settingsObj.shiftEnd);
@@ -488,10 +513,13 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
     finally { setIsSaving(false); }
   };
 
-  const isLogWithinPayrollPeriod = (dateStr: string) => {
-    if (!payrollStartDate || !payrollEndDate) return false;
-    const logDate = dateStr.split('T')[0];
-    return logDate >= payrollStartDate && logDate <= payrollEndDate;
+  const getAttendanceSummary = (employeeId?: number, startDate?: string, endDate?: string) =>
+    aggregateAttendanceRecords(attendances, { employeeId, startDate, endDate, shiftStart, shiftEnd, lunchStart, lunchEnd });
+
+  const getMonthlyAttendance = (employeeId: number) => {
+    const [year, month] = attendanceMonth.split('-').map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
+    return getAttendanceSummary(employeeId, `${attendanceMonth}-01`, `${attendanceMonth}-${String(lastDay).padStart(2, '0')}`);
   };
 
 const toCents = (val: any): number => {
@@ -592,23 +620,24 @@ const toCents = (val: any): number => {
   };
 
   const handleExportAttendance = () => {
-    const headers = ['System ID', 'Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Type/Reason'];
-    const data = attendances.map(a => {
+    const headers = ['System ID', 'Employee ID', 'Date', 'Time In', 'Time Out', 'Employee Name', 'Calculated Hours', 'Net Minutes', 'Type/Reason'];
+    const data = getAttendanceSummary().records.map(a => {
       const emp = employees.find(e => e.id === a.employeeId);
       const isLeave = a.timeIn === 'LEAVE';
       let niceTimeIn = isLeave ? a.timeIn : (a.timeIn ? format12Hour(a.timeIn) : 'MISSING');
       let niceTimeOut = isLeave ? a.timeOut : (a.timeOut ? format12Hour(a.timeOut) : 'MISSING');
-      return [ a.employeeId, emp?.employeeId || '', a.date ? a.date.split('T')[0] : '', niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', a.hours, a.reason || 'Regular' ];
+      return [ a.employeeId, emp?.employeeId || '', toAttendanceDateYMD(a.date), niceTimeIn, niceTimeOut, emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', (a.metrics.netMinutes / 60).toFixed(2), a.metrics.netMinutes, a.reason || 'Regular' ];
     });
     exportToCSV(`Attendance_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
 
   const handleExportPayrolls = () => {
-    const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
+    const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay', 'Cutoff Start', 'Cutoff End', 'Regular Hours', 'OT Hours', 'Late Hours', 'Undertime Hours'];
     const data = payrolls.map(p => {
       const emp = employees.find(e => e.id === p.employeeId);
      const totalDeds = calculateTotalPayrollDeductions(p);
-      return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
+      const summary = p.attendanceSummary;
+      return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, summary ? (summary.totalMinutes / 60).toFixed(2) : p.totalHours, p.grossPay, totalDeds, p.netPay, summary?.cutoffStart || '', summary?.cutoffEnd || '', summary ? (summary.regularMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.overtimeMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.lateMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.undertimeMinutes / 60).toFixed(2) : 'Unavailable'];
     });
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
@@ -704,7 +733,7 @@ const toCents = (val: any): number => {
         let headers: string[] = [];
         for (let i = 0; i < Math.min(15, rows.length); i++) {
           const cols = parseCSVRow(rows[i]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-          if ((cols.includes('personnelno') || cols.includes('employeeid')) && cols.includes('date') && cols.includes('in') && cols.includes('out')) {
+          if ((cols.includes('personnelno') || cols.includes('employeeid') || cols.includes('systemid')) && cols.includes('date') && (cols.includes('in') || cols.includes('timein')) && (cols.includes('out') || cols.includes('timeout'))) {
             headerRowIdx = i;
             headers = cols;
             break;
@@ -727,15 +756,9 @@ const toCents = (val: any): number => {
           if (!timeStr) return '';
           const clean = timeStr.toUpperCase();
           if (['PAID', 'UNPAID', 'LEAVE'].includes(clean)) return clean;
-          const match = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
-          if (!match) return ''; 
-          let [_, h, m, modifier] = match;
-          let hours = parseInt(h, 10);
-          if (modifier) {
-            if (modifier.toUpperCase() === 'PM' && hours < 12) hours += 12;
-            if (modifier.toUpperCase() === 'AM' && hours === 12) hours = 0;
-          }
-          return `${hours.toString().padStart(2, '0')}:${m}`;
+          const minutes = parseTimeToMinutes(timeStr);
+          if (minutes === null) return '';
+          return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
         };
 
         const formatIsoDate = (dStr: string) => {
@@ -748,7 +771,8 @@ const toCents = (val: any): number => {
            return '';
         };
 
-        const validPayloads: any = {};
+        const validPayloads = new Map<string, Omit<AttendanceRecord, 'id'>>();
+        let skippedCount = 0;
         let currentPersonnelNo = '';
         let incompleteEmployees = new Set<string>();
 
@@ -767,7 +791,7 @@ const toCents = (val: any): number => {
 
           const tIn = formatTime24(rawIn);
           const tOut = formatTime24(rawOut);
-          const safeDate = formatIsoDate(rawDate);
+          const safeDate = toAttendanceDateYMD(formatIsoDate(rawDate));
 
           if (!safeDate) continue;
 
@@ -788,8 +812,7 @@ const toCents = (val: any): number => {
              incompleteEmployees.add(`${matchedEmployee.firstName} ${matchedEmployee.lastName}`);
           }
 
-          const payloadKey = `${matchedEmployee.id}_${safeDate}`;
-          validPayloads[payloadKey] = { 
+          const payload = {
             employeeId: matchedEmployee.id, 
             date: safeDate, 
             timeIn: tIn || '', 
@@ -799,9 +822,12 @@ const toCents = (val: any): number => {
             shiftStart, 
             shiftEnd 
           };
+          const payloadKey = attendanceSessionKey(payload);
+          if (validPayloads.has(payloadKey)) skippedCount++;
+          else validPayloads.set(payloadKey, payload);
         }
 
-        const payloadArray = Object.values(validPayloads);
+        const payloadArray = Array.from(validPayloads.values());
 
         if (payloadArray.length === 0) {
            showToast("No valid rows found to import.", "error");
@@ -809,25 +835,24 @@ const toCents = (val: any): number => {
         }
 
         let successCount = 0;
-        for (const payload of payloadArray as any[]) {
-          const existingLog = attendances.find(a => a.employeeId === payload.employeeId && a.date && a.date.split('T')[0] === payload.date);
-          
-          const url = existingLog ? `${API_BASE_URL}/employees/attendance/${existingLog.id}` : `${API_BASE_URL}/employees/attendance`;
-          const method = existingLog ? 'PATCH' : 'POST';
+        const existingSessions = new Set(attendances.map(attendanceSessionKey));
+        for (const payload of payloadArray) {
+          const sessionKey = attendanceSessionKey(payload);
+          if (existingSessions.has(sessionKey)) { skippedCount++; continue; }
 
-          const res = await fetch(url, { 
-            method: method, 
+          const res = await fetch(`${API_BASE_URL}/employees/attendance`, {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' }, 
             body: JSON.stringify(payload) 
           });
           
-          if(res.ok) successCount++;
+          if(res.ok) { successCount++; existingSessions.add(sessionKey); }
         }
         
         await new Promise(resolve => setTimeout(resolve, 500));
         await fetchAttendances();
         
-        showToast(`Imported ${successCount} logs successfully!`, "success");
+        showToast(`Imported ${successCount} logs successfully!${skippedCount ? ` Skipped ${skippedCount} exact duplicates.` : ''}`, "success");
 
         if (incompleteEmployees.size > 0) {
           setTimeout(() => {
@@ -963,82 +988,12 @@ const toCents = (val: any): number => {
     finally { setIsSaving(false); }
   };
 
-const calculateShiftHours = (
-    tInStr: string,
-    tOutStr: string,
-    sInStr: string = shiftStart,
-    sOutStr: string = shiftEnd,
-    lStartStr: string = lunchStart,
-    lEndStr: string = lunchEnd
-  ) => {
-    if (!tInStr || !tOutStr || !tInStr.includes(':') || !tOutStr.includes(':')) {
-      return { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0, grossMinutes: 0, lunchMinutes: 0, netMinutes: 0 };
-    }
-
-    const toMinutes = (t: string) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-
-    let tIn = toMinutes(tInStr);
-    let tOut = toMinutes(tOutStr);
-    let sIn = toMinutes(sInStr);
-    let sOut = toMinutes(sOutStr);
-    const lStart = toMinutes(lStartStr);
-    const lEnd = toMinutes(lEndStr);
-
-    // Overnight rollover in integer minutes (1440 mins = 24h)
-    if (tOut < tIn) tOut += 1440;
-    if (sOut < sIn) sOut += 1440;
-    if (tIn < sIn && (sIn - tIn) >= 720) { tIn += 1440; tOut += 1440; }
-    else if (tIn > sOut && (tIn - sOut) >= 720) { tIn -= 1440; tOut -= 1440; }
-
-    const grossMinutes = Math.max(0, tOut - tIn);
-
-    // Calculate lunch deduction ONLY from the overlap between attendance [tIn, tOut] and scheduled lunch [lStart, lEnd]
-    let baseLunchStart = lStart;
-    let baseLunchEnd = lEnd;
-    if (baseLunchEnd < baseLunchStart) baseLunchEnd += 1440;
-
-    let lunchMinutes = 0;
-    if (baseLunchEnd > baseLunchStart) {
-      for (const offset of [-1440, 0, 1440]) {
-        const overlapStart = Math.max(tIn, baseLunchStart + offset);
-        const overlapEnd = Math.min(tOut, baseLunchEnd + offset);
-        lunchMinutes += Math.max(0, overlapEnd - overlapStart);
-      }
-      lunchMinutes = Math.min(lunchMinutes, grossMinutes);
-    }
-
-    const netMinutes = Math.max(0, grossMinutes - lunchMinutes);
-    const maxRegularMinutes = 480; // 8 hours = 480 minutes
-    const regMinutes = Math.min(netMinutes, maxRegularMinutes);
-    const otMinutes = Math.max(0, netMinutes - maxRegularMinutes);
-
-    let earlyOtMinutes = 0;
-    let lateOtMinutes = 0;
-    if (otMinutes > 0) {
-      if (tIn < sIn) {
-        earlyOtMinutes = Math.min(otMinutes, sIn - tIn);
-        lateOtMinutes = otMinutes - earlyOtMinutes;
-      } else {
-        lateOtMinutes = otMinutes;
-      }
-    }
-
-    const toDec = (mins: number) => Math.round((mins / 60) * 10000) / 10000;
-
-    return {
-      reg: toDec(regMinutes),
-      ot: toDec(otMinutes),
-      earlyOt: toDec(earlyOtMinutes),
-      lateOt: toDec(lateOtMinutes),
-      total: toDec(netMinutes),
-      grossMinutes,
-      lunchMinutes,
-      netMinutes,
-    };
-  };
+  const calculateShiftHours = (
+    timeIn: string,
+    timeOut: string,
+    appliedShiftStart: string = shiftStart,
+    appliedShiftEnd: string = shiftEnd,
+  ) => calculateAttendanceMetrics({ timeIn, timeOut, shiftStart: appliedShiftStart, shiftEnd: appliedShiftEnd, lunchStart, lunchEnd });
 
   const handleTimeChange = (empId: number, field: 'timeIn' | 'timeOut' | 'type' | 'reason', value: string) => {
     setDailyTimeLogs((prev) => {
@@ -1072,7 +1027,7 @@ const calculateShiftHours = (
     const isLeave = log.timeIn === 'LEAVE';
     let type = 'regular';
     if (isLeave) type = log.timeOut === 'PAID' ? 'paid_leave' : 'unpaid_leave';
-    setEditLogForm({ date: log.date ? log.date.split('T')[0] : '', timeIn: isLeave ? '' : log.timeIn, timeOut: isLeave ? '' : log.timeOut, type, reason: log.reason || '' });
+    setEditLogForm({ date: toAttendanceDateYMD(log.date), timeIn: isLeave ? '' : log.timeIn, timeOut: isLeave ? '' : log.timeOut, type, reason: log.reason || '' });
     setEditingLog(log);
   };
 
@@ -1086,7 +1041,7 @@ const calculateShiftHours = (
     else {
       if (!editLogForm.timeIn || !editLogForm.timeOut) { showToast("Please enter both Time In and Time Out.", "error"); setIsSaving(false); return; }
       const appliedStart = editingLog.shiftStart || shiftStart; const appliedEnd = editingLog.shiftEnd || shiftEnd;
-      const calculated = calculateShiftHours(editLogForm.timeIn, editLogForm.timeOut, appliedStart, appliedEnd);
+      const calculated = calculateAttendanceMetrics({ ...editingLog, timeIn: editLogForm.timeIn, timeOut: editLogForm.timeOut, shiftStart: appliedStart, shiftEnd: appliedEnd, lunchStart: editingLog.lunchStart || lunchStart, lunchEnd: editingLog.lunchEnd || lunchEnd });
       payload = { date: editLogForm.date, timeIn: editLogForm.timeIn, timeOut: editLogForm.timeOut, hours: calculated.total, reason: null, shiftStart: appliedStart, shiftEnd: appliedEnd };
     }
 
@@ -1108,9 +1063,12 @@ const calculateShiftHours = (
 
   // --- EXCEL AGGREGATE PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
+    if (!payrollStartDate || !payrollEndDate || payrollStartDate > payrollEndDate) {
+      showToast('Select a valid payroll cutoff period.', 'error');
+      return;
+    }
     setActiveEmployee(emp);
-    const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
-    const actualDays = new Set(empLogs.map(l => l.date && l.date.split('T')[0])).size;
+    const actualDays = getAttendanceSummary(emp.id, payrollStartDate, payrollEndDate).daysWorked;
     const defaultDays = actualDays > 0 ? actualDays.toString() : '14';
     const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
     const safeLoanDeduction = (emp.loanBalance || 0) > 0 ? Math.min((emp.loanInstallment || 0), emp.loanBalance) : 0;
@@ -1120,66 +1078,19 @@ const calculateShiftHours = (
   };
 
   const calculatePayroll = () => {
-    if (!activeEmployee) return null;
+    if (!activeEmployee || !payrollStartDate || !payrollEndDate || payrollStartDate > payrollEndDate) return null;
     
-    // 1. Group records by unique date to prevent duplicate logs from inflating hours
-    const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === activeEmployee.id && a.date && isLogWithinPayrollPeriod(a.date));
-    const uniqueLogsMap = new Map();
-    
-rawEmpLogs.forEach(log => {
-      const dateStr = log.date.split('T')[0];
-      let logMinutes = 0;
-      if (!log.timeIn || !log.timeIn.includes(':')) {
-        logMinutes = Math.round((log.hours || 0) * 60);
-      } else {
-        const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd);
-        logMinutes = shiftCalc.netMinutes;
-      }
-
-      const existing = uniqueLogsMap.get(dateStr);
-      if (!existing || logMinutes > existing.calculatedMinutes) {
-        uniqueLogsMap.set(dateStr, { ...log, calculatedMinutes: logMinutes });
-      }
+    const attendancePayroll = calculateAttendancePayroll(attendances, {
+      employeeId: activeEmployee.id, startDate: payrollStartDate, endDate: payrollEndDate,
+      shiftStart, shiftEnd, lunchStart, lunchEnd,
+      daysWorked: parseFloat(payrollData.daysWorked) || 0, basicSalary: activeEmployee.baseRate,
+      govHolidayAmt: parseFloat(payrollData.govHolidayAmt) || 0,
     });
+    const totalHoursWorked = attendancePayroll.totalMinutes / 60;
+    const requiredHrs = attendancePayroll.requiredMinutes / 60;
+    const otHrs = attendancePayroll.overtimeMinutes / 60;
+    const { ratePerDay, ratePerHour, undertimeDeduction, otPay, grossPay, govHolidayAmt } = attendancePayroll;
 
-    const empLogs = Array.from(uniqueLogsMap.values());
-
-    // 2. Sum valid logged minutes in integers, then convert to hours
-    let totalMinutesWorked = 0;
-    empLogs.forEach((log: any) => {
-      totalMinutesWorked += log.calculatedMinutes;
-    });
-    const totalHoursWorked = Math.round((totalMinutesWorked / 60) * 10000) / 10000;
-
-    const basicSalary = activeEmployee.baseRate;
-    const days = parseFloat(payrollData.daysWorked) || 0;
-    
-    // 3. Hourly Rates
-    const ratePerDay = days > 0 ? basicSalary / days : 0;
-    const ratePerHour = ratePerDay / 8;
-    
-    const requiredHrs = days * 8;
-    
-    // 4. Compare Required vs Actual for strict mathematical difference
-    const diffHrs = totalHoursWorked - requiredHrs;
-    
-    let otHrs = 0;
-    let undertimeHrs = 0;
-    
-    if (diffHrs > 0) {
-        otHrs = diffHrs;
-    } else {
-        undertimeHrs = Math.abs(diffHrs);
-    }
-
-    // 5. Calculate Deductions & Pay (Exact unrounded time multipliers to match Excel)
-    const undertimeDeduction = Math.round((undertimeHrs * ratePerHour) * 100) / 100;
-    const otPay = Math.round((otHrs * ratePerHour * 1.25) * 100) / 100;
-    
-    // 6. Gross Pay & Government Holiday / Excluded Day Adjustment
-    const govHolidayAmt = parseFloat(payrollData.govHolidayAmt) || 0;
-    const grossPay = Math.round((basicSalary - undertimeDeduction + otPay + govHolidayAmt) * 100) / 100;
-    
     const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
     
     let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
@@ -1219,7 +1130,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
     });
     const netPay = fromCents(toCents(grossPay) - toCents(totalDeductions));
     return { 
-      totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, 
+      totalHoursWorked, regularHours: attendancePayroll.regularMinutes / 60, ratePerDay, ratePerHour, requiredHrs,
       otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
       cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
       sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed, govHolidayAmt 
@@ -1232,7 +1143,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
     if (!activeEmployee || !computed) return;
     setIsSaving(true);
     const payload = {
-      employeeId: activeEmployee.id, daysWorked: parseFloat(payrollData.daysWorked) || 0, totalHours: computed.totalHoursWorked,
+      employeeId: activeEmployee.id, cutoffStart: payrollStartDate, cutoffEnd: payrollEndDate, isDeclared: payrollData.isDeclared, govHolidayAmt: computed.govHolidayAmt, daysWorked: parseFloat(payrollData.daysWorked) || 0, totalHours: computed.totalHoursWorked,
       cashAdvance: computed.cashAdvanceDed, companyLoan: computed.companyLoanDed, sssDeduction: parseFloat(payrollData.sss) || 0, pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0, philhealthDeduct: parseFloat(payrollData.philhealth) || 0, tax: computed.autoTax, grossPay: computed.grossPay, netPay: computed.netPay, pagIbigLoan: computed.pagIbigLoanDed, pagIbigHousingLoan: computed.pagIbigHousingLoanDed, sssProvident: computed.sssProvidentDed, sssSalaryLoan: computed.sssSalaryLoanDed, sssCalamityLoan: computed.sssCalamityLoanDed, pagIbigCalamity: computed.pagIbigCalamityDed, pagIbigSalaryLoan: computed.pagIbigSalaryLoanDed
     };
 
@@ -1283,13 +1194,12 @@ const taxableIncome = calculateMandatoryTaxableIncome(
     return employees.filter(emp => emp.company === selectedCompany).map(emp => {
       const empPayrolls = filteredPayrolls.filter(pr => pr.employeeId === emp.id);
       if (empPayrolls.length === 0) return null;
-      const totalHours = empPayrolls.reduce((sum, pr) => sum + pr.totalHours, 0);
+      const totalHours = empPayrolls.reduce((sum, pr) => sum + (pr.attendanceSummary?.totalMinutes ?? Math.round(pr.totalHours * 60)), 0) / 60;
       const totalDays = empPayrolls.reduce((sum, pr) => sum + pr.daysWorked, 0);
       const totalGross = empPayrolls.reduce((sum, pr) => sum + pr.grossPay, 0);
     const totalDeductions = empPayrolls.reduce((sum, pr) => fromCents(toCents(sum) + toCents(calculateTotalPayrollDeductions(pr))), 0);
       const totalNet = empPayrolls.reduce((sum, pr) => sum + pr.netPay, 0);
-      const requiredHrs = totalDays * 8;
-      const otHours = Math.max(0, totalHours - requiredHrs);
+      const otHours = empPayrolls.every(pr => pr.attendanceSummary) ? empPayrolls.reduce((sum, pr) => sum + pr.attendanceSummary!.overtimeMinutes, 0) / 60 : null;
       return { emp, totalHours, totalDays, otHours, totalGross, totalDeductions, totalNet, count: empPayrolls.length };
     }).filter(Boolean) as SummaryReportRow[];
   };
@@ -1412,15 +1322,14 @@ const taxableIncome = calculateMandatoryTaxableIncome(
             </div>
             <div className="overflow-y-auto p-6 bg-slate-50 flex flex-col gap-3">
               {(() => {
-                const monthLogs = attendances.filter(a => Number(a.employeeId) === monthLogsModalEmp.id && a.date && a.date.split('T')[0].startsWith(attendanceMonth)).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                const monthLogs = getMonthlyAttendance(monthLogsModalEmp.id).records;
                 if (monthLogs.length === 0) return <div className="text-center py-8 text-slate-500 italic">No logs found for this month.</div>;
                 return monthLogs.map(log => {
                   const isLeave = log.timeIn === 'LEAVE';
-                  const hasFullPunch = log.timeIn && log.timeOut && !isLeave;
-                  const shiftDetails = hasFullPunch ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : { reg: 0, ot: 0, earlyOt: 0, lateOt: 0, total: 0 };
+                  const shiftDetails = log.metrics;
                   return (
                     <div key={log.id} className="flex items-center justify-between gap-3 text-sm border border-slate-200 bg-white rounded-xl px-5 py-3.5 shadow-sm w-full group/log whitespace-nowrap hover:border-indigo-300 transition-colors">
-                      <span className="font-bold text-slate-700 w-[95px]">{formatMDY(log.date)}</span>
+                      <span className="font-bold text-slate-700 w-[95px]">{formatMDY(toAttendanceDateYMD(log.date))}</span>
                       <span className="text-slate-200">|</span>
                       <span className="font-mono font-bold text-indigo-900 min-w-[150px]">
                         {isLeave ? `${log.timeIn} (${log.timeOut})${log.reason ? ` - ${log.reason}` : ''}` : `${log.timeIn ? format12Hour(log.timeIn) : '--:--'} to ${log.timeOut ? format12Hour(log.timeOut) : '--:--'}`}
@@ -1432,7 +1341,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                       <span className="text-slate-200">|</span>
                       {shiftDetails.lateOt > 0 ? <span className="font-bold text-amber-600 w-[75px]" title="Late Overtime">Late OT: {formatDecToHM(shiftDetails.lateOt)}</span> : <span className="font-medium text-slate-400 w-[75px]">Late OT: --</span>}
                       <span className="text-slate-200">|</span>
-                      <span className={`font-bold w-[75px] text-right ${shiftDetails.total > 0 || log.hours > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{isLeave ? log.hours.toFixed(2) : shiftDetails.total.toFixed(2)} hrs</span>
+                      <span className={`font-bold w-[75px] text-right ${shiftDetails.netMinutes > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{(shiftDetails.netMinutes / 60).toFixed(2)} hrs</span>
                       <div className="flex items-center ml-2 border-l border-slate-200 pl-4">
                         <button onClick={() => { openEditLogModal(log); }} className="text-indigo-500 hover:text-indigo-700 font-bold transition-colors mr-4 text-xs uppercase bg-indigo-50 px-3 py-1.5 rounded-lg" title="Edit Log">Edit</button>
                         <button onClick={() => deleteAttendance(log.id)} className="text-slate-400 hover:text-red-600 font-bold transition-colors text-lg" title="Remove Log">✕</button>
@@ -1451,7 +1360,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-indigo-50/50 shrink-0">
-              <h2 className="text-lg font-bold text-indigo-950">Edit Log for {formatMDY(editingLog.date)}</h2>
+              <h2 className="text-lg font-bold text-indigo-950">Edit Log for {formatMDY(toAttendanceDateYMD(editingLog.date))}</h2>
               <button onClick={() => setEditingLog(null)} className="text-slate-400 hover:text-slate-600 p-1">✕</button>
             </div>
             <div className="p-6 flex flex-col gap-5">
@@ -1520,27 +1429,9 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                 {(() => {
                   const rec = selectedPayslip.record;
                   const emp = selectedPayslip.emp;
-                  const baseSalary = emp.baseRate;
-                  const days = rec.daysWorked || 0;
-                  const ratePerDay = days > 0 ? baseSalary / days : 0;
-                  const ratePerHour = ratePerDay / 8;
-                  const requiredHrs = days * 8;
-                  const diffHrs = rec.totalHours - requiredHrs;
-                  
-                  let undertimeDeduction = 0;
-                  let otPay = 0;
-                  if (diffHrs < 0) { 
-                      undertimeDeduction = Math.abs(diffHrs) * ratePerHour; 
-                  } else if (diffHrs > 0) {
-                      otPay = diffHrs * ratePerHour * 1.25;
-                  }
-                  
-                  const regularPay = baseSalary - undertimeDeduction;
-                  const standardEarnings = regularPay + otPay; 
-                  
-                  // Dynamically extract any manual government holiday adjustments
-                  // by comparing the calculated standard earning vs what was actually saved
-                  const manualAdjustment = rec.grossPay - standardEarnings;
+                  const summary = rec.attendanceSummary;
+                  const regularPay = summary ? summary.basicSalary - summary.undertimeDeduction : null;
+                  const manualAdjustment = summary?.govHolidayAmt || 0;
                   const totalEarnings = rec.grossPay; 
                  const totalDeductionsCalc = calculateTotalPayrollDeductions(rec);
 
@@ -1551,15 +1442,15 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                         <tr><td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">{selectedCompany?.toUpperCase()} TRADING CORP.</td><td colSpan={4} className="border border-slate-300 border-l-0 bg-white"></td></tr>
                         <tr><td colSpan={5} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 uppercase text-slate-800"><span className="text-[10px] text-slate-500">Employee's Name :</span> <span className="ml-2 font-bold text-sm text-slate-900">{emp.lastName}, {emp.firstName}</span></td><td colSpan={4} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 text-center uppercase text-slate-800">Date: {formatMDY(rec.createdAt)} ({rec.daysWorked} WORKING DAYS)</td></tr>
                         <tr><td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 uppercase text-slate-600 tracking-wider">Earnings</td><td colSpan={4} className="border border-slate-300 px-3 py-1.5 font-bold bg-slate-50 text-slate-600">NO. OF DAYS PRESENT: <span className="font-bold text-indigo-700 ml-1">{rec.daysWorked}</span></td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-800">BASIC SALARY</td><td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{formatMoney(baseSalary)}</td><td colSpan={4} rowSpan={11} className="border border-slate-300 bg-white"></td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER HOUR</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(ratePerHour)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER DAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(ratePerDay)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">TOTAL HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(rec.totalHours)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REQUIRED NO.OF HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(requiredHrs)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">REGULAR PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{formatMoney(regularPay)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatDecToHM(diffHrs) : '-'}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{diffHrs > 0 ? formatMoney(ratePerHour * 1.25) : '-'}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">OT PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{otPay > 0 ? formatMoney(otPay) : '-'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-800">BASIC SALARY</td><td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{summary ? formatMoney(summary.basicSalary) : 'Unavailable'}</td><td colSpan={4} rowSpan={11} className="border border-slate-300 bg-white"></td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER HOUR</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatMoney(summary.ratePerHour) : 'Unavailable'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER DAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatMoney(summary.ratePerDay) : 'Unavailable'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">TOTAL HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(summary ? summary.totalMinutes / 60 : rec.totalHours)}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REQUIRED NO.OF HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatDecToHM(summary ? summary.requiredMinutes / 60 : rec.daysWorked * 8)}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">REGULAR PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{regularPay !== null ? formatMoney(regularPay) : 'Unavailable'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatDecToHM(summary.overtimeMinutes / 60) : 'Unavailable'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatMoney(summary.ratePerHour * 1.25) : 'Unavailable'}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">OT PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{summary ? formatMoney(summary.otPay) : 'Unavailable'}</td></tr>
                         {Math.abs(manualAdjustment) > 0.01 ? (
                            <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">GOVT HOLIDAY / ADJ</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{manualAdjustment > 0 ? '+' : ''}{formatMoney(manualAdjustment)}</td></tr>
                         ) : (
@@ -1681,6 +1572,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Regular Hours:</span> <span className="font-mono">{formatDecToHM(computed.regularHours)}</span></div>
                   
                  {computed.govHolidayAmt !== 0 && (
                     <div className={`flex justify-between font-medium ${computed.govHolidayAmt > 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'} p-1.5 rounded-lg border ${computed.govHolidayAmt > 0 ? 'border-emerald-100' : 'border-rose-100'} mt-1 mb-1 text-[11px]`}>
@@ -1765,6 +1657,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                       <th className="py-3 px-4 font-black uppercase text-xs text-center">Payrolls</th>
                       <th className="py-3 px-4 font-black uppercase text-xs text-center">Total Days</th>
                       <th className="py-3 px-4 font-black uppercase text-xs text-center">Total Hrs</th>
+                      <th className="py-3 px-4 font-black uppercase text-xs text-center">OT Hrs</th>
                       <th className="py-3 px-4 font-black uppercase text-xs text-right">Gross Pay</th>
                       <th className="py-3 px-4 font-black uppercase text-xs text-right">Deductions</th>
                       <th className="py-3 px-4 font-black uppercase text-xs text-right">Net Pay</th>
@@ -1772,7 +1665,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {getFilteredReportData().length === 0 ? (
-                      <tr><td colSpan={7} className="py-12 text-center text-slate-500 font-medium">No records found for this period.</td></tr>
+                      <tr><td colSpan={8} className="py-12 text-center text-slate-500 font-medium">No records found for this period.</td></tr>
                     ) : (
                       <>
                         {getFilteredReportData().map((row, idx) => (
@@ -1781,13 +1674,14 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                             <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.count}</td>
                             <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalDays}</td>
                             <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.totalHours.toFixed(2)}</td>
+                            <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.otHours === null ? 'Unavailable' : row.otHours.toFixed(2)}</td>
                             <td className="py-3 px-4 text-right text-slate-700 font-mono">₱{row.totalGross.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                             <td className="py-3 px-4 text-right text-rose-600 font-mono">-₱{row.totalDeductions.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                             <td className="py-3 px-4 text-right font-black text-slate-900 font-mono text-[15px]">₱{row.totalNet.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                           </tr>
                         ))}
                         <tr className="bg-slate-50 border-t-2 border-slate-900 font-black">
-                          <td colSpan={4} className="py-3 px-4 text-right uppercase text-slate-800 text-xs tracking-widest">Grand Totals:</td>
+                          <td colSpan={5} className="py-3 px-4 text-right uppercase text-slate-800 text-xs tracking-widest">Grand Totals:</td>
                           <td className="py-3 px-4 text-right text-slate-900 font-mono">₱{getFilteredReportData().reduce((s, r) => s + r.totalGross, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                           <td className="py-3 px-4 text-right text-rose-700 font-mono">-₱{getFilteredReportData().reduce((s, r) => s + r.totalDeductions, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                           <td className="py-3 px-4 text-right text-indigo-700 font-mono text-lg bg-indigo-50 border-b-4 border-indigo-200">₱{getFilteredReportData().reduce((s, r) => s + r.totalNet, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
@@ -2049,12 +1943,10 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {attendanceFilter === 'day' && filteredAttendanceEmployees.map((emp) => {
-                            const empLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0] === attendanceDate);
-                            let totalHrs = 0; let totalOtHrs = 0;
-                            empLogs.forEach(log => {
-                              if (!log.timeIn || !log.timeIn.includes(':')) { totalHrs += log.hours; } 
-                              else { const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); totalHrs += shiftCalc.total; totalOtHrs += shiftCalc.ot; }
-                            });
+                            const dailyAttendance = getAttendanceSummary(emp.id, attendanceDate, attendanceDate);
+                            const empLogs = dailyAttendance.records;
+                            const totalHrs = dailyAttendance.netMinutes / 60;
+                            const totalOtHrs = dailyAttendance.otMinutes / 60;
                             const currentLog = dailyTimeLogs[emp.id] || { timeIn: shiftStart, timeOut: shiftEnd, type: 'regular', reason: '' };
                         return (
                           <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors group">
@@ -2068,7 +1960,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                                   empLogs.map(log => {
                                     const isLeave = log.timeIn === 'LEAVE';
                                     const hasFullPunch = log.timeIn && log.timeOut && !isLeave;
-                                    const shiftCalc = hasFullPunch ? calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd) : null;
+                                    const shiftCalc = hasFullPunch ? log.metrics : null;
                                     return (
                                       <div key={log.id} className="flex flex-col bg-white border border-indigo-100 rounded-xl shadow-sm overflow-hidden w-full max-w-[420px]">
                                         <div className="flex items-center justify-between gap-6 bg-indigo-50 px-4 py-2.5">
@@ -2085,8 +1977,8 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                                             <span className="text-indigo-600" title="Regular Shift Hours">Reg: {formatDecToHM(shiftCalc.reg)}</span><span className="text-slate-200">|</span><span className={`${shiftCalc.earlyOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Early: {shiftCalc.earlyOt > 0 ? formatDecToHM(shiftCalc.earlyOt) : '--'}</span><span className="text-slate-200">|</span><span className={`${shiftCalc.lateOt > 0 ? 'text-amber-600 font-bold' : 'text-slate-400 font-medium'}`}>Late OT: {shiftCalc.lateOt > 0 ? formatDecToHM(shiftCalc.lateOt) : '--'}</span>
                                           </div>
                                         ) : (
-                                          <div className={`px-4 py-2.5 text-[11px] uppercase font-bold border-t border-indigo-50 ${log.hours > 0 ? 'text-emerald-600 bg-white' : 'text-rose-600 bg-rose-50'}`}>
-                                            {log.hours > 0 ? `Auto-credited: ${formatDecToHM(log.hours)}` : 'Deducted: 0m'}
+                                          <div className={`px-4 py-2.5 text-[11px] uppercase font-bold border-t border-indigo-50 ${log.metrics.netMinutes > 0 ? 'text-emerald-600 bg-white' : 'text-rose-600 bg-rose-50'}`}>
+                                            {log.metrics.netMinutes > 0 ? `Auto-credited: ${formatDecToHM(log.metrics.netMinutes / 60)}` : 'Deducted: 0m'}
                                           </div>
                                         )}
                                       </div>
@@ -2123,12 +2015,10 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                       })}
 
                       {attendanceFilter === 'month' && filteredAttendanceEmployees.map((emp) => {
-                            const monthLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && a.date.split('T')[0].startsWith(attendanceMonth)).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                            let totalHrs = 0; let totalOverallOtHrs = 0;
-                            monthLogs.forEach(log => {
-                              if (!log.timeIn || !log.timeIn.includes(':')) { totalHrs += log.hours; } 
-                              else { const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); totalHrs += shiftCalc.total; totalOverallOtHrs += shiftCalc.ot; }
-                            });
+                            const monthlyAttendance = getMonthlyAttendance(emp.id);
+                            const monthLogs = monthlyAttendance.records;
+                            const totalHrs = monthlyAttendance.netMinutes / 60;
+                            const totalOverallOtHrs = monthlyAttendance.otMinutes / 60;
                         return (
                           <tr key={emp.id} className="hover:bg-indigo-50/10 transition-colors">
                             <td className="py-5 px-6 align-top w-1/4">
@@ -2206,43 +2096,9 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                           <tr><td colSpan={5} className="py-12 text-center text-slate-400 font-medium text-sm">No active employees found matching your search.</td></tr>
                         ) : (
                           filteredActiveEmployees.map((emp) => {
-                            const rawEmpLogs = attendances.filter(a => Number(a.employeeId) === emp.id && a.date && isLogWithinPayrollPeriod(a.date));
-                            
-                            // Visual dedup in row rendering
-                            const uniqueLogsMap = new Map();
-                            rawEmpLogs.forEach(log => {
-                              const dateStr = log.date.split('T')[0];
-                              let logHrs = 0;
-                              if (!log.timeIn || !log.timeIn.includes(':')) { 
-                                  logHrs = log.hours || 0; 
-                              } else { 
-                                  const shiftCalc = calculateShiftHours(log.timeIn, log.timeOut, log.shiftStart || shiftStart, log.shiftEnd || shiftEnd); 
-                                  logHrs = shiftCalc.total; 
-                              }
-                              
-                              const existing = uniqueLogsMap.get(dateStr);
-                              if (!existing || logHrs > existing.calculatedHours) {
-                                uniqueLogsMap.set(dateStr, { ...log, calculatedHours: logHrs });
-                              }
-                            });
-                            
-                            const uniqueEmpLogs = Array.from(uniqueLogsMap.values());
-
-                            let totalLogged = 0; 
-                            uniqueEmpLogs.forEach((log: any) => {
-                                // Dynamic exclusion for visual display on the table
-                                const logDate = new Date(log.date);
-                                const isSunday = logDate.getDay() === 0;
-                                const isAug31 = logDate.getMonth() === 7 && logDate.getDate() === 31;
-                                
-                                if (!isSunday && !isAug31) {
-                                    totalLogged += log.calculatedHours;
-                                }
-                            });
-                            
-                            // Calculate dynamic required hours instead of hardcoded 112
-                            const currentDays = parseFloat(payrollData.daysWorked) || 14;
-                            const tableOtLogged = Math.max(0, totalLogged - (currentDays * 8));
+                            const payrollAttendance = getAttendanceSummary(emp.id, payrollStartDate, payrollEndDate);
+                            const totalLogged = payrollAttendance.netMinutes / 60;
+                            const tableOtLogged = payrollAttendance.otMinutes / 60;
 
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
@@ -2294,7 +2150,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                                 <td className="py-4 px-6 text-sm text-slate-600 font-mono font-semibold">{formatMDY(pr.createdAt)}</td>
                                 <td className="py-4 px-6 text-sm text-slate-500 font-mono">{emp?.employeeId || `#${emp?.id}`}</td>
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown Employee'}</td>
-                                <td className="py-4 px-6 text-sm text-slate-600">{formatDecToHM(pr.totalHours)} / {pr.daysWorked} days</td>
+                                <td className="py-4 px-6 text-sm text-slate-600">{formatDecToHM(pr.attendanceSummary ? pr.attendanceSummary.totalMinutes / 60 : pr.totalHours)} / {pr.daysWorked} days</td>
                                 <td className="py-4 px-6 font-mono font-bold text-emerald-700">₱{pr.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                                 <td className="py-4 px-6">
   <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">

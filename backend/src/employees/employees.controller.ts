@@ -36,8 +36,8 @@ export class EmployeesController {
   // ATTENDANCES
   // ==========================================
   @Get('employees/attendance/all')
-  async getAttendances() {
-    return await this.employeesService.getAttendances();
+  async getAttendances(@Query('company') company?: string) {
+    return await this.employeesService.getAttendances(company);
   }
 
   @Post('employees/attendance')
@@ -98,8 +98,8 @@ export class EmployeesController {
   // SETTINGS (Global Shift Times)
   // ==========================================
   @Get('settings')
-  async getSettings() {
-    return await this.employeesService.getSettings();
+  async getSettings(@Query('company') company?: string) {
+    return await this.employeesService.getSettings(company);
   }
 
   @Post('settings')

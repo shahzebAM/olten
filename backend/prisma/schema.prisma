@@ -67,6 +67,11 @@ model Attendance {
   reason     String?
   shiftStart String?
   shiftEnd   String?
+  lunchStart String?
+  lunchEnd   String?
+  breakOut   String?
+  breakIn    String?
+  lunchOverrideMinutes Int?
   createdAt  DateTime @default(now())
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
@@ -76,6 +81,7 @@ model Payroll {
   employeeId         Int
   daysWorked         Float
   totalHours         Float
+  attendanceSummary  Json?
   cashAdvance        Float    @default(0)
   companyLoan        Float    @default(0)
   sssDeduction       Float    @default(0)
