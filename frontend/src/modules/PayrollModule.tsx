@@ -404,13 +404,81 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
     return logDate >= payrollStartDate && logDate <= payrollEndDate;
   };
 
+const toCents = (val: any): number => {
+    const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
+    return Number.isFinite(num) ? Math.round(num * 100) : 0;
+  };
+
+  const fromCents = (cents: number): number => {
+    return Math.round(cents) / 100;
+  };
+
+  const calculateMandatoryTaxableIncome = (
+    grossPay: number,
+    sss: number,
+    philhealth: number,
+    pagIbig: number,
+    sssProvident: number = 0,
+    isSssProvidentMandatory: boolean = true
+  ): number => {
+    const grossCents = toCents(grossPay);
+    const mandatoryExemptCents =
+      Math.max(0, toCents(sss)) +
+      Math.max(0, toCents(philhealth)) +
+      Math.max(0, toCents(pagIbig)) +
+      (isSssProvidentMandatory ? Math.max(0, toCents(sssProvident)) : 0);
+
+    return fromCents(Math.max(0, grossCents - mandatoryExemptCents));
+  };
+
+  const calculateTotalPayrollDeductions = (rec: {
+    cashAdvance?: number;
+    companyLoan?: number;
+    sssDeduction?: number;
+    pagIbigDeduct?: number;
+    philhealthDeduct?: number;
+    sssProvident?: number;
+    tax?: number;
+    pagIbigLoan?: number;
+    pagIbigHousingLoan?: number;
+    sssSalaryLoan?: number;
+    sssCalamityLoan?: number;
+    pagIbigCalamity?: number;
+    pagIbigSalaryLoan?: number;
+  }): number => {
+    const totalCents =
+      Math.max(0, toCents(rec.cashAdvance)) +
+      Math.max(0, toCents(rec.companyLoan)) +
+      Math.max(0, toCents(rec.sssDeduction)) +
+      Math.max(0, toCents(rec.pagIbigDeduct)) +
+      Math.max(0, toCents(rec.philhealthDeduct)) +
+      Math.max(0, toCents(rec.sssProvident)) +
+      Math.max(0, toCents(rec.tax)) +
+      Math.max(0, toCents(rec.pagIbigLoan)) +
+      Math.max(0, toCents(rec.pagIbigHousingLoan)) +
+      Math.max(0, toCents(rec.sssSalaryLoan)) +
+      Math.max(0, toCents(rec.sssCalamityLoan)) +
+      Math.max(0, toCents(rec.pagIbigCalamity)) +
+      Math.max(0, toCents(rec.pagIbigSalaryLoan));
+
+    return fromCents(totalCents);
+  };
+
   const calculateDynamicTax = (taxableIncome: number, brackets: any[]) => {
-    if (taxableIncome <= 0) return { tax: 0, bracketMin: 0, rate: 0, minTax: 0, taxBase: 0 };
+    const taxableCents = toCents(taxableIncome);
+    if (taxableCents <= 0) return { tax: 0, bracketMin: 0, rate: 0, minTax: 0, taxBase: 0 };
     const sorted = [...brackets].sort((a, b) => b.min - a.min);
-    const applicable = sorted.find(b => taxableIncome >= b.min) || sorted[sorted.length - 1];
-    const taxBase = taxableIncome - applicable.excessOver;
-    const computedTax = applicable.baseTax + (taxBase * applicable.rate);
-    return { tax: computedTax, bracketMin: applicable.min, rate: applicable.rate, minTax: applicable.baseTax, taxBase: Math.max(0, taxBase) };
+    const applicable = sorted.find(b => taxableCents >= toCents(b.min)) || sorted[sorted.length - 1];
+    const excessCents = Math.max(0, taxableCents - toCents(applicable.excessOver));
+    const baseTaxCents = toCents(applicable.baseTax);
+    const computedTaxCents = baseTaxCents + Math.round(excessCents * Number(applicable.rate));
+    return {
+      tax: fromCents(computedTaxCents),
+      bracketMin: applicable.min,
+      rate: applicable.rate,
+      minTax: applicable.baseTax,
+      taxBase: fromCents(excessCents),
+    };
   };
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -449,7 +517,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
     const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay'];
     const data = payrolls.map(p => {
       const emp = employees.find(e => e.id === p.employeeId);
-      const totalDeds = p.cashAdvance + (p.companyLoan || 0) + p.sssDeduction + p.pagIbigDeduct + p.philhealthDeduct + p.tax + (p.pagIbigLoan || 0) + (p.pagIbigHousingLoan || 0);
+     const totalDeds = calculateTotalPayrollDeductions(p);
       return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, p.totalHours, p.grossPay, totalDeds, p.netPay];
     });
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
@@ -1029,18 +1097,37 @@ rawEmpLogs.forEach(log => {
 
     let companyLoanDed = parseFloat(payrollData.companyLoan) || 0;
     if (activeEmployee && companyLoanDed > (activeEmployee.loanBalance || 0)) { companyLoanDed = activeEmployee.loanBalance || 0; }
-
-    const taxableIncome = Math.round((grossPay - sssDed - pagIbigDed - philhealthDed) * 100) / 100;
+const taxableIncome = calculateMandatoryTaxableIncome(
+      grossPay,
+      sssDed,
+      philhealthDed,
+      pagIbigDed,
+      sssProvidentDed,
+      true
+    );
     let autoTax = 0;
 
     if (payrollData.isDeclared && taxableIncome > 0) {
       const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
-      autoTax = Math.round(taxResult.tax * 100) / 100;
+      autoTax = taxResult.tax;
     }
 
-    const totalDeductions = Math.round((cashAdvanceDed + companyLoanDed + sssDed + pagIbigDed + philhealthDed + autoTax + pagIbigLoanDed + pagIbigHousingLoanDed + sssProvidentDed + sssSalaryLoanDed + sssCalamityLoanDed + pagIbigCalamityDed + pagIbigSalaryLoanDed) * 100) / 100;
-    const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
-
+    const totalDeductions = calculateTotalPayrollDeductions({
+      cashAdvance: cashAdvanceDed,
+      companyLoan: companyLoanDed,
+      sssDeduction: sssDed,
+      pagIbigDeduct: pagIbigDed,
+      philhealthDeduct: philhealthDed,
+      sssProvident: sssProvidentDed,
+      tax: autoTax,
+      pagIbigLoan: pagIbigLoanDed,
+      pagIbigHousingLoan: pagIbigHousingLoanDed,
+      sssSalaryLoan: sssSalaryLoanDed,
+      sssCalamityLoan: sssCalamityLoanDed,
+      pagIbigCalamity: pagIbigCalamityDed,
+      pagIbigSalaryLoan: pagIbigSalaryLoanDed,
+    });
+    const netPay = fromCents(toCents(grossPay) - toCents(totalDeductions));
     return { 
       totalHoursWorked, ratePerDay, ratePerHour, requiredHrs, 
       otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
@@ -1109,7 +1196,7 @@ rawEmpLogs.forEach(log => {
       const totalHours = empPayrolls.reduce((sum, pr) => sum + pr.totalHours, 0);
       const totalDays = empPayrolls.reduce((sum, pr) => sum + pr.daysWorked, 0);
       const totalGross = empPayrolls.reduce((sum, pr) => sum + pr.grossPay, 0);
-      const totalDeductions = empPayrolls.reduce((sum, pr) => sum + (pr.cashAdvance + (pr.companyLoan || 0) + pr.sssDeduction + pr.pagIbigDeduct + pr.philhealthDeduct + pr.tax), 0);
+    const totalDeductions = empPayrolls.reduce((sum, pr) => fromCents(toCents(sum) + toCents(calculateTotalPayrollDeductions(pr))), 0);
       const totalNet = empPayrolls.reduce((sum, pr) => sum + pr.netPay, 0);
       const requiredHrs = totalDays * 8;
       const otHours = Math.max(0, totalHours - requiredHrs);
@@ -1365,8 +1452,7 @@ rawEmpLogs.forEach(log => {
                   // by comparing the calculated standard earning vs what was actually saved
                   const manualAdjustment = rec.grossPay - standardEarnings;
                   const totalEarnings = rec.grossPay; 
-                  
-                  const totalDeductionsCalc = rec.cashAdvance + (rec.companyLoan || 0) + rec.sssDeduction + rec.pagIbigDeduct + rec.philhealthDeduct + rec.tax;
+                 const totalDeductionsCalc = calculateTotalPayrollDeductions(rec);
 
                   return (
                     <table className="w-full text-left border-collapse border border-slate-300 text-[11px] sm:text-xs text-slate-700 bg-white shadow-sm print:shadow-none">
@@ -2202,9 +2288,16 @@ rawEmpLogs.forEach(log => {
                             if (declaredPayrolls.length === 0) return <tr><td colSpan={8} className="py-8 text-slate-400 italic">No declared salary records found.</td></tr>;
                             const rows = declaredPayrolls.map((pr) => {
                               const emp = employees.find(e => e.id === pr.employeeId); const name = emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown';
-                              const taxableIncome = pr.grossPay - pr.sssDeduction - pr.pagIbigDeduct - pr.philhealthDeduct; 
+                          const taxableIncome = calculateMandatoryTaxableIncome(
+                                pr.grossPay,
+                                pr.sssDeduction,
+                                pr.philhealthDeduct,
+                                pr.pagIbigDeduct,
+                                pr.sssProvident || 0,
+                                true
+                              );
                               const taxData = calculateDynamicTax(taxableIncome, taxBrackets);
-                              totalWithholdingTax += taxData.tax;
+                              totalWithholdingTax = fromCents(toCents(totalWithholdingTax) + toCents(taxData.tax));
                               return ( 
                                 <tr key={pr.id} className="hover:bg-slate-50"> 
                                   <td className="border border-slate-400 py-2 px-3 text-left font-bold uppercase">{name}</td> 
