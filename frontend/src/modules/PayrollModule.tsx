@@ -14,6 +14,24 @@ const formatMDY = (dateStr: string) => {
   return dateStr;
 };
 
+const toManilaYMD = (dateStr?: string | null) => {
+  if (!dateStr) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) return dateStr.trim();
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr.split('T')[0] || '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+};
+
+const formatManilaMDY = (dateStr?: string | null) => {
+  const ymd = toManilaYMD(dateStr);
+  return ymd ? formatMDY(ymd) : 'MM/DD/YYYY';
+};
+
 const formatMonthYear = (ym: string) => {
   if (!ym) return 'MM/YYYY';
   const [y, m] = ym.split('-');
@@ -283,8 +301,80 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [payrollStartDate, setPayrollStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [payrollEndDate, setPayrollEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 15).toISOString().split('T')[0]);
 
-  const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
+const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
+
+  // --- TAX REPORTS FILTER & SEARCH STATES ---
+  const [taxDateFilterType, setTaxDateFilterType] = useState<'payroll_date' | 'cutoff'>('payroll_date');
+  const [taxDraftFromDate, setTaxDraftFromDate] = useState('');
+  const [taxDraftToDate, setTaxDraftToDate] = useState('');
+  const [taxAppliedFromDate, setTaxAppliedFromDate] = useState('');
+  const [taxAppliedToDate, setTaxAppliedToDate] = useState('');
+  const [taxSearchInput, setTaxSearchInput] = useState('');
+  const [taxDebouncedSearch, setTaxDebouncedSearch] = useState('');
+  const [taxFilterError, setTaxFilterError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setTaxDebouncedSearch(taxSearchInput.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [taxSearchInput]);
+
+  const handleApplyTaxDateFilter = () => {
+    if (taxDraftFromDate && taxDraftToDate && taxDraftFromDate > taxDraftToDate) {
+      setTaxFilterError('Invalid date range: Date From cannot be later than Date To.');
+      showToast('Invalid date range: Date From cannot be later than Date To.', 'error');
+      return;
+    }
+    setTaxFilterError(null);
+    setTaxAppliedFromDate(taxDraftFromDate);
+    setTaxAppliedToDate(taxDraftToDate);
+  };
+
+  const handleClearTaxDates = () => {
+    setTaxDraftFromDate('');
+    setTaxDraftToDate('');
+    setTaxAppliedFromDate('');
+    setTaxAppliedToDate('');
+    setTaxFilterError(null);
+  };
+
+  const handleResetAllTaxFilters = () => {
+    setTaxDraftFromDate('');
+    setTaxDraftToDate('');
+    setTaxAppliedFromDate('');
+    setTaxAppliedToDate('');
+    setTaxSearchInput('');
+    setTaxDebouncedSearch('');
+    setTaxFilterError(null);
+  };
+
+  const applyQuickTaxDatePreset = (preset: 'today' | 'this_month' | 'last_month') => {
+    const todayManila = toManilaYMD(new Date().toISOString());
+    const [y, m] = todayManila.split('-').map(Number);
+
+    let start = todayManila;
+    let end = todayManila;
+
+    if (preset === 'this_month') {
+      const lastDay = new Date(y, m, 0).getDate();
+      start = `${y}-${String(m).padStart(2, '0')}-01`;
+      end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    } else if (preset === 'last_month') {
+      const prevYear = m === 1 ? y - 1 : y;
+      const prevMonth = m === 1 ? 12 : m - 1;
+      const lastDay = new Date(prevYear, prevMonth, 0).getDate();
+      start = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
+      end = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    }
+
+    setTaxFilterError(null);
+    setTaxDraftFromDate(start);
+    setTaxDraftToDate(end);
+    setTaxAppliedFromDate(start);
+    setTaxAppliedToDate(end);
+  };
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
@@ -2276,19 +2366,228 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                   </div>
                 </div>
 
-                <div className="bg-white shadow-sm border border-slate-300 overflow-hidden rounded-xl">
-                  <div className="p-4 border-b border-slate-200 bg-[#4472c4]/10"><h2 className="text-lg font-bold text-[#4472c4] tracking-wider uppercase">Tax Computation Report</h2></div>
+               <div className="bg-white shadow-sm border border-slate-300 overflow-hidden rounded-xl">
+                  <div className="p-4 border-b border-slate-200 bg-[#4472c4]/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#4472c4] tracking-wider uppercase">Tax Computation Report</h2>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        Filter historical BIR withholding tax records by {taxDateFilterType === 'cutoff' ? 'Payroll Cutoff Period' : 'Payroll Generation Date'} (Asia/Manila) and employee name.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">Quick:</span>
+                      <button type="button" onClick={() => applyQuickTaxDatePreset('today')} className="px-2.5 py-1 text-xs font-semibold rounded-md bg-white border border-slate-300 text-slate-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors shadow-sm">Today</button>
+                      <button type="button" onClick={() => applyQuickTaxDatePreset('this_month')} className="px-2.5 py-1 text-xs font-semibold rounded-md bg-white border border-slate-300 text-slate-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors shadow-sm">This Month</button>
+                      <button type="button" onClick={() => applyQuickTaxDatePreset('last_month')} className="px-2.5 py-1 text-xs font-semibold rounded-md bg-white border border-slate-300 text-slate-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors shadow-sm">Last Month</button>
+                    </div>
+                  </div>
+
+                  {/* COMPACT HORIZONTAL FILTER & SEARCH TOOLBAR */}
+                  <div className="p-4 bg-slate-50/80 border-b border-slate-200">
+                    <div className="flex flex-col lg:flex-row items-stretch lg:items-end gap-3">
+                      {/* FILTER BASIS SELECTOR: PAYROLL DATE VS CUTOFF */}
+                      <div className="flex flex-col gap-1 w-full sm:w-auto lg:w-44 shrink-0">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Date Basis</label>
+                        <select
+                          value={taxDateFilterType}
+                          onChange={(e) => setTaxDateFilterType(e.target.value as 'payroll_date' | 'cutoff')}
+                          className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-600 outline-none shadow-sm cursor-pointer h-[38px]"
+                        >
+                          <option value="payroll_date">Payroll Date (Generated)</option>
+                          <option value="cutoff">Payroll Cutoff Period</option>
+                        </select>
+                      </div>
+
+                      {/* DATE FROM */}
+                      <div className="flex flex-col gap-1 w-full sm:w-auto lg:w-40 shrink-0">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Date From</label>
+                        <div className="relative w-full">
+                          <div className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg shadow-sm flex items-center justify-between pointer-events-none text-xs font-semibold text-slate-800 h-[38px]">
+                            <span>{taxDraftFromDate ? formatMDY(taxDraftFromDate) : 'MM/DD/YYYY'}</span>
+                            <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          </div>
+                          <input
+                            type="date"
+                            value={taxDraftFromDate}
+                            onChange={(e) => { setTaxDraftFromDate(e.target.value); setTaxFilterError(null); }}
+                            onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch (err) {} }}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          />
+                        </div>
+                      </div>
+
+                      {/* DATE TO */}
+                      <div className="flex flex-col gap-1 w-full sm:w-auto lg:w-40 shrink-0">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Date To</label>
+                        <div className="relative w-full">
+                          <div className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg shadow-sm flex items-center justify-between pointer-events-none text-xs font-semibold text-slate-800 h-[38px]">
+                            <span>{taxDraftToDate ? formatMDY(taxDraftToDate) : 'MM/DD/YYYY'}</span>
+                            <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          </div>
+                          <input
+                            type="date"
+                            value={taxDraftToDate}
+                            onChange={(e) => { setTaxDraftToDate(e.target.value); setTaxFilterError(null); }}
+                            onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch (err) {} }}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          />
+                        </div>
+                      </div>
+
+                      {/* EMPLOYEE SEARCH BAR */}
+                      <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Search Employee</label>
+                        <div className="relative w-full">
+                          <svg className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                          <input
+                            type="text"
+                            placeholder="Search employee name..."
+                            value={taxSearchInput}
+                            onChange={(e) => setTaxSearchInput(e.target.value)}
+                            className="w-full pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-600 outline-none shadow-sm h-[38px]"
+                          />
+                          {taxSearchInput && (
+                            <button
+                              type="button"
+                              onClick={() => { setTaxSearchInput(''); setTaxDebouncedSearch(''); }}
+                              title="Clear search (keep dates)"
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* ACTION BUTTONS: APPLY | CLEAR FILTER | RESET ALL */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleApplyTaxDateFilter}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors h-[38px] whitespace-nowrap"
+                        >
+                          Apply Filter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearTaxDates}
+                          className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold rounded-lg shadow-sm transition-colors h-[38px] whitespace-nowrap"
+                          title="Clear date range while preserving employee search"
+                        >
+                          Clear Filter
+                        </button>
+                        {(taxAppliedFromDate || taxAppliedToDate || taxDebouncedSearch || taxDraftFromDate || taxDraftToDate) && (
+                          <button
+                            type="button"
+                            onClick={handleResetAllTaxFilters}
+                            className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-lg shadow-sm transition-colors h-[38px] whitespace-nowrap"
+                          >
+                            Reset All
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {taxFilterError && (
+                      <div className="mt-2.5 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold text-rose-700">
+                        {taxFilterError}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="overflow-x-auto p-4">
                     <table className="w-full text-center border-collapse border border-slate-400 text-sm whitespace-nowrap">
-                      <thead className="bg-[#4472c4] text-white"><tr><th className="border border-slate-400 py-2.5 px-3">Name</th><th className="border border-slate-400 py-2.5 px-3">TAXABLE INCOME</th><th className="border border-slate-400 py-2.5 px-3">INCOME BRACKET</th><th className="border border-slate-400 py-2.5 px-3">TAX BASE</th><th className="border border-slate-400 py-2.5 px-3">TAX RATE</th><th className="border border-slate-400 py-2.5 px-3">TAX</th><th className="border border-slate-400 py-2.5 px-3">MIN W/TAX</th><th className="border border-slate-400 py-2.5 px-3">WITHHOLDING TAX</th></tr></thead>
+                      <thead className="bg-[#4472c4] text-white">
+                        <tr>
+                          <th className="border border-slate-400 py-2.5 px-3">Name</th>
+                          <th className="border border-slate-400 py-2.5 px-3">PAYROLL DATE</th>
+                          <th className="border border-slate-400 py-2.5 px-3">TAXABLE INCOME</th>
+                          <th className="border border-slate-400 py-2.5 px-3">INCOME BRACKET</th>
+                          <th className="border border-slate-400 py-2.5 px-3">TAX BASE</th>
+                          <th className="border border-slate-400 py-2.5 px-3">TAX RATE</th>
+                          <th className="border border-slate-400 py-2.5 px-3">TAX</th>
+                          <th className="border border-slate-400 py-2.5 px-3">MIN W/TAX</th>
+                          <th className="border border-slate-400 py-2.5 px-3">WITHHOLDING TAX</th>
+                        </tr>
+                      </thead>
                       <tbody>
-                        {payrolls.length === 0 ? ( <tr><td colSpan={8} className="py-8 text-slate-400 italic">No payrolls computed yet.</td></tr> ) : (
+                        {payrolls.length === 0 ? (
+                          <tr><td colSpan={9} className="py-8 text-slate-400 italic">No payrolls computed yet.</td></tr>
+                        ) : (
                           (() => {
-                            let totalWithholdingTax = 0; const declaredPayrolls = payrolls.filter(pr => pr.tax > 0 && employees.some(e => e.id === Number(pr.employeeId) && e.company === selectedCompany));
-                            if (declaredPayrolls.length === 0) return <tr><td colSpan={8} className="py-8 text-slate-400 italic">No declared salary records found.</td></tr>;
-                            const rows = declaredPayrolls.map((pr) => {
-                              const emp = employees.find(e => e.id === pr.employeeId); const name = emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown';
-                          const taxableIncome = calculateMandatoryTaxableIncome(
+                            const companyDeclaredPayrolls = payrolls.filter(pr =>
+                              pr.tax > 0 && employees.some(e => e.id === Number(pr.employeeId) && e.company === selectedCompany)
+                            );
+
+                            if (companyDeclaredPayrolls.length === 0) {
+                              return <tr><td colSpan={9} className="py-8 text-slate-400 italic">No declared salary records found.</td></tr>;
+                            }
+
+                            const normalizedQuery = taxDebouncedSearch.toLowerCase().replace(/\s+/g, ' ');
+
+                            const filteredTaxPayrolls = companyDeclaredPayrolls.filter((pr: any) => {
+                              const emp = employees.find(e => e.id === Number(pr.employeeId));
+                              if (!emp) return false;
+
+                              if (normalizedQuery) {
+                                const first = (emp.firstName || '').trim().toLowerCase();
+                                const middle = (emp.middleName || '').trim().toLowerCase();
+                                const last = (emp.lastName || '').trim().toLowerCase();
+                                const empCode = String(emp.employeeId || '').trim().toLowerCase();
+                                const sysId = String(emp.id || '').trim().toLowerCase();
+                                const fullFML = [first, middle, last].filter(Boolean).join(' ');
+                                const fullFL = [first, last].filter(Boolean).join(' ');
+                                const fullLF = [last, first].filter(Boolean).join(', ');
+                                const fullLFM = [last, first, middle].filter(Boolean).join(' ');
+
+                                const matchesSearch =
+                                  first.includes(normalizedQuery) ||
+                                  middle.includes(normalizedQuery) ||
+                                  last.includes(normalizedQuery) ||
+                                  empCode.includes(normalizedQuery) ||
+                                  sysId === normalizedQuery ||
+                                  fullFML.includes(normalizedQuery) ||
+                                  fullFL.includes(normalizedQuery) ||
+                                  fullLF.includes(normalizedQuery) ||
+                                  fullLFM.includes(normalizedQuery);
+
+                                if (!matchesSearch) return false;
+                              }
+
+                              if (taxAppliedFromDate || taxAppliedToDate) {
+                                const hasExplicitCutoff = Boolean(pr.cutoffStart && pr.cutoffEnd);
+                                if (taxDateFilterType === 'cutoff' && hasExplicitCutoff) {
+                                  const cStart = toManilaYMD(pr.cutoffStart);
+                                  const cEnd = toManilaYMD(pr.cutoffEnd);
+                                  if (taxAppliedFromDate && cEnd < taxAppliedFromDate) return false;
+                                  if (taxAppliedToDate && cStart > taxAppliedToDate) return false;
+                                } else {
+                                  const recordDateManila = toManilaYMD(pr.createdAt);
+                                  if (!recordDateManila) return false;
+                                  if (taxAppliedFromDate && recordDateManila < taxAppliedFromDate) return false;
+                                  if (taxAppliedToDate && recordDateManila > taxAppliedToDate) return false;
+                                }
+                              }
+
+                              return true;
+                            });
+
+                            if (filteredTaxPayrolls.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={9} className="py-10 text-slate-500 font-medium">
+                                    No matching payroll tax records found for the selected filter criteria.
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            let totalWithholdingTax = 0;
+
+                            const rows = filteredTaxPayrolls.map((pr: any) => {
+                              const emp = employees.find(e => e.id === Number(pr.employeeId));
+                              const name = emp ? `${emp.lastName}, ${emp.firstName}${emp.middleName ? ' ' + emp.middleName : ''}` : 'Unknown';
+                              const taxableIncome = calculateMandatoryTaxableIncome(
                                 pr.grossPay,
                                 pr.sssDeduction,
                                 pr.philhealthDeduct,
@@ -2297,21 +2596,50 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                                 true
                               );
                               const taxData = calculateDynamicTax(taxableIncome, taxBrackets);
-                              totalWithholdingTax = fromCents(toCents(totalWithholdingTax) + toCents(taxData.tax));
-                              return ( 
-                                <tr key={pr.id} className="hover:bg-slate-50"> 
-                                  <td className="border border-slate-400 py-2 px-3 text-left font-bold uppercase">{name}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxableIncome)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.bracketMin)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.taxBase)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{taxData.rate.toFixed(2)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.tax - taxData.minTax)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.minTax)}</td> 
-                                  <td className="border border-slate-400 py-2 px-3 text-right font-bold text-slate-900 bg-slate-50">{formatMoney(taxData.tax)}</td> 
-                                </tr> 
-                              )
+                              const recordWithholdingTax = taxData.tax;
+                              const taxOnExcess = fromCents(Math.max(0, toCents(recordWithholdingTax) - toCents(taxData.minTax)));
+                              totalWithholdingTax = fromCents(toCents(totalWithholdingTax) + toCents(recordWithholdingTax));
+
+                              return (
+                                <tr key={pr.id} className="hover:bg-slate-50">
+                                  <td className="border border-slate-400 py-2 px-3 text-left font-bold uppercase">
+                                    <div>{name}</div>
+                                    {emp?.employeeId && <div className="text-[10px] font-mono text-slate-400">ID: {emp.employeeId}</div>}
+                                  </td>
+                                  <td className="border border-slate-400 py-2 px-3 text-center font-mono text-xs text-slate-700">
+                                    <div className="font-semibold">{formatManilaMDY(pr.createdAt)}</div>
+                                    {pr.cutoffStart && pr.cutoffEnd ? (
+                                      <div className="text-[10px] text-blue-600 font-sans">
+                                        Cutoff: {formatManilaMDY(pr.cutoffStart)} - {formatManilaMDY(pr.cutoffEnd)}
+                                      </div>
+                                    ) : (
+                                      <div className="text-[10px] text-slate-400 font-sans">{pr.daysWorked} working days</div>
+                                    )}
+                                  </td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxableIncome)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.bracketMin)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.taxBase)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{taxData.rate.toFixed(2)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxOnExcess)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right">{formatMoney(taxData.minTax)}</td>
+                                  <td className="border border-slate-400 py-2 px-3 text-right font-bold text-slate-900 bg-slate-50">{formatMoney(recordWithholdingTax)}</td>
+                                </tr>
+                              );
                             });
-                            return ( <>{rows}<tr className="bg-slate-200 font-bold"><td className="border border-slate-400 py-2 px-3 text-right" colSpan={7}>Total Collected:</td><td className="border border-slate-400 py-2 px-3 text-right text-black">{formatMoney(totalWithholdingTax)}</td></tr></> );
+
+                            return (
+                              <>
+                                {rows}
+                                <tr className="bg-slate-200 font-bold">
+                                  <td className="border border-slate-400 py-2.5 px-3 text-right" colSpan={8}>
+                                    Total Collected ({filteredTaxPayrolls.length} {filteredTaxPayrolls.length === 1 ? 'record' : 'records'}):
+                                  </td>
+                                  <td className="border border-slate-400 py-2.5 px-3 text-right text-black font-mono">
+                                    ₱{totalWithholdingTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                </tr>
+                              </>
+                            );
                           })()
                         )}
                       </tbody>
