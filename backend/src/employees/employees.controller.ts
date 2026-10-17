@@ -89,6 +89,11 @@ export class EmployeesController {
     return await this.employeesService.createPayroll(data);
   }
 
+  @Post('employees/payroll/preview')
+  async previewPayroll(@Body() data: Record<string, unknown>) {
+    return await this.employeesService.previewPayroll(data);
+  }
+
   @Delete('employees/payroll/:id')
   async deletePayroll(@Param('id') id: string) {
     return await this.employeesService.deletePayroll(Number(id));

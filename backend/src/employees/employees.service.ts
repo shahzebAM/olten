@@ -1,5 +1,11 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import { PrismaClient, Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
+import { resolvePayrollBasis, validatePayrollProfile } from './payroll-profile';
 import type { Attendance, Settings } from '@prisma/client';
 import type { AttendanceCalcResult } from './attendance-calculator';
 import {
@@ -22,6 +28,10 @@ export type {
 } from './attendance-calculator';
 
 const prisma = new PrismaClient();
+type PayrollDatabase = Pick<
+  Prisma.TransactionClient,
+  'employee' | 'attendance' | 'settings' | 'payroll'
+>;
 
 type AttendanceWriteInput = Partial<
   Omit<Attendance, 'id' | 'createdAt' | 'employeeId'>
@@ -370,6 +380,7 @@ export class EmployeesService {
   }
 
   async createEmployee(data: any) {
+    const payrollProfile = (data as Record<string, unknown>).payrollProfile;
     // SECURITY FIX: Forces empty strings to NULL to prevent Unique Constraint crashes
     const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
 
@@ -384,6 +395,12 @@ export class EmployeesService {
         address: data.address,
         civilStatus: data.civilStatus,
         baseRate: data.baseRate,
+        ...(payrollProfile !== undefined
+          ? {
+              payrollProfile:
+                this.checkedPayrollProfile(payrollProfile) ?? Prisma.DbNull,
+            }
+          : {}),
         employmentStatus: data.employmentStatus,
         tin: sanitize(data.tin),
         sssNumber: sanitize(data.sssNumber),
@@ -400,6 +417,11 @@ export class EmployeesService {
 
   async updateEmployee(id: number, data: any) {
     const { id: _id, ...cleanData } = data;
+    const employeePatch = cleanData as Record<string, unknown>;
+    const payrollProfile = employeePatch.payrollProfile;
+    if (payrollProfile !== undefined)
+      employeePatch.payrollProfile =
+        this.checkedPayrollProfile(payrollProfile) ?? Prisma.DbNull;
     
     // SECURITY FIX: Strip out empty values on updates too
     const sanitize = (val: any) => (val && val.toString().trim() !== '') ? val.toString().trim() : null;
@@ -695,97 +717,273 @@ export class EmployeesService {
     return filterAndAggregatePayrollRecords(allPayrolls, employees, query);
   }
 
-  async createPayroll(data: any) {
-    const attendanceInput = data as {
-      employeeId?: number | string;
-      daysWorked?: number | string;
-      cutoffStart?: string | null;
-      cutoffEnd?: string | null;
-      govHolidayAmt?: number | string | null;
-    };
-    const employeeId = Number(attendanceInput.employeeId);
-    const daysWorked = Number(attendanceInput.daysWorked);
-    const cutoffStart = toAttendanceDateYMD(attendanceInput.cutoffStart);
-    const cutoffEnd = toAttendanceDateYMD(attendanceInput.cutoffEnd);
-    if (
-      !Number.isSafeInteger(employeeId) ||
-      employeeId <= 0 ||
-      !Number.isFinite(daysWorked) ||
-      daysWorked < 0
-    ) {
+  private checkedPayrollProfile(value: unknown) {
+    try {
+      return validatePayrollProfile(value);
+    } catch (error) {
       throw new BadRequestException(
-        'A valid employee and non-negative working days are required.',
+        error instanceof Error ? error.message : 'Invalid pay profile.',
       );
     }
+  }
+
+  async previewPayroll(data: Record<string, unknown>) {
+    return this.preparePayroll(data, prisma);
+  }
+
+  private async preparePayroll(
+    data: Record<string, unknown>,
+    database: PayrollDatabase,
+  ) {
+    const employeeId = Number(data.employeeId);
+    const cutoffStart = toAttendanceDateYMD(
+      typeof data.cutoffStart === 'string' ? data.cutoffStart : null,
+    );
+    const cutoffEnd = toAttendanceDateYMD(
+      typeof data.cutoffEnd === 'string' ? data.cutoffEnd : null,
+    );
+    if (!Number.isSafeInteger(employeeId) || employeeId <= 0)
+      throw new BadRequestException('A valid employee is required.');
     if (!cutoffStart || !cutoffEnd || cutoffStart > cutoffEnd) {
       throw new BadRequestException(
         'A valid payroll cutoff start and end are required.',
       );
     }
-    const employee = await prisma.employee.findUnique({
+    const employee = await database.employee.findUnique({
       where: { id: employeeId },
     });
     if (!employee) throw new BadRequestException('Employee not found.');
-    const settings = await this.getSettings(employee.company);
-    const logs = await prisma.attendance.findMany({ where: { employeeId } });
-    const govHolidayAmt = Number(attendanceInput.govHolidayAmt ?? 0);
+    if (data.company !== undefined && data.company !== employee.company)
+      throw new BadRequestException(
+        'Employee does not belong to this company.',
+      );
+    const settings = await this.getSettings(employee.company, database);
+    const logs = await database.attendance.findMany({ where: { employeeId } });
+    const profile = this.checkedPayrollProfile(employee.payrollProfile ?? null);
+    let basis: ReturnType<typeof resolvePayrollBasis> | null = null;
+    if (profile) {
+      try {
+        basis = resolvePayrollBasis(
+          profile,
+          employee.baseRate,
+          cutoffStart,
+          cutoffEnd,
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : 'Invalid payroll basis.',
+        );
+      }
+    }
+    const daysWorked = basis?.paidDays ?? Number(data.daysWorked);
+    if (!Number.isFinite(daysWorked) || daysWorked < 0)
+      throw new BadRequestException(
+        'Valid non-negative working days are required.',
+      );
+    const govHolidayAmt = Number(data.govHolidayAmt ?? 0);
     if (!Number.isFinite(govHolidayAmt))
       throw new BadRequestException('Invalid holiday adjustment.');
-    const attendanceSummary = calculateAttendancePayroll(logs, {
+    const calculated = calculateAttendancePayroll(logs, {
       ...settings,
       employeeId,
       startDate: cutoffStart,
       endDate: cutoffEnd,
       daysWorked,
-      basicSalary: employee.baseRate,
+      basicSalary: basis?.basicSalary ?? employee.baseRate,
+      ...(basis ? { ratePerDay: basis.ratePerDay } : {}),
       govHolidayAmt,
     });
+    const selected = logs.filter((log) => {
+      const date = toAttendanceDateYMD(log.date);
+      return date >= cutoffStart && date <= cutoffEnd;
+    });
+    const datesOf = (predicate: (log: (typeof logs)[number]) => boolean) =>
+      new Set(
+        selected.filter(predicate).map((log) => toAttendanceDateYMD(log.date)),
+      ).size;
+    const source = {
+      fetchedAt: new Date().toISOString(),
+      attendanceDateCount: datesOf(() => true),
+      workedDateCount: datesOf((log) => {
+        const start = parseTimeToMinutes(log.timeIn);
+        const end = parseTimeToMinutes(log.timeOut);
+        return start !== null && end !== null && start !== end;
+      }),
+      paidLeaveDateCount: datesOf(
+        (log) =>
+          log.timeIn.toUpperCase() === 'LEAVE' &&
+          log.timeOut.toUpperCase() === 'PAID',
+      ),
+      unpaidLeaveDateCount: datesOf(
+        (log) =>
+          log.timeIn.toUpperCase() === 'LEAVE' &&
+          log.timeOut.toUpperCase() === 'UNPAID',
+      ),
+      sessionCount: selected.length,
+    };
+    const attendanceSummary = {
+      ...calculated,
+      ...(profile && basis
+        ? {
+            version: 2,
+            payrollProfile: profile,
+            paidDays: basis.paidDays,
+            scheduledDates: basis.scheduledDates,
+            workedDateCount: source.workedDateCount,
+            paidLeaveDateCount: source.paidLeaveDateCount,
+            unpaidLeaveDateCount: source.unpaidLeaveDateCount,
+            sourceSessionCount: source.sessionCount,
+          }
+        : {}),
+    };
     const isDeclared =
       data.isDeclared !== undefined
         ? Boolean(data.isDeclared)
         : Number(data.tax || 0) > 0;
 
+    const deduction = (key: string) => {
+      const amount = Number(data[key] ?? 0);
+      if (!Number.isFinite(amount) || amount < 0)
+        throw new BadRequestException(`Invalid ${key} deduction.`);
+      return amount;
+    };
+
     const computed = calculatePhilippinePayrollTax({
       grossPay: attendanceSummary.grossPay,
-      sssDeduction: data.sssDeduction || 0,
-      pagIbigDeduct: data.pagIbigDeduct || 0,
-      philhealthDeduct: data.philhealthDeduct || 0,
-      sssProvident: data.sssProvident || 0,
-      isSssProvidentMandatory: data.isSssProvidentMandatory ?? true,
+      sssDeduction: deduction('sssDeduction'),
+      pagIbigDeduct: deduction('pagIbigDeduct'),
+      philhealthDeduct: deduction('philhealthDeduct'),
+      sssProvident: deduction('sssProvident'),
+      isSssProvidentMandatory:
+        data.isSssProvidentMandatory === undefined
+          ? true
+          : Boolean(data.isSssProvidentMandatory),
       isDeclared,
-      cashAdvance: data.cashAdvance || 0,
-      companyLoan: data.companyLoan || 0,
-      pagIbigLoan: data.pagIbigLoan || 0,
-      pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
-      sssSalaryLoan: data.sssSalaryLoan || 0,
-      sssCalamityLoan: data.sssCalamityLoan || 0,
-      pagIbigCalamity: data.pagIbigCalamity || 0,
-      pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+      cashAdvance: deduction('cashAdvance'),
+      companyLoan: deduction('companyLoan'),
+      pagIbigLoan: deduction('pagIbigLoan'),
+      pagIbigHousingLoan: deduction('pagIbigHousingLoan'),
+      sssSalaryLoan: deduction('sssSalaryLoan'),
+      sssCalamityLoan: deduction('sssCalamityLoan'),
+      pagIbigCalamity: deduction('pagIbigCalamity'),
+      pagIbigSalaryLoan: deduction('pagIbigSalaryLoan'),
     });
 
-    return await prisma.payroll.create({
-      data: {
-        employeeId,
-        daysWorked,
-        totalHours: attendanceSummary.totalMinutes / 60,
-        attendanceSummary,
-        cashAdvance: data.cashAdvance || 0,
-        companyLoan: data.companyLoan || 0,
-        sssDeduction: data.sssDeduction || 0,
-        pagIbigDeduct: data.pagIbigDeduct || 0,
-        philhealthDeduct: data.philhealthDeduct || 0,
-        tax: computed.withholdingTax,
-        grossPay: computed.grossPay,
-        netPay: computed.netPay,
-        pagIbigLoan: data.pagIbigLoan || 0,
-        pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
-        sssProvident: data.sssProvident || 0,
-        sssSalaryLoan: data.sssSalaryLoan || 0,
-        sssCalamityLoan: data.sssCalamityLoan || 0,
-        pagIbigCalamity: data.pagIbigCalamity || 0,
-        pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+    const previewFingerprint = createHash('sha256')
+      .update(
+        JSON.stringify({
+          employee: {
+            id: employee.id,
+            company: employee.company,
+            baseRate: employee.baseRate,
+            profile,
+            cashAdvanceBalance: employee.cashAdvanceBalance,
+            loanBalance: employee.loanBalance,
+          },
+          settings: {
+            shiftStart: settings.shiftStart,
+            shiftEnd: settings.shiftEnd,
+            lunchStart: settings.lunchStart,
+            lunchEnd: settings.lunchEnd,
+          },
+          cutoffStart,
+          cutoffEnd,
+          logs: [...logs]
+            .sort((a, b) => a.id - b.id)
+            .map((log) => ({
+              id: log.id,
+              employeeId: log.employeeId,
+              date: log.date,
+              timeIn: log.timeIn,
+              timeOut: log.timeOut,
+              shiftStart: log.shiftStart,
+              shiftEnd: log.shiftEnd,
+              lunchStart: log.lunchStart,
+              lunchEnd: log.lunchEnd,
+              breakOut: log.breakOut,
+              breakIn: log.breakIn,
+              lunchOverrideMinutes: log.lunchOverrideMinutes,
+            })),
+        }),
+      )
+      .digest('hex');
+    return {
+      employee: {
+        id: employee.id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        company: employee.company,
+        baseRate: employee.baseRate,
+        payrollProfile: profile,
+        cashAdvanceBalance: employee.cashAdvanceBalance,
+        cashAdvanceInstallment: employee.cashAdvanceInstallment,
+        loanBalance: employee.loanBalance,
+        loanInstallment: employee.loanInstallment,
       },
-    });
+      attendanceSummary,
+      computed,
+      source,
+      configurationRequired: profile === null,
+      previewFingerprint,
+    };
+  }
+
+  async createPayroll(data: any) {
+    const input = data as Record<string, unknown>;
+    const previewFingerprint = input.previewFingerprint;
+    const save = async (database: PayrollDatabase) => {
+      const preview = await this.preparePayroll(
+        data as Record<string, unknown>,
+        database,
+      );
+      if (
+        previewFingerprint !== undefined &&
+        previewFingerprint !== preview.previewFingerprint
+      )
+        throw new ConflictException(
+          'Attendance, pay profile or shift settings changed. Refresh the payroll preview before saving.',
+        );
+      const { attendanceSummary, computed } = preview;
+
+      return await database.payroll.create({
+        data: {
+          employeeId: preview.employee.id,
+          daysWorked: attendanceSummary.requiredMinutes / 480,
+          totalHours: attendanceSummary.totalMinutes / 60,
+          attendanceSummary,
+          cashAdvance: data.cashAdvance || 0,
+          companyLoan: data.companyLoan || 0,
+          sssDeduction: data.sssDeduction || 0,
+          pagIbigDeduct: data.pagIbigDeduct || 0,
+          philhealthDeduct: data.philhealthDeduct || 0,
+          tax: computed.withholdingTax,
+          grossPay: computed.grossPay,
+          netPay: computed.netPay,
+          pagIbigLoan: data.pagIbigLoan || 0,
+          pagIbigHousingLoan: data.pagIbigHousingLoan || 0,
+          sssProvident: data.sssProvident || 0,
+          sssSalaryLoan: data.sssSalaryLoan || 0,
+          sssCalamityLoan: data.sssCalamityLoan || 0,
+          pagIbigCalamity: data.pagIbigCalamity || 0,
+          pagIbigSalaryLoan: data.pagIbigSalaryLoan || 0,
+        },
+      });
+    };
+    if (previewFingerprint === undefined) return save(prisma);
+    try {
+      return await prisma.$transaction(save, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      )
+        throw new ConflictException(
+          'Attendance, pay profile or shift settings changed. Refresh the payroll preview before saving.',
+        );
+      throw error;
+    }
   }
 
   async deletePayroll(id: number) {
@@ -890,16 +1088,19 @@ export class EmployeesService {
   // ==========================================
   // SETTINGS (Global Shift Times)
   // ==========================================
-  async getSettings(company?: string) {
+  async getSettings(
+    company?: string,
+    database: Pick<Prisma.TransactionClient, 'settings'> = prisma,
+  ) {
     const requestedCompany = company?.trim() || 'Global';
-    const configured = await prisma.settings.findUnique({
+    const configured = await database.settings.findUnique({
       where: { company: requestedCompany },
     });
     if (configured) return configured;
     const fallback =
       requestedCompany === 'Global'
         ? null
-        : await prisma.settings.findUnique({ where: { company: 'Global' } });
+        : await database.settings.findUnique({ where: { company: 'Global' } });
     return (
       fallback ?? {
         id: 0,

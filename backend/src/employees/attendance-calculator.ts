@@ -619,6 +619,7 @@ export interface AttendancePayrollOptions extends AttendanceAggregationOptions {
   daysWorked: number;
   basicSalary: number;
   govHolidayAmt?: number;
+  ratePerDay?: number;
 }
 
 export const calculateAttendancePayroll = (
@@ -640,7 +641,14 @@ export const calculateAttendancePayroll = (
     0,
     requiredMinutes - summary.regularMinutes,
   );
-  const ratePerDay = days > 0 ? basicSalary / days : 0;
+  const ratePerDay =
+    options.ratePerDay !== undefined &&
+    Number.isFinite(options.ratePerDay) &&
+    options.ratePerDay > 0
+      ? options.ratePerDay
+      : days > 0
+        ? basicSalary / days
+        : 0;
   const ratePerHour = ratePerDay / 8;
   const money = (value: number) => Math.round(value * 100) / 100;
   const otPay = money((summary.otMinutes / 60) * ratePerHour * 1.25);

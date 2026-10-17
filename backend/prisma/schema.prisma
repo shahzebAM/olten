@@ -18,6 +18,7 @@ model Employee {
   address                String
   civilStatus            String
   baseRate               Float
+  payrollProfile         Json?
   employmentStatus       String
   tin                    String?             @unique
   sssNumber              String?             @unique

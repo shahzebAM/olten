@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
-import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
+import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
 import AttendanceEntryGrid from './AttendanceEntryGrid';
-import type { AttendanceEntryRecord as AttendanceRecord } from '../lib/attendanceEntry';
+import PayrollProfileEditor from './PayrollProfileEditor';
+import type { PayrollProfileEmployee } from './PayrollProfileEditor';
+import type { PayrollProfile } from '../../../backend/src/employees/payroll-profile';
+import { getCutoffDates, getInitialCutoff, moveCutoff } from '../lib/attendanceEntry';
+import type { AttendanceEntryRecord as AttendanceRecord, CutoffSelection } from '../lib/attendanceEntry';
+import { getApiAuthHeaders } from '../lib/apiSession';
 
 // ==========================================
 // 1. GLOBAL FORMATTERS & STYLES
@@ -221,6 +226,7 @@ interface Employee {
   address: string;
   civilStatus: string;
   baseRate: number;
+  payrollProfile?: PayrollProfile | null;
   employmentStatus: string;
   tin: string;
   sssNumber: string;
@@ -270,7 +276,22 @@ interface PayrollRecord {
     otPay: number;
     undertimeDeduction: number;
     govHolidayAmt: number;
+    payrollProfile?: PayrollProfile;
+    paidDays?: number;
+    workedDateCount?: number;
+    paidLeaveDateCount?: number;
+    unpaidLeaveDateCount?: number;
+    sourceSessionCount?: number;
   } | null;
+}
+
+interface PayrollPreview {
+  employee: PayrollProfileEmployee & { firstName: string; lastName: string };
+  attendanceSummary: NonNullable<PayrollRecord['attendanceSummary']> & { grossPay: number };
+  computed: { grossPay: number; netPay: number; totalDeductions: number; withholdingTax: number };
+  source: { fetchedAt: string; attendanceDateCount: number; workedDateCount: number; paidLeaveDateCount: number; unpaidLeaveDateCount: number; sessionCount: number };
+  configurationRequired: boolean;
+  previewFingerprint: string;
 }
 
 interface SummaryReportRow {
@@ -302,8 +323,18 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  const [payrollStartDate, setPayrollStartDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-01`);
-  const [payrollEndDate, setPayrollEndDate] = useState(`${toAttendanceDateYMD(new Date().toISOString()).slice(0, 7)}-15`);
+  const [sharedCutoff, setSharedCutoff] = useState<CutoffSelection>(getInitialCutoff);
+  const cutoffDates = getCutoffDates(sharedCutoff);
+  const payrollStartDate = cutoffDates[0] ?? '';
+  const payrollEndDate = cutoffDates.at(-1) ?? '';
+  const [payrollPreview, setPayrollPreview] = useState<{ data: PayrollPreview; requestKey: string } | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [previewRevision, setPreviewRevision] = useState(0);
+  const [profileDirty, setProfileDirty] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [payrollUnconfirmed, setPayrollUnconfirmed] = useState(false);
+  const payrollSaveLock = useRef(false);
 
 const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
@@ -986,93 +1017,88 @@ const toCents = (val: any): number => {
 
   // --- EXCEL AGGREGATE PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
-    if (!payrollStartDate || !payrollEndDate || payrollStartDate > payrollEndDate) {
-      showToast('Select a valid payroll cutoff period.', 'error');
-      return;
-    }
     setActiveEmployee(emp);
-    const actualDays = getAttendanceSummary(emp.id, payrollStartDate, payrollEndDate).daysWorked;
-    const defaultDays = actualDays > 0 ? actualDays.toString() : '14';
-    const safeCashAdvanceDeduction = (emp.cashAdvanceBalance || 0) > 0 ? Math.min((emp.cashAdvanceInstallment || 0), emp.cashAdvanceBalance) : 0;
-    const safeLoanDeduction = (emp.loanBalance || 0) > 0 ? Math.min((emp.loanInstallment || 0), emp.loanBalance) : 0;
-
-    setPayrollData({ daysWorked: defaultDays, cashAdvance: safeCashAdvanceDeduction.toString(), companyLoan: safeLoanDeduction.toString(), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHolidayAmt: '' });
+    const cashAdvance = Math.max(0, Math.min(emp.cashAdvanceInstallment || 0, emp.cashAdvanceBalance || 0));
+    const companyLoan = Math.max(0, Math.min(emp.loanInstallment || 0, emp.loanBalance || 0));
+    setPayrollData({ daysWorked: '14', cashAdvance: String(cashAdvance), companyLoan: String(companyLoan), sss: '0', pagIbig: '0', philhealth: '0', isDeclared: false, pagIbigLoan: '0', pagIbigHousingLoan: '0', sssProvident: '0', sssSalaryLoan: '0', sssCalamityLoan: '0', pagIbigCalamity: '0', pagIbigSalaryLoan: '0', govHolidayAmt: '' });
+    setPayrollPreview(null); setPreviewError(''); setPayrollUnconfirmed(false);
     setIsPayrollModalOpen(true);
   };
 
-  const calculatePayroll = () => {
-    if (!activeEmployee || !payrollStartDate || !payrollEndDate || payrollStartDate > payrollEndDate) return null;
-    
-    const attendancePayroll = calculateAttendancePayroll(attendances, {
-      employeeId: activeEmployee.id, startDate: payrollStartDate, endDate: payrollEndDate,
-      shiftStart, shiftEnd, lunchStart, lunchEnd,
-      daysWorked: parseFloat(payrollData.daysWorked) || 0, basicSalary: activeEmployee.baseRate,
-      govHolidayAmt: parseFloat(payrollData.govHolidayAmt) || 0,
-    });
-    const totalHoursWorked = attendancePayroll.totalMinutes / 60;
-    const requiredHrs = attendancePayroll.requiredMinutes / 60;
-    const otHrs = attendancePayroll.overtimeMinutes / 60;
-    const { ratePerDay, ratePerHour, undertimeDeduction, otPay, grossPay, govHolidayAmt } = attendancePayroll;
+  const payrollRequest = activeEmployee ? {
+    employeeId: activeEmployee.id, company: selectedCompany, cutoffStart: payrollStartDate, cutoffEnd: payrollEndDate,
+    daysWorked: Number(payrollData.daysWorked), govHolidayAmt: Number(payrollData.govHolidayAmt || 0), isDeclared: payrollData.isDeclared,
+    cashAdvance: Math.min(Number(payrollData.cashAdvance || 0), activeEmployee.cashAdvanceBalance || 0),
+    companyLoan: Math.min(Number(payrollData.companyLoan || 0), activeEmployee.loanBalance || 0),
+    sssDeduction: Number(payrollData.sss || 0), pagIbigDeduct: Number(payrollData.pagIbig || 0), philhealthDeduct: Number(payrollData.philhealth || 0),
+    pagIbigLoan: Number(payrollData.pagIbigLoan || 0), pagIbigHousingLoan: Number(payrollData.pagIbigHousingLoan || 0), sssProvident: Number(payrollData.sssProvident || 0),
+    sssSalaryLoan: Number(payrollData.sssSalaryLoan || 0), sssCalamityLoan: Number(payrollData.sssCalamityLoan || 0), pagIbigCalamity: Number(payrollData.pagIbigCalamity || 0), pagIbigSalaryLoan: Number(payrollData.pagIbigSalaryLoan || 0),
+  } : null;
+  const payrollRequestKey = JSON.stringify(payrollRequest);
+  const previewKey = payrollRequestKey + ':' + previewRevision;
+  useEffect(() => {
+    if (!isPayrollModalOpen || payrollRequestKey === 'null') return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setPreviewBusy(true); setPreviewError('');
+      try {
+        const payload = JSON.parse(payrollRequestKey);
+        const response = await fetch(API_BASE_URL + '/employees/payroll/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: payrollRequestKey, signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok) throw new Error(typeof result.message === 'string' ? result.message : 'Payroll preview could not be refreshed.');
+        if (result.employee?.id !== payload.employeeId || result.employee?.company !== payload.company || result.attendanceSummary?.cutoffStart !== payload.cutoffStart || result.attendanceSummary?.cutoffEnd !== payload.cutoffEnd || !/^[a-f0-9]{64}$/.test(result.previewFingerprint) || !Number.isFinite(result.computed?.netPay)) throw new Error('The server returned an invalid payroll preview.');
+        if (controller.signal.aborted) return;
+        setPayrollPreview({ data: result, requestKey: previewKey });
+        setActiveEmployee(current => current?.id === result.employee.id ? { ...current, ...result.employee } : current);
+      } catch (error) {
+        if (!controller.signal.aborted) setPreviewError(error instanceof Error ? error.message : 'Payroll preview could not be refreshed.');
+      } finally { if (!controller.signal.aborted) setPreviewBusy(false); }
+    }, 200);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [isPayrollModalOpen, payrollRequestKey, previewKey, API_BASE_URL]);
 
-    const sssDed = parseFloat(payrollData.sss) || 0; const pagIbigDed = parseFloat(payrollData.pagIbig) || 0; const philhealthDed = parseFloat(payrollData.philhealth) || 0; const pagIbigLoanDed = parseFloat(payrollData.pagIbigLoan) || 0; const pagIbigHousingLoanDed = parseFloat(payrollData.pagIbigHousingLoan) || 0; const sssProvidentDed = parseFloat(payrollData.sssProvident) || 0; const sssSalaryLoanDed = parseFloat(payrollData.sssSalaryLoan) || 0; const sssCalamityLoanDed = parseFloat(payrollData.sssCalamityLoan) || 0; const pagIbigCalamityDed = parseFloat(payrollData.pagIbigCalamity) || 0; const pagIbigSalaryLoanDed = parseFloat(payrollData.pagIbigSalaryLoan) || 0;
-    
-    let cashAdvanceDed = parseFloat(payrollData.cashAdvance) || 0;
-    if (activeEmployee && cashAdvanceDed > (activeEmployee.cashAdvanceBalance || 0)) { cashAdvanceDed = activeEmployee.cashAdvanceBalance || 0; }
-
-    let companyLoanDed = parseFloat(payrollData.companyLoan) || 0;
-    if (activeEmployee && companyLoanDed > (activeEmployee.loanBalance || 0)) { companyLoanDed = activeEmployee.loanBalance || 0; }
-const taxableIncome = calculateMandatoryTaxableIncome(
-      grossPay,
-      sssDed,
-      philhealthDed,
-      pagIbigDed,
-      sssProvidentDed,
-      true
-    );
-    let autoTax = 0;
-
-    if (payrollData.isDeclared && taxableIncome > 0) {
-      const taxResult = calculateDynamicTax(taxableIncome, taxBrackets);
-      autoTax = taxResult.tax;
-    }
-
-    const totalDeductions = calculateTotalPayrollDeductions({
-      cashAdvance: cashAdvanceDed,
-      companyLoan: companyLoanDed,
-      sssDeduction: sssDed,
-      pagIbigDeduct: pagIbigDed,
-      philhealthDeduct: philhealthDed,
-      sssProvident: sssProvidentDed,
-      tax: autoTax,
-      pagIbigLoan: pagIbigLoanDed,
-      pagIbigHousingLoan: pagIbigHousingLoanDed,
-      sssSalaryLoan: sssSalaryLoanDed,
-      sssCalamityLoan: sssCalamityLoanDed,
-      pagIbigCalamity: pagIbigCalamityDed,
-      pagIbigSalaryLoan: pagIbigSalaryLoanDed,
-    });
-    const netPay = fromCents(toCents(grossPay) - toCents(totalDeductions));
-    return { 
-      totalHoursWorked, regularHours: attendancePayroll.regularMinutes / 60, ratePerDay, ratePerHour, requiredHrs,
-      otHrs, otPay, undertimeDeduction, grossPay, autoTax, totalDeductions, netPay, 
-      cashAdvanceDed, companyLoanDed, pagIbigLoanDed, pagIbigHousingLoanDed, sssProvidentDed, 
-      sssSalaryLoanDed, sssCalamityLoanDed, pagIbigCalamityDed, pagIbigSalaryLoanDed, govHolidayAmt 
-    };
+  const savedPreview = payrollPreview?.data;
+  const summary = savedPreview?.attendanceSummary;
+  const computed = savedPreview && summary && payrollRequest ? {
+    totalHoursWorked: summary.totalMinutes / 60, regularHours: summary.regularMinutes / 60, ratePerDay: summary.ratePerDay, ratePerHour: summary.ratePerHour,
+    requiredHrs: summary.requiredMinutes / 60, otHrs: summary.overtimeMinutes / 60, otPay: summary.otPay, undertimeDeduction: summary.undertimeDeduction,
+    grossPay: savedPreview.computed.grossPay, autoTax: savedPreview.computed.withholdingTax, totalDeductions: savedPreview.computed.totalDeductions, netPay: savedPreview.computed.netPay,
+    cashAdvanceDed: payrollRequest.cashAdvance, companyLoanDed: payrollRequest.companyLoan, pagIbigLoanDed: payrollRequest.pagIbigLoan, pagIbigHousingLoanDed: payrollRequest.pagIbigHousingLoan,
+    sssProvidentDed: payrollRequest.sssProvident, sssSalaryLoanDed: payrollRequest.sssSalaryLoan, sssCalamityLoanDed: payrollRequest.sssCalamityLoan, pagIbigCalamityDed: payrollRequest.pagIbigCalamity, pagIbigSalaryLoanDed: payrollRequest.pagIbigSalaryLoan, govHolidayAmt: summary.govHolidayAmt,
+  } : null;
+  const previewReady = !!computed && payrollPreview?.requestKey === previewKey && !previewBusy && !previewError;
+  useEffect(() => {
+    if (!isPayrollModalOpen || (!profileDirty && !isSaving)) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isPayrollModalOpen, profileDirty, isSaving]);
+  const closePayrollModal = () => {
+    if (payrollSaveLock.current || profileBusy) { showToast('Please wait for the payroll operation to finish.', 'error'); return; }
+    if (profileDirty && !window.confirm('Discard unsaved pay profile edits?')) return;
+    if (payrollUnconfirmed) { void fetchPayrolls(); void fetchEmployees(); }
+    setIsPayrollModalOpen(false);
+  };
+  const profileSaved = (updated: PayrollProfileEmployee) => {
+    setActiveEmployee(current => current?.id === updated.id ? { ...current, ...updated } : current);
+    setEmployees(current => current.map(employee => employee.id === updated.id ? { ...employee, ...updated } : employee));
+    setPreviewRevision(version => version + 1);
   };
 
-  const computed = calculatePayroll();
-
   const savePayrollToDatabase = async () => {
-    if (!activeEmployee || !computed) return;
+    if (!activeEmployee || !computed || !payrollRequest || !previewReady || savedPreview?.configurationRequired || profileDirty || profileBusy || payrollSaveLock.current || payrollUnconfirmed) return;
+    payrollSaveLock.current = true;
     setIsSaving(true);
     const payload = {
-      employeeId: activeEmployee.id, cutoffStart: payrollStartDate, cutoffEnd: payrollEndDate, isDeclared: payrollData.isDeclared, govHolidayAmt: computed.govHolidayAmt, daysWorked: parseFloat(payrollData.daysWorked) || 0, totalHours: computed.totalHoursWorked,
-      cashAdvance: computed.cashAdvanceDed, companyLoan: computed.companyLoanDed, sssDeduction: parseFloat(payrollData.sss) || 0, pagIbigDeduct: parseFloat(payrollData.pagIbig) || 0, philhealthDeduct: parseFloat(payrollData.philhealth) || 0, tax: computed.autoTax, grossPay: computed.grossPay, netPay: computed.netPay, pagIbigLoan: computed.pagIbigLoanDed, pagIbigHousingLoan: computed.pagIbigHousingLoanDed, sssProvident: computed.sssProvidentDed, sssSalaryLoan: computed.sssSalaryLoanDed, sssCalamityLoan: computed.sssCalamityLoanDed, pagIbigCalamity: computed.pagIbigCalamityDed, pagIbigSalaryLoan: computed.pagIbigSalaryLoanDed
+      ...payrollRequest, previewFingerprint: savedPreview?.previewFingerprint,
     };
 
+    let saveResponse: Response | undefined;
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/payroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!response.ok) throw new Error();
+      saveResponse = await fetch(`${API_BASE_URL}/employees/payroll`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: JSON.stringify(payload) });
+      const saved = await saveResponse.json();
+      if (!saveResponse.ok) throw new Error(typeof saved.message === 'string' ? saved.message : 'Payroll could not be saved.');
+      if (saved.employeeId !== activeEmployee.id || !Number.isFinite(saved.id) || !Number.isFinite(saved.netPay)) throw new Error('The payroll save reply could not be confirmed.');
       
       const balancePatches = [];
       if (computed.cashAdvanceDed > 0) {
@@ -1085,14 +1111,19 @@ const taxableIncome = calculateMandatoryTaxableIncome(
       }
 
       if (balancePatches.length > 0) {
-        await Promise.all(balancePatches);
+        const responses = await Promise.all(balancePatches);
+        if (responses.some(response => !response.ok)) throw new Error('Payroll was saved, but a loan or cash advance balance update failed. Check the payroll ledger and balances before continuing.');
       }
 
-      await fetchPayrolls(); await fetchEmployees(); 
+      await Promise.all([fetchPayrolls(), fetchEmployees(), fetchAttendances()]);
       showToast("Payroll finalized and saved to database!", "success");
       setIsPayrollModalOpen(false);
-    } catch (error) { showToast("Failed to save payroll.", "error"); } 
-    finally { setIsSaving(false); }
+    } catch (error) {
+      if (!saveResponse || saveResponse.status >= 500 || saveResponse.ok) {
+        setPayrollUnconfirmed(true); setPreviewError('Save result is unconfirmed. Check the payroll ledger before attempting another payroll for this cutoff.');
+      } else { setPreviewError(error instanceof Error ? error.message : 'Payroll could not be saved.'); setPreviewRevision(version => version + 1); }
+      showToast(error instanceof Error ? error.message : 'Payroll could not be saved.', 'error');
+    } finally { payrollSaveLock.current = false; setIsSaving(false); }
   };
 
   const deletePayroll = async (id: number) => {
@@ -1258,7 +1289,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                       <tbody>
                         <tr><td colSpan={5} className="border border-slate-300 bg-indigo-600 text-white font-bold text-center py-2.5 text-xs uppercase tracking-widest">{selectedCompany?.toUpperCase()} TRADING CORP.</td><td colSpan={4} className="border border-slate-300 border-l-0 bg-white"></td></tr>
                         <tr><td colSpan={5} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 uppercase text-slate-800"><span className="text-[10px] text-slate-500">Employee's Name :</span> <span className="ml-2 font-bold text-sm text-slate-900">{emp.lastName}, {emp.firstName}</span></td><td colSpan={4} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 text-center uppercase text-slate-800">Date: {formatMDY(rec.createdAt)} ({rec.daysWorked} WORKING DAYS)</td></tr>
-                        <tr><td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 uppercase text-slate-600 tracking-wider">Earnings</td><td colSpan={4} className="border border-slate-300 px-3 py-1.5 font-bold bg-slate-50 text-slate-600">NO. OF DAYS PRESENT: <span className="font-bold text-indigo-700 ml-1">{rec.daysWorked}</span></td></tr>
+                        <tr><td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 uppercase text-slate-600 tracking-wider">Earnings</td><td colSpan={4} className="border border-slate-300 px-3 py-1.5 font-bold bg-slate-50 text-slate-600">REQUIRED PAID DAYS: <span className="font-bold text-indigo-700 ml-1">{rec.daysWorked}</span></td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-800">BASIC SALARY</td><td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{summary ? formatMoney(summary.basicSalary) : 'Unavailable'}</td><td colSpan={4} rowSpan={11} className="border border-slate-300 bg-white"></td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER HOUR</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatMoney(summary.ratePerHour) : 'Unavailable'}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER DAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{summary ? formatMoney(summary.ratePerDay) : 'Unavailable'}</td></tr>
@@ -1323,21 +1354,31 @@ const taxableIncome = calculateMandatoryTaxableIncome(
       )}
 
       {/* COMPUTE PAYROLL MODAL */}
+      {isPayrollModalOpen && activeEmployee && !computed && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"><div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"><h2 className="font-bold text-indigo-950">Loading current payroll records</h2><p role="status" className="my-4 text-sm text-slate-600">{previewError || 'Fetching the saved salary, attendance and shift settings for this cutoff…'}</p><button type="button" onClick={() => setPreviewRevision(version => version + 1)} className="mr-3 text-sm font-semibold text-indigo-600">Retry Preview</button><button type="button" onClick={closePayrollModal} className="text-sm text-slate-600">Close</button></div></div>
+      )}
       {isPayrollModalOpen && activeEmployee && computed && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
-                <p className="text-[10px] sm:text-xs text-emerald-700 font-mono mt-0.5">Basic Salary: ₱{activeEmployee.baseRate.toLocaleString()} / Cutoff</p>
+                <p className="text-[10px] sm:text-xs text-emerald-700 font-mono mt-0.5">{formatMDY(payrollStartDate)} – {formatMDY(payrollEndDate)} · {savedPreview?.configurationRequired ? 'Pay profile setup required' : `Basic Salary: ₱${summary?.basicSalary.toLocaleString()} / Cutoff`}</p>
               </div>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
+              <button aria-label="Close payroll" onClick={closePayrollModal} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">✕</button>
             </div>
             <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
-              <div className="space-y-3">
+              <fieldset disabled={isSaving || payrollUnconfirmed} className="min-w-0 space-y-3">
+                <PayrollProfileEditor key={activeEmployee.id} employee={activeEmployee} API_BASE_URL={API_BASE_URL} onSaved={profileSaved} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} />
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600" role="status">
+                  {previewError || (previewReady ? `Server confirmed · ${savedPreview?.source.workedDateCount} dates worked · ${savedPreview?.source.paidLeaveDateCount} paid leave · ${savedPreview?.source.unpaidLeaveDateCount} unpaid leave · ${savedPreview?.source.sessionCount} saved sessions` : 'Refreshing payroll preview…')}
+                  {payrollUnconfirmed && <p className="mt-1 text-rose-700">Check the payroll ledger before creating another payroll for this cutoff.</p>}
+                  <button type="button" disabled={isSaving || profileBusy} onClick={() => setPreviewRevision(version => version + 1)} className="ml-2 font-semibold text-indigo-600 disabled:opacity-50">Refresh Preview</button>
+                </div>
+                {savedPreview?.configurationRequired && <p className="text-xs text-amber-700">Complete the one-time pay profile before saving payroll. Required days and rates will then be calculated automatically.</p>}
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-4 gap-2 sm:gap-3">
-                  <InputField compact type="number" step="0.1" label="Working Days" value={payrollData.daysWorked} onChange={(e: any) => setPayrollData({...payrollData, daysWorked: e.target.value})} />
+                  <InputField compact type="text" disabled label="Required Paid Days" value={savedPreview?.configurationRequired ? 'Setup required' : String((summary?.requiredMinutes ?? 0) / 480)} />
                   <InputField compact type="number" step="0.01" label="Govt Adj (±)" placeholder="0.00" value={payrollData.govHolidayAmt} onChange={(e: any) => setPayrollData({...payrollData, govHolidayAmt: e.target.value})} />
                   <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
                   <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
@@ -1380,9 +1421,9 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                     </label>
                   </div>
                 </div>
-              </div>
+              </fieldset>
 
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col h-full">
+              <div className={`bg-slate-50 p-4 rounded-xl border border-slate-200 flex-col h-full ${savedPreview?.configurationRequired ? 'hidden' : 'flex'}`}>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mb-2.5 text-[11px] uppercase tracking-wider">Calculation Breakdown</h3>
                 <div className="space-y-1 text-xs flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
@@ -1426,7 +1467,7 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                   <p className="text-3xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
                 </div>
 
-                <button onClick={savePayrollToDatabase} disabled={isSaving} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
+                <button onClick={savePayrollToDatabase} disabled={isSaving || !previewReady || profileDirty || profileBusy || savedPreview?.configurationRequired || payrollUnconfirmed} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
                   {isSaving ? "Saving..." : "Close & Save"}
                 </button>
               </div>
@@ -1701,6 +1742,8 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                     onRecordsChange={setAttendances}
                     onDirtyChange={setAttendanceDirty}
                     onBusyChange={setAttendanceBusy}
+                    cutoffSelection={sharedCutoff}
+                    onCutoffChange={setSharedCutoff}
                   />
                 </fieldset>
                 <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -1735,26 +1778,12 @@ const taxableIncome = calculateMandatoryTaxableIncome(
                       <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider inline-block mt-2 sm:mt-0">Syncs with valid logged hours</span>
                     </div>
                     <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto items-start sm:items-center">
-                      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center border border-slate-300 p-2 rounded-xl bg-white shadow-sm w-full sm:w-auto">
-                        <div className="flex flex-col w-full sm:w-auto">
-                           <label className="text-[10px] font-bold text-slate-500 uppercase px-1">Cut-off Start</label>
-                           <div className="relative">
-                             <div className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 shadow-sm flex items-center justify-between w-full sm:w-[130px] pointer-events-none text-emerald-900 font-semibold">
-                               <span>{formatMDY(payrollStartDate)}</span>
-                             </div>
-                             <input type="date" value={payrollStartDate} onChange={e => setPayrollStartDate(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                           </div>
-                        </div>
-                        <span className="text-slate-300 font-bold hidden sm:block">-</span>
-                        <div className="flex flex-col w-full sm:w-auto">
-                           <label className="text-[10px] font-bold text-slate-500 uppercase px-1">Cut-off End</label>
-                           <div className="relative">
-                             <div className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 shadow-sm flex items-center justify-between w-full sm:w-[130px] pointer-events-none text-emerald-900 font-semibold">
-                               <span>{formatMDY(payrollEndDate)}</span>
-                             </div>
-                             <input type="date" value={payrollEndDate} onChange={e => setPayrollEndDate(e.target.value)} onClick={(e: any) => { try { e.target.showPicker && e.target.showPicker(); } catch(err){} }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                           </div>
-                        </div>
+                      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 text-xs">
+                        <label className="text-slate-500">Payroll cutoff<select aria-label="Payroll cutoff" value={sharedCutoff.period} onChange={event => setSharedCutoff({ ...sharedCutoff, period: event.target.value as CutoffSelection['period'] })} className="mt-1 block rounded-md border border-slate-200 px-2 py-1.5"><option value="26-10">26th–10th</option><option value="11-25">11th–25th</option></select></label>
+                        <label className="text-slate-500">Cutoff end month<input aria-label="Payroll cutoff end month" type="month" value={sharedCutoff.month} onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) setSharedCutoff({ ...sharedCutoff, month: event.target.value }); }} className="mt-1 block rounded-md border border-slate-200 px-2 py-1.5" /></label>
+                        <button type="button" aria-label="Previous payroll cutoff" onClick={() => setSharedCutoff(moveCutoff(sharedCutoff, -1))} className="rounded-md border border-slate-200 px-2 py-1.5">←</button>
+                        <button type="button" aria-label="Next payroll cutoff" onClick={() => setSharedCutoff(moveCutoff(sharedCutoff, 1))} className="rounded-md border border-slate-200 px-2 py-1.5">→</button>
+                        <p className="w-full text-slate-500">{formatMDY(payrollStartDate)} – {formatMDY(payrollEndDate)} · shared with Attendance Logs</p>
                       </div>
                       <input type="text" placeholder="Search employee..." value={payrollActiveSearchQuery} onChange={e => setPayrollActiveSearchQuery(e.target.value)} className="px-3 py-2.5 h-[52px] border border-slate-300 rounded-xl text-sm outline-none focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 shadow-sm w-full sm:w-[200px]" />
                     </div>

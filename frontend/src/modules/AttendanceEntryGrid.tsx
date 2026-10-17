@@ -10,6 +10,8 @@ type Props = {
   onRecordsChange: (records: AttendanceEntryRecord[]) => void;
   onDirtyChange: (dirty: boolean) => void;
   onBusyChange: (busy: boolean) => void;
+  cutoffSelection?: CutoffSelection;
+  onCutoffChange?: (cutoff: CutoffSelection) => void;
 };
 
 const fieldClass = 'rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100';
@@ -17,12 +19,13 @@ const buttonClass = 'rounded-md border border-slate-300 bg-white px-3 py-2 text-
 const fullName = (employee: AttendanceEntryEmployee) => [employee.firstName, employee.middleName, employee.lastName].filter(Boolean).join(' ');
 const dateLabel = (date: string, weekday = false) => new Intl.DateTimeFormat('en-US', weekday ? { weekday: 'short', timeZone: 'UTC' } : { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`));
 const hoursLabel = (minutes: number) => `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
-export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, employees, onRecordsChange, onDirtyChange, onBusyChange }: Props) {
+export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, employees, onRecordsChange, onDirtyChange, onBusyChange, cutoffSelection, onCutoffChange }: Props) {
   const [employeeId, setEmployeeId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [optionIndex, setOptionIndex] = useState(0);
-  const [cutoff, setCutoff] = useState<CutoffSelection>(getInitialCutoff);
+  const [localCutoff, setLocalCutoff] = useState<CutoffSelection>(getInitialCutoff);
+  const cutoff = cutoffSelection ?? localCutoff;
   const [records, setRecords] = useState<AttendanceEntryRecord[]>([]);
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [loadedScope, setLoadedScope] = useState('');
@@ -87,7 +90,8 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
   const switchCutoff = (next: CutoffSelection) => {
     if (next.month === cutoff.month && next.period === cutoff.period) return;
     if (!allowSwitch()) return;
-    setRows([]); setMessage(''); setLoadError(''); setCutoff(next);
+    setRows([]); setMessage(''); setLoadError('');
+    if (onCutoffChange) onCutoffChange(next); else setLocalCutoff(next);
   };
   const selectEmployee = (next: AttendanceEntryEmployee) => {
     if (next.id !== employeeId) {
