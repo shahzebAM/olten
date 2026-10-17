@@ -5,6 +5,7 @@ export type PayrollProfile = {
   paidDayBasis: 'SCHEDULED' | 'FIXED';
   workingWeekdays: number[];
   fixedPaidDays?: number;
+  overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
 } & (
   | { basis: 'DAILY'; dailyRate: number }
   | { basis: 'CUTOFF'; referenceDays: number }
@@ -22,6 +23,12 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
   )
     throw new Error('Unsupported pay profile or paid-day rule.');
   const weekdays = profile.workingWeekdays;
+  if (
+    profile.overtimeBasis !== undefined &&
+    profile.overtimeBasis !== 'DAILY' &&
+    profile.overtimeBasis !== 'CUTOFF_NET'
+  )
+    throw new Error('Select a supported overtime calculation method.');
   if (
     !Array.isArray(weekdays) ||
     !weekdays.length ||
@@ -71,6 +78,7 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
     'basis',
     'paidDayBasis',
     'workingWeekdays',
+    'overtimeBasis',
     ...(profile.basis === 'DAILY' ? ['dailyRate'] : ['referenceDays']),
     ...(profile.paidDayBasis === 'FIXED' ? ['fixedPaidDays'] : []),
   ];
@@ -80,6 +88,9 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
     version: 1,
     paidDayBasis: profile.paidDayBasis as PayrollProfile['paidDayBasis'],
     workingWeekdays: [...(weekdays as number[])].sort((a, b) => a - b),
+    ...(profile.overtimeBasis !== undefined
+      ? { overtimeBasis: profile.overtimeBasis }
+      : {}),
     ...(profile.paidDayBasis === 'FIXED'
       ? { fixedPaidDays: Number(profile.fixedPaidDays) }
       : {}),

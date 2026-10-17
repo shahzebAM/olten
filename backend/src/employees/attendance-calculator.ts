@@ -620,6 +620,7 @@ export interface AttendancePayrollOptions extends AttendanceAggregationOptions {
   basicSalary: number;
   govHolidayAmt?: number;
   ratePerDay?: number;
+  overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
 }
 
 export const calculateAttendancePayroll = (
@@ -637,10 +638,16 @@ export const calculateAttendancePayroll = (
     ? options.govHolidayAmt!
     : 0;
   const requiredMinutes = Math.round(days * 480);
-  const undertimeMinutes = Math.max(
-    0,
-    requiredMinutes - summary.regularMinutes,
-  );
+  const overtimeBasis = options.overtimeBasis ?? 'CUTOFF_NET';
+  const regularMinutes =
+    overtimeBasis === 'CUTOFF_NET'
+      ? Math.min(summary.netMinutes, requiredMinutes)
+      : summary.regularMinutes;
+  const overtimeMinutes =
+    overtimeBasis === 'CUTOFF_NET'
+      ? Math.max(0, summary.netMinutes - requiredMinutes)
+      : summary.otMinutes;
+  const undertimeMinutes = Math.max(0, requiredMinutes - regularMinutes);
   const ratePerDay =
     options.ratePerDay !== undefined &&
     Number.isFinite(options.ratePerDay) &&
@@ -651,15 +658,16 @@ export const calculateAttendancePayroll = (
         : 0;
   const ratePerHour = ratePerDay / 8;
   const money = (value: number) => Math.round(value * 100) / 100;
-  const otPay = money((summary.otMinutes / 60) * ratePerHour * 1.25);
+  const otPay = money((overtimeMinutes / 60) * ratePerHour * 1.25);
   const undertimeDeduction = money((undertimeMinutes / 60) * ratePerHour);
   return {
     version: 1 as const,
     cutoffStart: options.startDate,
     cutoffEnd: options.endDate,
     totalMinutes: summary.netMinutes,
-    regularMinutes: summary.regularMinutes,
-    overtimeMinutes: summary.otMinutes,
+    regularMinutes,
+    overtimeMinutes,
+    overtimeBasis,
     lateMinutes: summary.lateMinutes,
     undertimeMinutes,
     requiredMinutes,

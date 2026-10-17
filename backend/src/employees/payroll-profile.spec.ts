@@ -32,6 +32,7 @@ const profile: PayrollProfile = {
   version: 1,
   basis: 'DAILY',
   dailyRate: 755,
+  overtimeBasis: 'DAILY',
   paidDayBasis: 'SCHEDULED',
   workingWeekdays: [1, 2, 3, 4, 5, 6],
 };
@@ -75,6 +76,16 @@ const input = {
 };
 
 describe('explicit payroll profiles', () => {
+  it('accepts existing profiles without a policy and retains explicit overrides', () => {
+    const existing = { ...profile };
+    delete existing.overtimeBasis;
+    expect(validatePayrollProfile(existing)).toEqual(existing);
+    expect(validatePayrollProfile(profile)?.overtimeBasis).toBe('DAILY');
+    expect(
+      validatePayrollProfile({ ...profile, overtimeBasis: 'CUTOFF_NET' })
+        ?.overtimeBasis,
+    ).toBe('CUTOFF_NET');
+  });
   it('normalizes weekdays without mutating the saved profile', () => {
     const original = { ...profile, workingWeekdays: [6, 1] };
     expect(validatePayrollProfile(original)?.workingWeekdays).toEqual([1, 6]);
@@ -95,6 +106,8 @@ describe('explicit payroll profiles', () => {
     { ...profile, workingWeekdays: [7] },
     { ...profile, workingWeekdays: ['1'] },
     { ...profile, paidDayBasis: 'ATTENDANCE' },
+    { ...profile, overtimeBasis: 'WEEKLY' },
+    { ...profile, overtimeBasis: null },
     { ...profile, formula: 'cutoff-offset' },
     { ...fixed, referenceDays: 0 },
     { ...fixed, referenceDays: 13 },
@@ -164,6 +177,7 @@ describe('explicit payroll profiles', () => {
         daysWorked: 2,
         basicSalary: 1510,
         ratePerDay: 755,
+        overtimeBasis: 'DAILY',
       },
     );
     expect(result.totalMinutes).toBe(960);
@@ -253,7 +267,7 @@ describe('authoritative payroll preview and save', () => {
       database.payroll.create.mock.invocationCallOrder[0],
     );
   });
-  it.each(['attendance', 'profile', 'settings'])(
+  it.each(['attendance', 'profile', 'overtime policy', 'settings'])(
     'rejects a stale %s preview before any write',
     async (change) => {
       const preview = await service.previewPayroll(input);
@@ -265,6 +279,11 @@ describe('authoritative payroll preview and save', () => {
         database.employee.findUnique.mockResolvedValue({
           ...employee,
           payrollProfile: { ...profile, dailyRate: 800 },
+        });
+      if (change === 'overtime policy')
+        database.employee.findUnique.mockResolvedValue({
+          ...employee,
+          payrollProfile: { ...profile, overtimeBasis: 'CUTOFF_NET' },
         });
       if (change === 'settings')
         database.settings.findUnique.mockResolvedValue({
@@ -291,6 +310,32 @@ describe('authoritative payroll preview and save', () => {
     await service.previewPayroll(input);
     expect(saved).toEqual(before);
     expect(database.payroll.update).not.toHaveBeenCalled();
+  });
+  it('defaults existing profiles to cutoff net and stores that policy on new snapshots', async () => {
+    const existingProfile = { ...profile };
+    delete existingProfile.overtimeBasis;
+    database.employee.findUnique.mockResolvedValue({
+      ...employee,
+      payrollProfile: existingProfile,
+    });
+    const result = await service.previewPayroll(input);
+    expect(result.attendanceSummary).toMatchObject({
+      overtimeBasis: 'CUTOFF_NET',
+      totalMinutes: 1080,
+      regularMinutes: 1080,
+      overtimeMinutes: 0,
+      undertimeMinutes: 5160,
+      undertimeDeduction: 8116.25,
+    });
+    const saved = await service.createPayroll({
+      ...input,
+      previewFingerprint: result.previewFingerprint,
+    });
+    expect(saved.attendanceSummary).toMatchObject({
+      overtimeBasis: 'CUTOFF_NET',
+      overtimeMinutes: 0,
+      undertimeMinutes: 5160,
+    });
   });
   it('deducts missing scheduled attendance without changing the hourly rate', async () => {
     const first = await service.previewPayroll(input);

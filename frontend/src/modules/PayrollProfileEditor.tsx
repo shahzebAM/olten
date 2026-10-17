@@ -12,12 +12,13 @@ type Props = {
   onBusyChange: (busy: boolean) => void;
 };
 const fromProfile = (profile?: PayrollProfile | null) => ({
-  basis: profile?.basis ?? 'DAILY',
+  basis: profile?.basis ?? 'CUTOFF',
   dailyRate: profile?.basis === 'DAILY' ? String(profile.dailyRate) : '',
   referenceDays: profile?.basis === 'CUTOFF' ? String(profile.referenceDays) : '14',
-  paidDayBasis: profile?.paidDayBasis ?? 'SCHEDULED',
+  paidDayBasis: profile?.paidDayBasis ?? 'FIXED',
   fixedPaidDays: String(profile?.fixedPaidDays ?? 14),
   workingWeekdays: profile?.workingWeekdays ?? [1, 2, 3, 4, 5, 6],
+  overtimeBasis: profile?.overtimeBasis ?? 'CUTOFF_NET',
 });
 const inputClass = 'mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800 outline-none focus:border-indigo-500';
 
@@ -42,7 +43,7 @@ export default function PayrollProfileEditor({ employee, API_BASE_URL, onSaved, 
     if (lock.current || sourceChanged) return;
     let profile: PayrollProfile | null;
     try {
-      profile = validatePayrollProfile({ version: 1, basis: form.basis, paidDayBasis: form.paidDayBasis, workingWeekdays: form.workingWeekdays,
+      profile = validatePayrollProfile({ version: 1, basis: form.basis, paidDayBasis: form.paidDayBasis, workingWeekdays: form.workingWeekdays, overtimeBasis: form.overtimeBasis,
         ...(form.basis === 'DAILY' ? { dailyRate: Number(form.dailyRate) } : { referenceDays: Number(form.referenceDays) }),
         ...(form.paidDayBasis === 'FIXED' ? { fixedPaidDays: Number(form.fixedPaidDays) } : {}),
       });
@@ -63,8 +64,9 @@ export default function PayrollProfileEditor({ employee, API_BASE_URL, onSaved, 
   return <details open={!employee.payrollProfile} className="rounded-lg border border-indigo-200 bg-indigo-50/40">
     <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-indigo-900">{employee.payrollProfile ? 'Pay profile · saved rules' : 'One-time pay profile setup required'}</summary>
     <fieldset disabled={busy} className="space-y-3 border-t border-indigo-100 p-3">
-      <p className="text-xs text-slate-600">Save the employee’s agreed pay basis once. Attendance changes will not change the hourly rate. Overtime is calculated per workday; shortfalls remain separate.</p>
+      <p className="text-xs text-slate-600">Save the employee’s agreed pay basis once. Excel cutoff balance is the default: hours above the required cutoff total earn 125%; shortages use the normal hourly rate. Calculations retain full precision until amounts are rounded to cents.</p>
       <div className="grid grid-cols-2 gap-3">
+        <label className="col-span-2 text-xs text-slate-600">Overtime calculation<select aria-label="Overtime calculation" value={form.overtimeBasis} onChange={event => setForm({ ...form, overtimeBasis: event.target.value as 'DAILY' | 'CUTOFF_NET' })} className={inputClass}><option value="CUTOFF_NET">Excel cutoff balance (default)</option><option value="DAILY">Daily overtime and separate shortfalls</option></select></label>
         <label className="text-xs text-slate-600">Pay basis<select aria-label="Pay basis" value={form.basis} onChange={event => setForm({ ...form, basis: event.target.value as PayrollProfile['basis'], ...(event.target.value === 'CUTOFF' ? { paidDayBasis: 'FIXED', fixedPaidDays: form.referenceDays, workingWeekdays: form.workingWeekdays.length ? form.workingWeekdays : [1, 2, 3, 4, 5, 6] } : {}) })} className={inputClass}><option value="DAILY">Fixed daily rate</option><option value="CUTOFF">Fixed cutoff salary</option></select></label>
         {form.basis === 'DAILY'
           ? <label className="text-xs text-slate-600">Daily rate (₱)<input aria-label="Daily rate" type="number" min="0.01" step="0.01" value={form.dailyRate} onChange={event => setForm({ ...form, dailyRate: event.target.value })} className={inputClass} placeholder="Agreed daily rate" /></label>

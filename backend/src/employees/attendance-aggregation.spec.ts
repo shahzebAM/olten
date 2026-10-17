@@ -386,6 +386,7 @@ describe('shared attendance aggregation', () => {
     { timeIn: '08:00', timeOut: '' },
     { timeIn: '24:00', timeOut: '17:00' },
     { timeIn: '08:60', timeOut: '17:00' },
+    { timeIn: '08:00:01', timeOut: '17:00' },
     { timeIn: '13:00 PM', timeOut: '17:00' },
     { timeIn: '00:00 AM', timeOut: '17:00' },
     { timeIn: '08:00', timeOut: '08:00' },
@@ -449,6 +450,7 @@ describe('shared attendance payroll integration', () => {
     endDate: '2026-10-15',
     daysWorked: 1,
     basicSalary: 800,
+    overtimeBasis: 'DAILY' as const,
   };
 
   it('does not turn ordinary hours on extra days into cutoff overtime', () => {

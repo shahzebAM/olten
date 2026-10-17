@@ -276,10 +276,11 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500" aria-label="Saved attendance summary">
             <span>Cutoff dates <strong className="ml-1 text-slate-800">{dates.length}</strong></span><span>Saved dates <strong className="ml-1 text-slate-800">{new Set(savedInCutoff.map(record => toAttendanceDateYMD(record.date))).size}</strong></span>
-            <span>Regular <strong className="ml-1 text-indigo-700">{officialAvailable ? hoursLabel(totalRegular) : 'Pending refresh'}</strong></span><span>Overtime <strong className="ml-1 text-purple-700">{officialAvailable ? hoursLabel(totalOvertime) : 'Pending refresh'}</strong></span>
+            <span>Total paid hours <strong className="ml-1 text-slate-800">{officialAvailable ? hoursLabel(totalRegular + totalOvertime) : 'Pending refresh'}</strong></span>
+            <span>Daily regular <strong className="ml-1 text-indigo-700">{officialAvailable ? hoursLabel(totalRegular) : 'Pending refresh'}</strong></span><span>Daily overtime <strong className="ml-1 text-purple-700">{officialAvailable ? hoursLabel(totalOvertime) : 'Pending refresh'}</strong></span>
           </div>
           <div className="flex items-center gap-2"><button type="button" disabled={disabled} onClick={() => void refresh(true)} className={buttonClass}>Reset Unsaved Changes</button><button type="button" disabled={disabled || !dirty || uncertain} onClick={() => void save()} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{saving ? 'Saving…' : 'Save Attendance'}</button></div>
-          <p className="w-full text-[11px] text-slate-400">Official totals include saved records only. Blank dates stay empty. Enter moves down the same time column; Tab moves between cells.</p>
+          <p className="w-full text-[11px] text-slate-400">Official totals include saved records only. Payroll applies the employee’s selected cutoff calculation to these hours. Blank dates stay empty. Enter moves down the same time column; Tab moves between cells.</p>
         </div>
       </>}
     </section>

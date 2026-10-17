@@ -790,6 +790,7 @@ export class EmployeesService {
       endDate: cutoffEnd,
       daysWorked,
       basicSalary: basis?.basicSalary ?? employee.baseRate,
+      overtimeBasis: profile?.overtimeBasis ?? 'CUTOFF_NET',
       ...(basis ? { ratePerDay: basis.ratePerDay } : {}),
       govHolidayAmt,
     });

@@ -346,7 +346,7 @@ describe('attendance source records and payroll snapshots', () => {
     expect(sourceRows[1]).toEqual(row(2, '19:00', '20:00'));
   });
 
-  it('reads fresh attendance and keeps daily overtime separate from the cutoff regular shortfall', async () => {
+  it('reads fresh attendance and applies cutoff net hours by default', async () => {
     sourceRows = [
       row(1, '08:30', '18:30'),
       row(2, '08:30', '16:30', { date: '2026-10-07' }),
@@ -357,33 +357,83 @@ describe('attendance source records and payroll snapshots', () => {
         grossPay: 999999,
         netPay: 999999,
         attendanceSummary: { version: 999 },
+        overtimeBasis: 'DAILY',
       }),
     );
     const stored = database.payroll.create.mock.calls[0][0].data;
 
     expect(stored.totalHours).toBe(16);
-    expect(stored.grossPay).toBe(1625);
-    expect(stored.netPay).toBe(1625);
+    expect(stored.grossPay).toBe(1600);
+    expect(stored.netPay).toBe(1600);
     expect(stored.attendanceSummary).toEqual(
       expect.objectContaining({
         version: 1,
         cutoffStart: '2026-10-06',
         cutoffEnd: '2026-10-07',
         totalMinutes: 960,
-        regularMinutes: 900,
-        overtimeMinutes: 60,
+        regularMinutes: 960,
+        overtimeMinutes: 0,
+        overtimeBasis: 'CUTOFF_NET',
         requiredMinutes: 960,
         basicSalary: 1600,
         ratePerDay: 800,
         ratePerHour: 100,
-        otPay: 125,
-        undertimeDeduction: 100,
-        grossPay: 1625,
+        otPay: 0,
+        undertimeDeduction: 0,
+        grossPay: 1600,
       }),
     );
     expect(database.attendance.update).not.toHaveBeenCalled();
     expect(database.payroll.update).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['above target', '18:30', '17:30', 1020, 60, 0, 125, 0, 1725],
+    ['below target', '17:30', '16:30', 900, 0, 60, 0, 100, 1500],
+  ])(
+    'saves cutoff net payroll %s with excess at 125%% and shortage at the normal rate',
+    async (
+      _case,
+      firstOut,
+      secondOut,
+      totalMinutes,
+      overtimeMinutes,
+      undertimeMinutes,
+      otPay,
+      undertimeDeduction,
+      grossPay,
+    ) => {
+      sourceRows = [
+        row(1, '08:30', firstOut),
+        row(2, '08:30', secondOut, { date: '2026-10-07' }),
+      ];
+      const before = structuredClone(sourceRows);
+      const preview = await service.previewPayroll(payrollInput());
+      expect(preview.attendanceSummary).toEqual(
+        expect.objectContaining({
+          overtimeBasis: 'CUTOFF_NET',
+          requiredMinutes: 960,
+          totalMinutes,
+          overtimeMinutes,
+          undertimeMinutes,
+          otPay,
+          undertimeDeduction,
+          grossPay,
+        }),
+      );
+      await service.createPayroll(payrollInput());
+      expect(savedPayrolls[0]).toEqual(
+        expect.objectContaining({
+          grossPay,
+          netPay: grossPay,
+          attendanceSummary: preview.attendanceSummary,
+        }),
+      );
+      expect(sourceRows).toEqual(before);
+      expect(database.attendance.update).not.toHaveBeenCalled();
+      expect(database.payroll.update).not.toHaveBeenCalled();
+    },
+  );
 
   it('reflects attendance edits and deletions in subsequent payrolls while preserving the saved snapshot', async () => {
     sourceRows = [row(1, '08:30', '17:30')];

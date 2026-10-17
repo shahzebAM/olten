@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
-import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
+import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
+import { resolvePayrollBasis } from '../../../backend/src/employees/payroll-profile';
 import AttendanceEntryGrid from './AttendanceEntryGrid';
 import PayrollProfileEditor from './PayrollProfileEditor';
 import type { PayrollProfileEmployee } from './PayrollProfileEditor';
@@ -282,6 +283,7 @@ interface PayrollRecord {
     paidLeaveDateCount?: number;
     unpaidLeaveDateCount?: number;
     sourceSessionCount?: number;
+    overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
   } | null;
 }
 
@@ -1376,6 +1378,7 @@ const toCents = (val: any): number => {
                   <button type="button" disabled={isSaving || profileBusy} onClick={() => setPreviewRevision(version => version + 1)} className="ml-2 font-semibold text-indigo-600 disabled:opacity-50">Refresh Preview</button>
                 </div>
                 {savedPreview?.configurationRequired && <p className="text-xs text-amber-700">Complete the one-time pay profile before saving payroll. Required days and rates will then be calculated automatically.</p>}
+                {!savedPreview?.configurationRequired && <p className="text-xs text-slate-500">{summary?.overtimeBasis === 'CUTOFF_NET' ? 'Excel cutoff balance: overtime starts above the required cutoff hours; shortages are deducted at the normal hourly rate.' : 'Daily overtime: each workday’s overtime and shortfall are calculated separately.'}</p>}
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-4 gap-2 sm:gap-3">
                   <InputField compact type="text" disabled label="Required Paid Days" value={savedPreview?.configurationRequired ? 'Setup required' : String((summary?.requiredMinutes ?? 0) / 480)} />
@@ -1806,14 +1809,23 @@ const toCents = (val: any): number => {
                           filteredActiveEmployees.map((emp) => {
                             const payrollAttendance = getAttendanceSummary(emp.id, payrollStartDate, payrollEndDate);
                             const totalLogged = payrollAttendance.netMinutes / 60;
-                            const tableOtLogged = payrollAttendance.otMinutes / 60;
+                            let tableOtLogged: number | null = null;
+                            try {
+                              const basis = emp.payrollProfile ? resolvePayrollBasis(emp.payrollProfile, emp.baseRate, payrollStartDate, payrollEndDate) : null;
+                              tableOtLogged = calculateAttendancePayroll(attendances, {
+                                employeeId: emp.id, startDate: payrollStartDate, endDate: payrollEndDate,
+                                shiftStart, shiftEnd, lunchStart, lunchEnd,
+                                daysWorked: basis?.paidDays ?? 14, basicSalary: basis?.basicSalary ?? emp.baseRate,
+                                ratePerDay: basis?.ratePerDay, overtimeBasis: emp.payrollProfile?.overtimeBasis ?? 'CUTOFF_NET',
+                              }).overtimeMinutes / 60;
+                            } catch { /* Invalid saved profiles require review in Compute Salary. */ }
 
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
                                 <td className="py-4 px-6 font-mono text-slate-500">{emp.employeeId || `#${emp.id}`}</td>
                                 <td className="py-4 px-6 font-semibold text-blue-950">{emp.firstName} {emp.lastName}</td>
                                 <td className="py-4 px-6 font-mono text-slate-600">{formatDecToHM(totalLogged)}</td>
-                                <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{tableOtLogged > 0 ? formatDecToHM(tableOtLogged) : '--'}</td>
+                                <td className="py-4 px-6 font-mono text-amber-600 font-semibold">{tableOtLogged === null ? 'Check pay profile' : tableOtLogged > 0 ? formatDecToHM(tableOtLogged) : '--'}</td>
                                 <td className="py-4 px-6 text-right">
                                   <button onClick={() => openPayrollModal(emp)} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase rounded hover:bg-emerald-700 shadow-sm transition-colors">Compute Salary</button>
                                 </td>
