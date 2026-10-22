@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException, HttpException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { GeminiService } from './gemini.service';
 import { DriveService } from './drive.service';
 import { ExpiryExtractorService } from './expiry-extractor.service';
@@ -251,6 +252,31 @@ export class DocumentService {
     finally { if (this.companyDeletions.get(company) === operation) this.companyDeletions.delete(company); }
   }
 
+  private async assertNoFinanceHistory(
+    company: string,
+    client: Prisma.TransactionClient = prisma,
+  ) {
+    const where = { where: { company } };
+    const history = await Promise.all([
+      client.erpAuditLog.count(where),
+      client.landedCost.count(where),
+      client.productCostHistory.count(where),
+      client.financeDocument.count(where),
+      client.financePayment.count(where),
+      client.paymentRequest.count(where),
+      client.ledgerAccount.count(where),
+      client.accountingJournal.count(where),
+      client.accountingMapping.count(where),
+      client.bankReconciliation.count(where),
+      client.deviceAsset.count(where),
+      client.serviceVisit.count(where),
+    ]);
+    if (history.some((count) => count > 0))
+      throw new ConflictException(
+        'A workspace with Phase 3 financial, service or audit history cannot be deleted.',
+      );
+  }
+
   private async removeCompanyWorkspace(company: string) {
     const workspace = await prisma.company.findUnique({ where: { name: company } });
     if (!workspace) throw new NotFoundException('Workspace not found');
@@ -259,21 +285,62 @@ export class DocumentService {
     await Promise.allSettled([...(this.companyWrites.get(company) || [])]);
     const currentWorkspace = await prisma.company.findUnique({ where: { name: company }, select: { id: true } });
     if (!currentWorkspace || currentWorkspace.id !== workspace.id) throw new ConflictException('The workspace changed. Refresh and retry deletion.');
+    await this.assertNoFinanceHistory(company);
     let geminiFileIds: string[] = [];
-    const deleted = await this.driveService.deleteCompanyFolder(company, () => prisma.$transaction(async client => {
-      const current = await client.company.findUnique({ where: { name: company } });
-      if (!current || current.id !== workspace.id) throw new ConflictException('The workspace changed. Refresh and retry deletion.');
-      const docs = await client.document.findMany({ where: { company }, select: { geminiFileId: true } });
-      geminiFileIds = [...new Set(docs.flatMap(doc => doc.geminiFileId ? [doc.geminiFileId] : []))];
-      // Document cascades remove its expiry reminders and notifications.
-      await client.document.deleteMany({ where: { company } });
-      await client.searchHistory.deleteMany({ where: { company } });
-      return client.company.delete({ where: { id: workspace.id, name: company } });
-    }).catch(error => {
-      if (error instanceof HttpException) throw error;
-      if (error.code === 'P2025') throw new ConflictException('The workspace changed. Refresh and retry deletion.');
-      throw new ServiceUnavailableException('The Drive folder was removed, but database cleanup failed. Please retry workspace deletion.');
-    }), () => this.isRecreatedCompany(company, workspace.id));
+    const deleted = await this.driveService.deleteCompanyFolder(
+      company,
+      () =>
+        prisma
+          .$transaction(
+            async (client) => {
+              const current = await client.company.findUnique({
+                where: { name: company },
+              });
+              if (!current || current.id !== workspace.id)
+                throw new ConflictException(
+                  'The workspace changed. Refresh and retry deletion.',
+                );
+              await this.assertNoFinanceHistory(company, client);
+              const docs = await client.document.findMany({
+                where: { company },
+                select: { geminiFileId: true },
+              });
+              geminiFileIds = [
+                ...new Set(
+                  docs.flatMap((doc) =>
+                    doc.geminiFileId ? [doc.geminiFileId] : [],
+                  ),
+                ),
+              ];
+              // Document cascades remove its expiry reminders and notifications.
+              await client.document.deleteMany({ where: { company } });
+              await client.searchHistory.deleteMany({ where: { company } });
+              return client.company.delete({
+                where: { id: workspace.id, name: company },
+              });
+            },
+            { isolationLevel: 'Serializable' },
+          )
+          .catch((error: unknown) => {
+            if (error instanceof HttpException) throw error;
+            const code =
+              error && typeof error === 'object' && 'code' in error
+                ? error.code
+                : undefined;
+            if (code === 'P2025')
+              throw new ConflictException(
+                'The workspace changed. Refresh and retry deletion.',
+              );
+            if (code === 'P2034')
+              throw new ConflictException(
+                'The workspace changed during processing. Its database history was preserved. Refresh and retry.',
+              );
+            throw new ServiceUnavailableException(
+              'The Drive folder was removed, but database cleanup failed. Please retry workspace deletion.',
+            );
+          }),
+      () => this.isRecreatedCompany(company, workspace.id),
+    );
     this.deletedCompanies.set(company, workspace.id);
     this.invalidateSearch(company);
     // Remote AI index cleanup never delays the completed Drive/DB deletion and

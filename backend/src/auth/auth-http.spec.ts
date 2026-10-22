@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import type { Server } from 'node:http';
 import { AuthSessionModule } from './auth-session.module';
 import { AppController } from '../app.controller';
 import { AppService } from '../app.service';
@@ -20,12 +21,17 @@ jest.mock('@prisma/client', () => {
 });
 jest.mock('bcryptjs', () => ({ compare: jest.fn(async (value: string) => value === 'test-correct-password'), hash: jest.fn().mockResolvedValue('new-hashed-password') }));
 const mockPrisma = jest.requireMock('@prisma/client').mockClient;
+const phase3Prisma = jest.requireMock<{
+  mockClient: {
+    admin: { findFirst: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+  };
+}>('@prisma/client').mockClient;
 
 describe('HTTP session protection', () => {
   const admin = { id: 7, username: 'real-user', password: 'test-stored-password-hash', role: 'Admin', status: 'Active', modules: { ai_docs: true, companies: { Surgicom: true } } };
   const docs = { getActiveNotifications: jest.fn().mockResolvedValue([]), searchDocuments: jest.fn().mockResolvedValue({ answer: 'mocked answer' }) };
   const previousSecret = process.env.SESSION_SECRET;
-  let app: INestApplication;
+  let app: INestApplication<Server>;
 
   beforeAll(async () => {
     process.env.SESSION_SECRET = 'http-test-session-key-with-at-least-32-bytes';
@@ -154,6 +160,70 @@ describe('HTTP session protection', () => {
     const token = await login();
     await request(app.getHttpServer()).patch('/api/admins/7').set('Authorization', `Bearer ${token}`).send({ modules: flags }).expect(400);
     expect(mockPrisma.admin.update).not.toHaveBeenCalled();
+  });
+
+  it('allows Super Admin to assign Phase 3 roles, module flags, and exact workspace approval limits', async () => {
+    const superAdmin = { ...admin, role: 'Super Admin' };
+    phase3Prisma.admin.findFirst.mockResolvedValue(superAdmin);
+    phase3Prisma.admin.findUnique.mockResolvedValue(superAdmin);
+    const token: unknown = await login();
+    const modules = {
+      finance: true,
+      books: true,
+      service: false,
+      executive: true,
+      ai_assistant: true,
+      erpRoles: ['Finance', 'Management'],
+      approvalLimits: { Surgicom: '9999999999999999.99' },
+      companies: { Surgicom: true },
+    };
+    await request(app.getHttpServer())
+      .patch('/api/admins/7/modules')
+      .set('Authorization', `Bearer ${String(token)}`)
+      .send({ modules })
+      .expect(200);
+    expect(phase3Prisma.admin.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { modules },
+    });
+  });
+
+  it.each([
+    { erpRoles: ['Finance', 'Finance'] },
+    { erpRoles: ['Owner'] },
+    { erpRoles: 'Finance' },
+    { approvalLimits: { Surgicom: 100 } },
+    { approvalLimits: { Surgicom: '0.00' } },
+    { approvalLimits: { Surgicom: '100.001' } },
+    { approvalLimits: { Surgicom: '-1' } },
+    { finance: 'true' },
+  ])('rejects invalid Phase 3 permission fields %o', async (modules) => {
+    const superAdmin = { ...admin, role: 'Super Admin' };
+    phase3Prisma.admin.findFirst.mockResolvedValue(superAdmin);
+    phase3Prisma.admin.findUnique.mockResolvedValue(superAdmin);
+    const token: unknown = await login();
+    await request(app.getHttpServer())
+      .patch('/api/admins/7/modules')
+      .set('Authorization', `Bearer ${String(token)}`)
+      .send({ modules })
+      .expect(400);
+    expect(phase3Prisma.admin.update).not.toHaveBeenCalled();
+  });
+
+  it('prevents ordinary Admin accounts from granting Phase 3 roles or approval limits', async () => {
+    const token: unknown = await login();
+    await request(app.getHttpServer())
+      .patch('/api/admins/7/modules')
+      .set('Authorization', `Bearer ${String(token)}`)
+      .send({
+        modules: {
+          finance: true,
+          erpRoles: ['Management'],
+          approvalLimits: { Surgicom: '1000000' },
+        },
+      })
+      .expect(403);
+    expect(phase3Prisma.admin.update).not.toHaveBeenCalled();
   });
 
   it('hashes new passwords on an authorized edit and returns no password material', async () => {

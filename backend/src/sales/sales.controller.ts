@@ -8,8 +8,9 @@ import {
   Param,
   Delete,
   ConflictException,
+  NotFoundException,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 @Controller('sales')
@@ -149,22 +150,96 @@ export class SalesController {
 
   @Patch('customers/:id')
   async updateCustomer(@Param('id') id: string, @Body() data: any) {
-    return prisma.customer.update({ where: { id }, data });
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const customer = await tx.customer.findUnique({
+            where: { id },
+            select: { company: true },
+          });
+          if (!customer) throw new NotFoundException('Customer not found.');
+          const identity = data as { id?: unknown; company?: unknown } | null;
+          const identityChanged =
+            (identity?.id !== undefined && identity.id !== id) ||
+            (identity?.company !== undefined &&
+              identity.company !== customer.company);
+          if (identityChanged) {
+            const company = customer.company;
+            const history = await Promise.all([
+              tx.financeDocument.count({
+                where: { company, direction: 'AR', partyId: id },
+              }),
+              tx.financePayment.count({
+                where: { company, direction: 'AR', partyId: id },
+              }),
+              tx.deviceAsset.count({ where: { company, customerId: id } }),
+            ]);
+            if (history.some((count) => count > 0))
+              throw new ConflictException(
+                'Customer identity and workspace cannot change after financial or device service history exists.',
+              );
+          }
+          return tx.customer.update({ where: { id }, data });
+        },
+        { isolationLevel: 'Serializable' },
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      )
+        throw new ConflictException(
+          'The customer changed during processing. Refresh and try again.',
+        );
+      throw error;
+    }
   }
 
   @Delete('customers/:id')
   async deleteCustomer(@Param('id') id: string) {
-    return prisma.$transaction(
-      async (tx) => {
-        if (await tx.customerOrder.count({ where: { customerId: id } })) {
-          throw new ConflictException(
-            'A customer with fulfillment order history cannot be deleted.',
-          );
-        }
-        return tx.customer.delete({ where: { id } });
-      },
-      { isolationLevel: 'Serializable' },
-    );
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const customer = await tx.customer.findUnique({
+            where: { id },
+            select: { company: true },
+          });
+          if (!customer) throw new NotFoundException('Customer not found.');
+          const company = customer.company;
+          if (
+            await tx.customerOrder.count({ where: { customerId: id, company } })
+          ) {
+            throw new ConflictException(
+              'A customer with fulfillment order history cannot be deleted.',
+            );
+          }
+          const history = await Promise.all([
+            tx.financeDocument.count({
+              where: { company, direction: 'AR', partyId: id },
+            }),
+            tx.financePayment.count({
+              where: { company, direction: 'AR', partyId: id },
+            }),
+            tx.deviceAsset.count({ where: { company, customerId: id } }),
+          ]);
+          if (history.some((count) => count > 0))
+            throw new ConflictException(
+              'A customer with financial or device service history cannot be deleted.',
+            );
+          return tx.customer.delete({ where: { id } });
+        },
+        { isolationLevel: 'Serializable' },
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      )
+        throw new ConflictException(
+          'The customer changed during processing. Refresh and try again.',
+        );
+      throw error;
+    }
   }
 
   @Patch('customers/:id/balance')

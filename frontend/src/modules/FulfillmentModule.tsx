@@ -383,6 +383,7 @@ export default function FulfillmentModule({
   canSales,
   embedded = false,
   onCreateOrderSlip,
+  onOpenFinance,
   onBack,
 }: {
   selectedCompany: string;
@@ -393,6 +394,7 @@ export default function FulfillmentModule({
   canSales: boolean;
   embedded?: boolean;
   onCreateOrderSlip?: () => void;
+  onOpenFinance?: (deliveryId: string) => void;
   onBack: () => void;
 }) {
   const [view, setView] = useState<View>(initialView);
@@ -1543,6 +1545,7 @@ export default function FulfillmentModule({
                           <button type="button" className={`${secondary} fulfillment-no-print`} onClick={print}>
                             Print picking list / POD
                           </button>
+                          {onOpenFinance && delivery.pods?.length > 0 && delivery.sources?.some(source => source.sourceType === 'FO') && <button type="button" className={`${primary} fulfillment-no-print`} onClick={() => onOpenFinance(delivery.id)}>Create invoice from POD</button>}
                         </div>
                         <Status value={delivery.status} />
                         <div className="overflow-x-auto">

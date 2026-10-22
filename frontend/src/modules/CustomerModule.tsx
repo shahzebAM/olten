@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { CustomerFinanceBalance } from './phase3/ProfilePanels';
 
 // --- INTERFACES ---
 interface Customer {
@@ -23,9 +24,10 @@ interface CustomerModuleProps {
   API_BASE_URL: string;
   onBack: () => void;
   onRouteToOrderSlip?: (customerId: string) => void;
+  canFinance?: boolean;
 }
 
-export default function CustomerModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onRouteToOrderSlip }: CustomerModuleProps) {
+export default function CustomerModule({ selectedCompany, loginUsername, API_BASE_URL, onBack, onRouteToOrderSlip, canFinance = false }: CustomerModuleProps) {
   const isAuthorizedAdmin = loginUsername?.toLowerCase() === 'admin' || loginUsername?.toLowerCase() === 'ali' || loginUsername?.toLowerCase() === 'super admin';
 
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -639,9 +641,10 @@ useEffect(() => {
                   <p className="text-sm font-medium text-slate-900 leading-relaxed">{viewCustomer.address || 'N/A'}</p>
                 </div>
                 <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-inner lg:col-span-3">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Outstanding Balance</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Legacy Customer Balance</p>
                   <p className="text-2xl font-black">₱{(viewCustomer.balance || 0).toLocaleString()}</p>
                 </div>
+                {canFinance && <div className="lg:col-span-3"><CustomerFinanceBalance key={viewCustomer.id} api={API_BASE_URL} company={selectedCompany} customerId={viewCustomer.id} /></div>}
               </div>
             </div>
           </div>

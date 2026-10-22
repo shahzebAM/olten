@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ProductCostHistory } from './phase3/ProfilePanels';
 import * as XLSX from 'xlsx';
 import { getApiAuthHeaders, expireApiSession } from '../lib/apiSession';
 
@@ -10,6 +11,7 @@ interface Product {
   sku: string; 
   category: string; 
   purchasePrice: number | string; 
+  landedCostReference?: number | string | null;
   sellingPrice: number | string; 
   categoryPrices?: Record<string, number | string>; 
   minQuantity: number; 
@@ -80,7 +82,8 @@ let globalImageVault: Record<string, string> = {};
 let currentValidImages: Record<string, string> = {};
 let deletedImageVault: Record<string, string> = {}; 
 
-export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack }: any) {
+export default function MasterInventory({ selectedCompany, loginUsername, API_BASE_URL, onLogout, onBack, canFinance = false }: any) {
+  const [costHistoryProduct, setCostHistoryProduct] = useState<Product | null>(null);
   const isAuthorizedAdmin = loginUsername?.toLowerCase() === 'admin' || loginUsername?.toLowerCase() === 'ali' || loginUsername?.toLowerCase() === 'super admin';
 
   const [activeView, setActiveView] = useState<'products' | 'movements' | 'warehouses' | 'receiving'>('products');
@@ -814,6 +817,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden">
+      {canFinance && costHistoryProduct && <ProductCostHistory api={API_BASE_URL} company={selectedCompany} product={costHistoryProduct} onClose={() => setCostHistoryProduct(null)} />}
       
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm transition-all ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
@@ -1025,6 +1029,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                                   <span className="text-[9px] uppercase tracking-widest text-emerald-600/70">COST</span>
                                   ₱{Number(p.purchasePrice).toFixed(2)}
                                 </div>
+                                {canFinance && <button type="button" className="mt-2 block text-left text-[10px] font-semibold text-cyan-700 hover:underline" onClick={() => setCostHistoryProduct(p)}>{p.landedCostReference == null ? 'View landed cost history' : `Landed reference: ₱${Number(p.landedCostReference).toFixed(2)}`}</button>}
                               </td>
                               <td className="py-2.5 px-4 align-middle text-center">
                                 <div className={`font-mono text-sm font-black ${p.currentStock <= p.reorderLevel ? 'text-rose-600' : 'text-slate-700'}`}>{p.currentStock} <span className="text-[9px] text-slate-400 font-sans">{p.unit}</span></div>

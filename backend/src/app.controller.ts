@@ -47,17 +47,102 @@ export class AppController {
       data.status = fields.status;
     }
     if (fields.modules !== undefined) {
-      if (!fields.modules || typeof fields.modules !== 'object' || Array.isArray(fields.modules)) throw new BadRequestException('Invalid permissions.');
+      if (
+        !fields.modules ||
+        typeof fields.modules !== 'object' ||
+        Array.isArray(fields.modules)
+      )
+        throw new BadRequestException('Invalid permissions.');
       const modules = fields.modules as Record<string, unknown>;
-      const booleanKeys = ['payroll', 'ai_docs', 'master_inventory', 'inventory', 'products', 'warehouses', 'purchasing', 'sales', 'importation', 'importation_approve'];
-      if (Object.entries(modules).some(([key, value]) => key !== 'companies' && (!booleanKeys.includes(key) || typeof value !== 'boolean'))) {
-        throw new BadRequestException('Permissions must contain supported boolean module values.');
+      const booleanKeys = [
+        'payroll',
+        'ai_docs',
+        'master_inventory',
+        'inventory',
+        'products',
+        'warehouses',
+        'purchasing',
+        'sales',
+        'importation',
+        'importation_approve',
+        'finance',
+        'books',
+        'service',
+        'executive',
+        'ai_assistant',
+      ];
+      if (
+        Object.entries(modules).some(
+          ([key, value]) =>
+            !['companies', 'erpRoles', 'approvalLimits'].includes(key) &&
+            (!booleanKeys.includes(key) || typeof value !== 'boolean'),
+        )
+      ) {
+        throw new BadRequestException(
+          'Permissions must contain supported boolean module values.',
+        );
+      }
+      if (modules.erpRoles !== undefined) {
+        const roles = [
+          'Management',
+          'Purchasing',
+          'Importation',
+          'Warehouse',
+          'QC/Regulatory',
+          'Sales',
+          'Delivery',
+          'Finance',
+          'Auditor',
+          'AI',
+        ];
+        if (
+          !Array.isArray(modules.erpRoles) ||
+          modules.erpRoles.length > roles.length ||
+          modules.erpRoles.some(
+            (role) => typeof role !== 'string' || !roles.includes(role),
+          ) ||
+          new Set(modules.erpRoles).size !== modules.erpRoles.length
+        ) {
+          throw new BadRequestException(
+            'ERP roles must be a unique list of supported roles.',
+          );
+        }
+      }
+      if (modules.approvalLimits !== undefined) {
+        if (
+          !modules.approvalLimits ||
+          typeof modules.approvalLimits !== 'object' ||
+          Array.isArray(modules.approvalLimits) ||
+          Object.keys(modules.approvalLimits).length > 1000 ||
+          Object.entries(modules.approvalLimits).some(
+            ([name, limit]) =>
+              !name.trim() ||
+              name !== name.trim() ||
+              name.length > 100 ||
+              typeof limit !== 'string' ||
+              !/^\d{1,16}(?:\.\d{1,2})?$/.test(limit) ||
+              /^0+(?:\.0{1,2})?$/.test(limit),
+          )
+        ) {
+          throw new BadRequestException(
+            'Approval limits must map workspace names to positive decimal amount strings.',
+          );
+        }
       }
       if (modules.companies !== undefined) {
-        if (!modules.companies || typeof modules.companies !== 'object' || Array.isArray(modules.companies)
-          || Object.keys(modules.companies).length > 1000
-          || Object.entries(modules.companies).some(([name, allowed]) => !name.trim() || name.length > 100 || typeof allowed !== 'boolean')) {
-          throw new BadRequestException('Company permissions must contain valid workspace names and boolean values.');
+        if (
+          !modules.companies ||
+          typeof modules.companies !== 'object' ||
+          Array.isArray(modules.companies) ||
+          Object.keys(modules.companies).length > 1000 ||
+          Object.entries(modules.companies).some(
+            ([name, allowed]) =>
+              !name.trim() || name.length > 100 || typeof allowed !== 'boolean',
+          )
+        ) {
+          throw new BadRequestException(
+            'Company permissions must contain valid workspace names and boolean values.',
+          );
         }
       }
       data.modules = modules as Prisma.InputJsonValue;

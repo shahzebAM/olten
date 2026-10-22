@@ -15,6 +15,7 @@ import { QuotationsController } from './sales/quotations.controller';
 import { ImportationModule } from './importation/importation.module';
 import { FulfillmentModule } from './fulfillment/fulfillment.module';
 import { FulfillmentPodController } from './fulfillment-pod.controller';
+import { Phase3Module } from './phase3/phase3.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { FulfillmentPodController } from './fulfillment-pod.controller';
     DocumentationModule,
     ImportationModule,
     FulfillmentModule,
+    Phase3Module,
   ],
   controllers: [
     AppController,

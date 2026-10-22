@@ -185,6 +185,7 @@ model Product {
   qrCodeUrl     String?   @db.Text
   category      String
   purchasePrice Float
+  landedCostReference Decimal? @db.Decimal(18, 6)
   sellingPrice  Float
   minQuantity   Int       @default(10)
   reorderLevel  Int       @default(20)
@@ -207,6 +208,8 @@ model Product {
   orderSlipItems OrderSlipItem[]
   requisitionItems PurchaseRequisitionItem[]
   importDocuments Document[]
+  costHistory ProductCostHistory[]
+  deviceAssets DeviceAsset[]
 
   @@index([company])
   @@index([sku])
@@ -392,6 +395,7 @@ model Customer {
 
   quotations  Quotation[]
   packingLists PackingList[]
+  deviceAssets DeviceAsset[]
 }
 
 
@@ -416,6 +420,7 @@ model Supplier {
   purchaseOrders PurchaseOrder[] 
   catalog Json? @default("[]")
   supplierQuotations SupplierQuotation[]
+  paymentRequests PaymentRequest[]
 }
 
 model CustomerCategory {
@@ -668,6 +673,8 @@ model Shipment {
   expenses ImportExpense[]
   receipts GoodsReceipt[]
   documents Document[]
+  landedCosts LandedCost[]
+  costHistory ProductCostHistory[]
   @@index([company, status])
 }
 
@@ -907,6 +914,8 @@ model Delivery {
   items DeliveryItem[]
   sources DeliverySource[]
   pods DeliveryPod[]
+  financeDocuments FinanceDocument[]
+  deviceAssets DeviceAsset[]
   @@index([company, status])
 }
 
@@ -984,6 +993,285 @@ model DocumentReminder {
 
   // Prevents the cron job from creating duplicate 30-day reminders for the same document
   @@unique([documentId, reminderType])
+}
+
+// Phase 3: financial records are additive and preserve legacy pricing/payroll.
+model LandedCost {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  shipmentId String
+  status String @default("DRAFT")
+  allocationMethod String
+  baseCurrency String @default("PHP")
+  data Json
+  total Decimal @db.Decimal(18, 2)
+  createdBy String
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  costHistory ProductCostHistory[]
+  @@index([company, status])
+  @@index([shipmentId])
+}
+
+model ProductCostHistory {
+  id String @id @default(uuid())
+  company String
+  productId Int
+  landedCostId String
+  shipmentId String
+  quantity Int
+  unitCost Decimal @db.Decimal(18, 6)
+  approvedBy String
+  createdAt DateTime @default(now())
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  landedCost LandedCost @relation(fields: [landedCostId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  @@unique([landedCostId, productId])
+  @@index([company, productId, createdAt])
+  @@index([shipmentId])
+}
+
+model FinanceDocument {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  kind String
+  direction String
+  partyId String
+  status String @default("DRAFT")
+  sourceKey String?
+  deliveryId String?
+  relatedDocumentId String?
+  currency String @default("PHP")
+  exchangeRate Decimal @db.Decimal(18, 6)
+  issueDate DateTime
+  dueDate DateTime
+  subtotal Decimal @db.Decimal(18, 2)
+  taxAmount Decimal @db.Decimal(18, 2)
+  total Decimal @db.Decimal(18, 2)
+  data Json
+  createdBy String
+  postedBy String?
+  postedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  delivery Delivery? @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  relatedDocument FinanceDocument? @relation("DocumentMemos", fields: [relatedDocumentId], references: [id], onDelete: Restrict)
+  memos FinanceDocument[] @relation("DocumentMemos")
+  allocations FinanceAllocation[]
+  @@unique([company, sourceKey])
+  @@index([company, direction, status, dueDate])
+  @@index([company, partyId])
+  @@index([deliveryId])
+  @@index([relatedDocumentId])
+}
+
+model FinancePayment {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  direction String
+  partyId String
+  amount Decimal @db.Decimal(18, 2)
+  paidAt DateTime
+  method String
+  reference String
+  idempotencyKey String
+  status String @default("POSTED")
+  createdBy String
+  createdAt DateTime @default(now())
+  allocations FinanceAllocation[]
+  paymentRequests PaymentRequest[]
+  @@unique([company, idempotencyKey])
+  @@index([company, direction, partyId])
+  @@index([company, paidAt])
+}
+
+model FinanceAllocation {
+  id String @id @default(uuid())
+  paymentId String
+  documentId String
+  amount Decimal @db.Decimal(18, 2)
+  payment FinancePayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  document FinanceDocument @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  @@unique([paymentId, documentId])
+  @@index([documentId])
+}
+
+model PaymentRequest {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  supplierId String
+  amount Decimal @db.Decimal(18, 2)
+  dueDate DateTime
+  status String @default("SUBMITTED")
+  data Json
+  notes String?
+  createdBy String
+  approvedBy String?
+  approvedAt DateTime?
+  paymentId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  payment FinancePayment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  @@index([company, status, dueDate])
+  @@index([supplierId])
+  @@index([paymentId])
+}
+
+model LedgerAccount {
+  id String @id @default(uuid())
+  company String
+  code String
+  name String
+  type String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  entries LedgerEntry[]
+  mappings AccountingMapping[]
+  reconciliations BankReconciliation[]
+  @@unique([company, code])
+}
+
+model AccountingJournal {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  sourceKey String
+  sourceType String
+  sourceId String
+  date DateTime
+  memo String
+  status String @default("POSTED")
+  postedBy String
+  createdAt DateTime @default(now())
+  entries LedgerEntry[]
+  @@unique([company, sourceKey])
+  @@index([company, date])
+}
+
+model LedgerEntry {
+  id String @id @default(uuid())
+  journalId String
+  accountId String
+  debit Decimal @db.Decimal(18, 2)
+  credit Decimal @db.Decimal(18, 2)
+  journal AccountingJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  statementLine BankStatementLine?
+  @@index([journalId])
+  @@index([accountId])
+}
+
+model AccountingMapping {
+  id String @id @default(uuid())
+  company String
+  kind String
+  sourceId String
+  accountId String
+  createdAt DateTime @default(now())
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  @@unique([company, kind, sourceId])
+  @@index([accountId])
+}
+
+model BankReconciliation {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  accountId String
+  statementDate DateTime
+  openingBalance Decimal @db.Decimal(18, 2)
+  closingBalance Decimal @db.Decimal(18, 2)
+  status String @default("DRAFT")
+  createdBy String
+  completedBy String?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  lines BankStatementLine[]
+  @@index([company, status])
+  @@index([accountId])
+}
+
+model BankStatementLine {
+  id String @id @default(uuid())
+  reconciliationId String
+  date DateTime
+  reference String
+  description String
+  amount Decimal @db.Decimal(18, 2)
+  ledgerEntryId String? @unique
+  reconciliation BankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Restrict)
+  ledgerEntry LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+  @@index([reconciliationId])
+}
+
+model DeviceAsset {
+  id String @id @default(uuid())
+  company String
+  productId Int
+  customerId String
+  deliveryId String
+  serialNumber String
+  soldAt DateTime
+  warrantyUntil DateTime?
+  nextMaintenanceAt DateTime?
+  intervalMonths Int @default(6)
+  status String @default("ACTIVE")
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  visits ServiceVisit[]
+  @@unique([company, serialNumber])
+  @@index([company, nextMaintenanceAt])
+  @@index([productId])
+  @@index([customerId])
+  @@index([deliveryId])
+}
+
+model ServiceVisit {
+  id String @id @default(uuid())
+  company String
+  number String @unique
+  assetId String
+  type String
+  status String @default("SCHEDULED")
+  dueDate DateTime
+  completedAt DateTime?
+  technician String
+  notes String?
+  parts Json @default("[]")
+  cost Decimal @default(0) @db.Decimal(18, 2)
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  asset DeviceAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  @@index([company, status, dueDate])
+  @@index([assetId])
+}
+
+model ErpAuditLog {
+  id String @id @default(uuid())
+  company String
+  actorId Int
+  actor String
+  action String
+  entityType String
+  entityId String
+  details Json
+  createdAt DateTime @default(now())
+  @@index([company, createdAt])
+  @@index([company, entityType, entityId])
 }
 
 

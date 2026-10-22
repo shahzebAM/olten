@@ -36,6 +36,7 @@ export default function CompanyModule({
   isGateway, allowedCompanies, hasUsers, onSelectCompany, onManageUsers, onLogout,
   selectedCompany, loginUsername, currentUser, adminUsers = [],
   hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales, hasImportation,
+  hasFinance, hasBooks, hasService, hasExecutive, hasAiAssistant,
   onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL
 }: any) {
   
@@ -110,6 +111,11 @@ useEffect(() => {
     
     if (hasPayroll) activeIds.push('payroll');
     if (hasAiDocs) activeIds.push('ai_docs');
+    if (hasFinance) activeIds.push('finance');
+    if (hasBooks) activeIds.push('books');
+    if (hasService) activeIds.push('service');
+    if (hasExecutive) activeIds.push('executive');
+    if (hasAiAssistant) activeIds.push('ai_assistant');
 
     const dbOrder = currentUser?.moduleOrder;
     const savedOrder = (Array.isArray(dbOrder) && dbOrder.length > 0) 
@@ -125,7 +131,7 @@ useEffect(() => {
       if (JSON.stringify(prev) !== JSON.stringify(mergedOrder)) return mergedOrder;
       return prev;
     });
-  }, [isGateway, hasSales, hasPurchasing, hasImportation, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, loginUsername, currentUser, isDraggingGrid]);
+  }, [isGateway, hasSales, hasPurchasing, hasImportation, hasProducts, hasInventory, hasWarehouses, hasPayroll, hasAiDocs, hasFinance, hasBooks, hasService, hasExecutive, hasAiAssistant, loginUsername, currentUser, isDraggingGrid]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     setIsDraggingGrid(false); 
@@ -263,6 +269,21 @@ useEffect(() => {
     );
 
     switch (id) {
+      case 'finance':
+      case 'books':
+      case 'service':
+      case 'executive':
+      case 'ai_assistant': {
+        const cards: Record<string, { title: string; description: string; icon: string }> = {
+          finance: { title: 'Landed Cost & Finance', description: 'Shipment costs, invoices, bills, payments and aging.', icon: '₱' },
+          books: { title: 'Books & Reconciliation', description: 'Accounts, balanced journals and bank reconciliation.', icon: '≋' },
+          service: { title: 'Medical Device Service', description: 'Serial warranties, preventive maintenance and repairs.', icon: '⚙' },
+          executive: { title: 'Executive Dashboard', description: 'Live alerts, demand forecasts and management reports.', icon: '▥' },
+          ai_assistant: { title: 'Executive AI & Invoice OCR', description: 'Role-aware questions and invoice reading for review.', icon: '✧' },
+        };
+        const card = cards[id];
+        return <button onClick={() => onSelectModule(id)} className="group flex h-full w-full items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:border-teal-300 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-teal-400/10"><div className="flex min-w-0 flex-1 items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-2xl text-teal-700">{card.icon}</div><div><h3 className="text-[15px] font-bold text-slate-800">{card.title}</h3><p className="mt-0.5 text-xs font-medium text-slate-500">{card.description}</p></div></div><div className="ml-4 text-slate-300">{rightArrow}</div></button>;
+      }
       case 'suppliers':
         return (
           <button onClick={() => onSelectModule('suppliers')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-fuchsia-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">

@@ -11,10 +11,24 @@ import { ExpiryExtractorService } from './expiry-extractor.service';
 import { CompaniesController } from '../companies/companies.controller';
 
 const database = jest.requireMock('@prisma/client').database;
+const phase3Counts = jest.requireMock<{
+  database: Record<
+    string,
+    { count: jest.Mock<Promise<number>, [{ where: { company: string } }]> }
+  >;
+}>('@prisma/client').database;
+const phase3Deletion = jest.requireMock<{
+  database: {
+    $transaction: jest.Mock;
+    company: { delete: jest.Mock };
+    document: { deleteMany: jest.Mock };
+  };
+}>('@prisma/client').database;
 
 describe('company and document storage deletion', () => {
   let service: DocumentService;
   let drive: any;
+  let phase3Drive: { deleteCompanyFolder: jest.Mock };
   let gemini: any;
   const workspace = { id: 'original-company', name: 'Olten' };
 
@@ -28,11 +42,31 @@ describe('company and document storage deletion', () => {
       deleteMany: jest.fn(async () => ({ count: 3 })),
     };
     database.searchHistory = { deleteMany: jest.fn(async () => ({ count: 2 })) };
+    for (const model of [
+      'erpAuditLog',
+      'landedCost',
+      'productCostHistory',
+      'financeDocument',
+      'financePayment',
+      'paymentRequest',
+      'ledgerAccount',
+      'accountingJournal',
+      'accountingMapping',
+      'bankReconciliation',
+      'deviceAsset',
+      'serviceVisit',
+    ])
+      phase3Counts[model] = {
+        count: jest
+          .fn<Promise<number>, [{ where: { company: string } }]>()
+          .mockResolvedValue(0),
+      };
     database.$transaction.mockReset().mockImplementation(async callback => callback(database));
     drive = {
       deleteCompanyFolder: jest.fn(async (_company, complete) => complete()),
       createSubFolder: jest.fn(async () => ({ id: 'existing-upload-folder' })),
     };
+    phase3Drive = drive as { deleteCompanyFolder: jest.Mock };
     gemini = { deleteGeminiFile: jest.fn(async () => undefined) };
     service = new DocumentService(gemini, drive, new ExpiryExtractorService());
   });
@@ -72,6 +106,52 @@ describe('company and document storage deletion', () => {
     await expect(service.deleteCompanyWorkspace(' ')).rejects.toMatchObject({ status: 400 });
     expect(drive.deleteCompanyFolder).not.toHaveBeenCalled();
     expect(database.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'erpAuditLog',
+    'landedCost',
+    'productCostHistory',
+    'financeDocument',
+    'financePayment',
+    'paymentRequest',
+    'ledgerAccount',
+    'accountingJournal',
+    'accountingMapping',
+    'bankReconciliation',
+    'deviceAsset',
+    'serviceVisit',
+  ])(
+    'preserves a workspace with %s history before any remote deletion',
+    async (model) => {
+      phase3Counts[model].count.mockResolvedValue(1);
+      await expect(
+        service.deleteCompanyWorkspace('Olten'),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(phase3Counts[model].count).toHaveBeenCalledWith({
+        where: { company: 'Olten' },
+      });
+      expect(phase3Drive.deleteCompanyFolder).not.toHaveBeenCalled();
+      expect(phase3Deletion.company.delete).not.toHaveBeenCalled();
+      expect(phase3Deletion.document.deleteMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rechecks financial history in the serializable cleanup transaction', async () => {
+    phase3Counts.financeDocument.count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+    await expect(service.deleteCompanyWorkspace('Olten')).rejects.toMatchObject(
+      { status: 409 },
+    );
+    expect(phase3Deletion.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      {
+        isolationLevel: 'Serializable',
+      },
+    );
+    expect(phase3Deletion.company.delete).not.toHaveBeenCalled();
+    expect(phase3Deletion.document.deleteMany).not.toHaveBeenCalled();
   });
 
   it('preserves company and records when Drive deletion fails and permits retry', async () => {

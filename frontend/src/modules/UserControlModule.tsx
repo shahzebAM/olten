@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { getApiAuthHeaders } from '../lib/apiSession';
+import { ERP_ROLES } from '../lib/phase3Access';
 
 interface UserControlModuleProps {
   adminUsers: any[];
@@ -45,6 +46,13 @@ export default function UserControlModule({
       importation: false,
       importation_approve: false,
       sales: false,
+      finance: false,
+      books: false,
+      service: false,
+      executive: false,
+      ai_assistant: false,
+      erpRoles: [] as string[],
+      approvalLimits: {} as Record<string, string>,
       companies: {} as Record<string, boolean>
     }
   };
@@ -84,6 +92,13 @@ export default function UserControlModule({
         importation: Boolean(user.modules?.importation),
         importation_approve: Boolean(user.modules?.importation_approve),
         sales: Boolean(user.modules?.sales),
+        finance: Boolean(user.modules?.finance),
+        books: Boolean(user.modules?.books),
+        service: Boolean(user.modules?.service),
+        executive: Boolean(user.modules?.executive),
+        ai_assistant: Boolean(user.modules?.ai_assistant),
+        erpRoles: Array.isArray(user.modules?.erpRoles) ? user.modules.erpRoles as string[] : [],
+        approvalLimits: user.modules?.approvalLimits || {},
         companies: user.modules?.companies || {}
       }
     });
@@ -391,6 +406,7 @@ export default function UserControlModule({
                       </label>
                       <label className="flex items-center gap-3 cursor-pointer group"><input type="checkbox" checked={formData.modules.importation} onChange={() => handleModuleToggle('importation')} className="w-5 h-5 rounded border-slate-300 text-blue-600" /><span className="font-bold text-xs uppercase text-slate-700">Importation & QC</span></label>
                       <label className="flex items-center gap-3 cursor-pointer group"><input type="checkbox" checked={formData.modules.importation_approve} onChange={() => handleModuleToggle('importation_approve')} className="w-5 h-5 rounded border-slate-300 text-blue-600" /><span className="font-bold text-xs uppercase text-slate-700">Approve import requisitions</span></label>
+                      {([['finance', 'Landed Cost & Finance'], ['books', 'Books & Reconciliation'], ['service', 'Medical Device Service'], ['executive', 'Executive Dashboard & Reports'], ['ai_assistant', 'Executive AI & OCR']] as const).map(([key, title]) => <label key={key} className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={formData.modules[key]} onChange={() => handleModuleToggle(key)} className="w-5 h-5 rounded border-slate-300 text-blue-600" /><span className="font-bold text-xs uppercase text-slate-700">{title}</span></label>)}
                       <label className="flex items-center gap-3 cursor-pointer group">
                         <input 
                           type="checkbox" 
@@ -419,6 +435,13 @@ export default function UserControlModule({
                         <span className="font-bold text-xs uppercase text-slate-700 group-hover:text-blue-600 transition-colors">AI Document Workspace</span>
                       </label>
                     </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="mb-2 text-xs font-black uppercase text-slate-800">ERP responsibilities</p>
+                    <p className="mb-4 text-xs text-slate-500">New finance, service and AI modules require both module access and a matching ERP role. Auditor access is always read only.</p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{ERP_ROLES.map(role => <label key={role} className="flex items-center gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={formData.modules.erpRoles.includes(role)} onChange={event => setFormData(previous => ({ ...previous, modules: { ...previous.modules, erpRoles: event.target.checked ? [...previous.modules.erpRoles, role] : previous.modules.erpRoles.filter(value => value !== role) } }))} className="h-4 w-4 rounded border-slate-300" />{role}</label>)}</div>
+                    {formData.modules.erpRoles.some(role => role === 'Finance' || role === 'Management') && <div className="mt-5 space-y-3 border-t border-slate-100 pt-4"><p className="text-xs font-bold uppercase text-slate-600">Approval limits per company (PHP)</p><p className="text-xs text-slate-500">Finance requires a positive configured limit. A blank Management limit allows its authorized approvals without an amount cap.</p>{companiesList.filter(company => formData.modules.companies[company]).map(company => <label key={company} className="flex items-center justify-between gap-3 text-sm"><span>{company}</span><input aria-label={`${company} approval limit in PHP`} type="number" min="0.01" step="0.01" value={formData.modules.approvalLimits[company] || ''} onChange={event => setFormData(previous => { const limits = { ...previous.modules.approvalLimits }; if (event.target.value) limits[company] = event.target.value; else delete limits[company]; return { ...previous, modules: { ...previous.modules, approvalLimits: limits } }; })} className="w-48 rounded-lg border border-slate-300 px-3 py-2" placeholder="Not configured" /></label>)}</div>}
                   </div>
 
                   {/* WORKSPACE CLEARANCES */}

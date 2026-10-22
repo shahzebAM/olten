@@ -107,17 +107,46 @@ export class ProcurementController {
 
   @Delete('suppliers/:id')
   async deleteSupplier(@Param('id') id: string) {
-    const supplier = await this.prisma.supplier.findUnique({ 
-      where: { id },
-      include: { purchaseOrders: true }
-    });
-    
-    if (!supplier) throw new NotFoundException('Supplier not found.');
-    if (supplier.purchaseOrders && supplier.purchaseOrders.length > 0) {
-      throw new BadRequestException('Cannot delete a supplier that has existing Purchase Orders.');
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          const supplier = await tx.supplier.findUnique({
+            where: { id },
+            include: { purchaseOrders: true },
+          });
+          if (!supplier) throw new NotFoundException('Supplier not found.');
+          if (supplier.purchaseOrders.length > 0)
+            throw new BadRequestException(
+              'Cannot delete a supplier that has existing Purchase Orders.',
+            );
+          const company = supplier.company;
+          const history = await Promise.all([
+            tx.financeDocument.count({
+              where: { company, direction: 'AP', partyId: id },
+            }),
+            tx.financePayment.count({
+              where: { company, direction: 'AP', partyId: id },
+            }),
+            tx.paymentRequest.count({ where: { company, supplierId: id } }),
+          ]);
+          if (history.some((count) => count > 0))
+            throw new ConflictException(
+              'A supplier with financial or payment request history cannot be deleted.',
+            );
+          return tx.supplier.delete({ where: { id } });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      )
+        throw new ConflictException(
+          'The supplier changed during processing. Refresh and try again.',
+        );
+      throw error;
     }
-
-    return await this.prisma.supplier.delete({ where: { id } });
   }
 
   // ==========================================
