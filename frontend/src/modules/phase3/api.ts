@@ -71,10 +71,11 @@ export async function phase3Request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  method: 'GET' | 'POST' | 'DELETE' = body === undefined ? 'GET' : 'POST',
 ): Promise<T> {
   const authHeaders = getApiAuthHeaders();
   const response = await fetch(`${api}/phase3${path}`, {
-    method: body === undefined ? 'GET' : 'POST',
+    method,
     headers: {
       ...authHeaders,
       'x-company': company,
@@ -151,6 +152,7 @@ export function usePhase3Data<T>(
     endpoint: string,
     body: unknown,
     message: string,
+    method: 'POST' | 'DELETE' = 'POST',
   ): Promise<boolean> => {
     if (writing.current) return false;
     writing.current = true;
@@ -158,7 +160,7 @@ export function usePhase3Data<T>(
     setError('');
     setNotice('');
     try {
-      await phase3Request(api, company, endpoint, body);
+      await phase3Request(api, company, endpoint, body, undefined, method);
       if (alive.current) {
         setNotice(message);
         refresh();

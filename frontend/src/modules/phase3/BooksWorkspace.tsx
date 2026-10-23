@@ -17,7 +17,13 @@ import {
 } from "./api";
 import type { JsonRow } from "./api";
 
-type Account = { id: string; code: string; name: string; type: string };
+type Account = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  deleteBlockedReason?: string | null;
+};
 type Entry = {
   id: string;
   accountId: string;
@@ -352,6 +358,40 @@ export default function BooksWorkspace({
             <DataTable
               rows={data.accounts.map((account) => ({ ...account }))}
               columns={["code", "name", "type"]}
+              actions={
+                canWrite
+                  ? (account) => (
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          className={`${secondary} text-rose-700`}
+                          aria-label={`Delete account ${account.code} ${account.name}`}
+                          disabled={state.busy || !!account.deleteBlockedReason}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Delete account ${account.code} · ${account.name}? This permanently removes this unused account.`,
+                              )
+                            )
+                              void state.run(
+                                `/books/accounts/${encodeURIComponent(String(account.id))}`,
+                                undefined,
+                                "Ledger account deleted.",
+                                "DELETE",
+                              );
+                          }}
+                        >
+                          Delete
+                        </button>
+                        {typeof account.deleteBlockedReason === "string" && (
+                          <p className="max-w-xs text-xs text-slate-500">
+                            {account.deleteBlockedReason}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  : undefined
+              }
             />
             {canWrite && (
               <div className="mt-5">

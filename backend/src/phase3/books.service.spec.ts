@@ -15,12 +15,18 @@ function mockDatabase() {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      delete: jest.fn(),
       findMany: jest.fn(),
     },
     product: { findFirst: jest.fn() },
     customer: { findFirst: jest.fn() },
     supplier: { findFirst: jest.fn() },
-    accountingMapping: { findUnique: jest.fn(), upsert: jest.fn() },
+    accountingMapping: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+    },
     bankReconciliation: {
       findFirst: jest.fn(),
       create: jest.fn(),
@@ -100,6 +106,7 @@ describe('Internal Books accounting safeguards', () => {
     );
     mockClient.bankReconciliation.findFirst.mockResolvedValue(reconciliation);
     mockClient.ledgerAccount.findFirst.mockResolvedValue(bank);
+    mockClient.accountingMapping.findFirst.mockResolvedValue(null);
     mockClient.ledgerEntry.findFirst.mockResolvedValue(entry);
     mockClient.ledgerEntry.aggregate.mockResolvedValue({
       _sum: { debit: amount('100'), credit: amount('0') },
@@ -150,6 +157,130 @@ describe('Internal Books accounting safeguards', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(mockClient.$transaction).not.toHaveBeenCalled();
     expect(mockClient.ledgerAccount.create).not.toHaveBeenCalled();
+  });
+  describe('chart of accounts deletion', () => {
+    const unused = {
+      id: 'custom-account',
+      company: 'Surgicom',
+      code: '6100',
+      name: 'Unused office supplies',
+      type: 'EXPENSE',
+      active: true,
+      _count: { entries: 0, mappings: 0, reconciliations: 0 },
+    };
+    beforeEach(() => {
+      mockClient.ledgerAccount.findFirst.mockResolvedValue(unused);
+      mockClient.ledgerAccount.delete.mockResolvedValue(unused);
+    });
+    it('deletes only an unused custom account and retains its identity in the audit log', async () => {
+      await expect(
+        service.deleteAccount('Surgicom', finance, unused.id),
+      ).resolves.toEqual({ id: unused.id, deleted: true });
+      expect(mockClient.ledgerAccount.findFirst).toHaveBeenCalledWith(
+        containing({ where: { id: unused.id, company: 'Surgicom' } }),
+      );
+      expect(mockClient.accountingMapping.findFirst).toHaveBeenCalledWith({
+        where: { company: 'Surgicom', kind: 'ACCOUNT', sourceId: unused.id },
+        select: { id: true },
+      });
+      expect(mockClient.ledgerAccount.delete).toHaveBeenCalledWith({
+        where: { id: unused.id },
+      });
+      expect(mockClient.erpAuditLog.create).toHaveBeenCalledWith(
+        containing({
+          data: containing({
+            company: 'Surgicom',
+            action: 'DELETE',
+            entityType: 'LedgerAccount',
+            entityId: unused.id,
+            details: {
+              code: unused.code,
+              name: unused.name,
+              type: unused.type,
+            },
+          }),
+        }),
+      );
+      expect(mockClient.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        containing({ isolationLevel: 'Serializable' }),
+      );
+    });
+    it('protects system accounts even when they have no history', async () => {
+      mockClient.ledgerAccount.findFirst.mockResolvedValue({
+        ...unused,
+        code: '1300',
+      });
+      await expect(
+        service.deleteAccount('Surgicom', finance, unused.id),
+      ).rejects.toThrow('System accounts are required');
+      expect(mockClient.ledgerAccount.delete).not.toHaveBeenCalled();
+      expect(mockClient.erpAuditLog.create).not.toHaveBeenCalled();
+    });
+    it.each(['entries', 'mappings', 'reconciliations'] as const)(
+      'protects an account referenced by %s',
+      async (relation) => {
+        mockClient.ledgerAccount.findFirst.mockResolvedValue({
+          ...unused,
+          _count: { ...unused._count, [relation]: 1 },
+        });
+        await expect(
+          service.deleteAccount('Surgicom', finance, unused.id),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(mockClient.ledgerAccount.delete).not.toHaveBeenCalled();
+        expect(mockClient.erpAuditLog.create).not.toHaveBeenCalled();
+      },
+    );
+    it('protects an account used as an ACCOUNT reference mapping source', async () => {
+      mockClient.accountingMapping.findFirst.mockResolvedValue({
+        id: 'mapping-source',
+      });
+      await expect(
+        service.deleteAccount('Surgicom', finance, unused.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(mockClient.ledgerAccount.delete).not.toHaveBeenCalled();
+    });
+    it('does not delete missing or foreign-workspace accounts', async () => {
+      mockClient.ledgerAccount.findFirst.mockResolvedValue(null);
+      await expect(
+        service.deleteAccount('Surgicom', finance, 'foreign-account'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(mockClient.ledgerAccount.findFirst).toHaveBeenCalledWith(
+        containing({ where: { id: 'foreign-account', company: 'Surgicom' } }),
+      );
+      expect(mockClient.ledgerAccount.delete).not.toHaveBeenCalled();
+      expect(mockClient.erpAuditLog.create).not.toHaveBeenCalled();
+    });
+    it.each(['Auditor', 'Sales'])(
+      'rejects deletion by a %s before opening a transaction',
+      async (role) => {
+        await expect(
+          service.deleteAccount(
+            'Surgicom',
+            {
+              ...finance,
+              modules: { books: true, erpRoles: [role] },
+            },
+            unused.id,
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(mockClient.$transaction).not.toHaveBeenCalled();
+        expect(mockClient.ledgerAccount.delete).not.toHaveBeenCalled();
+      },
+    );
+    it('reports a concurrent foreign-key reference as an account-in-use conflict', async () => {
+      mockClient.ledgerAccount.delete.mockRejectedValueOnce({ code: 'P2003' });
+      await expect(
+        service.deleteAccount('Surgicom', finance, unused.id),
+      ).rejects.toThrow('This account is now in use');
+      expect(mockClient.erpAuditLog.create).not.toHaveBeenCalled();
+    });
+    it('rejects an empty account ID before opening a transaction', async () => {
+      await expect(
+        service.deleteAccount('Surgicom', finance, '  '),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockClient.$transaction).not.toHaveBeenCalled();
+    });
   });
   it('matches a statement line only to a posted ledger entry from the same workspace/account/signed amount', async () => {
     await expect(

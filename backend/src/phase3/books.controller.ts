@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -49,6 +50,15 @@ export class BooksController {
     @Body() body: unknown,
   ) {
     return this.books.createAccount(company, request.user, body);
+  }
+
+  @Delete('books/accounts/:id')
+  deleteAccount(
+    @Headers('x-company') company: string,
+    @Req() request: Phase3Request,
+    @Param('id') id: string,
+  ) {
+    return this.books.deleteAccount(company, request.user, id);
   }
 
   @Post('books/journals')

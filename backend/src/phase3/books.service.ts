@@ -28,6 +28,27 @@ const accountTypes = [
   'REVENUE',
   'EXPENSE',
 ] as const;
+const accountUsageInclude = {
+  _count: { select: { entries: true, mappings: true, reconciliations: true } },
+} as const;
+function accountDeletionReason(
+  account: {
+    code: string;
+    _count: { entries: number; mappings: number; reconciliations: number };
+  },
+  isMappingSource: boolean,
+) {
+  if (DEFAULT_ACCOUNTS.some(([code]) => code === account.code))
+    return 'System accounts are required for automatic postings and cannot be deleted.';
+  if (
+    account._count.entries ||
+    account._count.mappings ||
+    account._count.reconciliations ||
+    isMappingSource
+  )
+    return 'This account is used in journal entries, reference mappings, or bank reconciliations and cannot be deleted.';
+  return null;
+}
 const journalInclude = {
   entries: {
     include: {
@@ -117,9 +138,11 @@ export class BooksService implements OnModuleDestroy {
           products,
           customers,
           suppliers,
+          accountSources,
         ] = await Promise.all([
           tx.ledgerAccount.findMany({
             where: { company },
+            include: accountUsageInclude,
             orderBy: { code: 'asc' },
             take: 1000,
           }),
@@ -167,10 +190,23 @@ export class BooksService implements OnModuleDestroy {
             orderBy: { legalName: 'asc' },
             take: 1000,
           }),
+          tx.accountingMapping.findMany({
+            where: { company, kind: 'ACCOUNT' },
+            select: { sourceId: true },
+          }),
         ]);
         const sums = new Map(balances.map((row) => [row.accountId, row._sum]));
+        const mappingSources = new Set(
+          accountSources.map((row) => row.sourceId),
+        );
         return {
-          accounts,
+          accounts: accounts.map(({ _count, ...account }) => ({
+            ...account,
+            deleteBlockedReason: accountDeletionReason(
+              { ...account, _count },
+              mappingSources.has(account.id),
+            ),
+          })),
           journals,
           mappings,
           reconciliations,
@@ -299,6 +335,44 @@ export class BooksService implements OnModuleDestroy {
       });
       return account;
     });
+  }
+
+  async deleteAccount(company: string, actor: Actor, id: string) {
+    const accountId = v.text(id, 'Account ID', true, 100)!;
+    try {
+      return await this.transaction(company, actor, async (tx) => {
+        const account = await tx.ledgerAccount.findFirst({
+          where: { id: accountId, company },
+          include: accountUsageInclude,
+        });
+        if (!account)
+          throw new NotFoundException('Account not found in this workspace.');
+        const sourceMapping = await tx.accountingMapping.findFirst({
+          where: { company, kind: 'ACCOUNT', sourceId: accountId },
+          select: { id: true },
+        });
+        const reason = accountDeletionReason(account, !!sourceMapping);
+        if (reason) throw new ConflictException(reason);
+        await tx.ledgerAccount.delete({ where: { id: account.id } });
+        await audit(tx, company, actor, 'DELETE', 'LedgerAccount', account.id, {
+          code: account.code,
+          name: account.name,
+          type: account.type,
+        });
+        return { id: account.id, deleted: true };
+      });
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'P2003'
+      )
+        throw new ConflictException(
+          'This account is now in use and cannot be deleted. Refresh the chart of accounts.',
+        );
+      throw error;
+    }
   }
 
   async createJournal(company: string, actor: Actor, body: unknown) {
