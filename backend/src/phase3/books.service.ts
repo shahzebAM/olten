@@ -31,23 +31,18 @@ const accountTypes = [
 const accountUsageInclude = {
   _count: { select: { entries: true, mappings: true, reconciliations: true } },
 } as const;
-function accountDeletionReason(
+function accountDeleteAction(
   account: {
-    code: string;
     _count: { entries: number; mappings: number; reconciliations: number };
   },
   isMappingSource: boolean,
-) {
-  if (DEFAULT_ACCOUNTS.some(([code]) => code === account.code))
-    return 'System accounts are required for automatic postings and cannot be deleted.';
-  if (
-    account._count.entries ||
+): 'DELETE' | 'ARCHIVE' {
+  return account._count.entries ||
     account._count.mappings ||
     account._count.reconciliations ||
     isMappingSource
-  )
-    return 'This account is used in journal entries, reference mappings, or bank reconciliations and cannot be deleted.';
-  return null;
+    ? 'ARCHIVE'
+    : 'DELETE';
 }
 const journalInclude = {
   entries: {
@@ -202,7 +197,7 @@ export class BooksService implements OnModuleDestroy {
         return {
           accounts: accounts.map(({ _count, ...account }) => ({
             ...account,
-            deleteBlockedReason: accountDeletionReason(
+            deleteAction: accountDeleteAction(
               { ...account, _count },
               mappingSources.has(account.id),
             ),
@@ -217,11 +212,13 @@ export class BooksService implements OnModuleDestroy {
               id: supplier.id,
               name: supplier.legalName,
             })),
-            ACCOUNT: accounts.map((account) => ({
-              id: account.id,
-              code: account.code,
-              name: account.name,
-            })),
+            ACCOUNT: accounts
+              .filter((account) => account.active)
+              .map((account) => ({
+                id: account.id,
+                code: account.code,
+                name: account.name,
+              })),
           },
           trialBalance: accounts.map((account) => {
             const totals = sums.get(account.id);
@@ -338,6 +335,10 @@ export class BooksService implements OnModuleDestroy {
   }
 
   async deleteAccount(company: string, actor: Actor, id: string) {
+    if (actor.role !== 'Super Admin')
+      throw new ForbiddenException(
+        'Only a Super Admin can delete ledger accounts.',
+      );
     const accountId = v.text(id, 'Account ID', true, 100)!;
     try {
       return await this.transaction(company, actor, async (tx) => {
@@ -347,12 +348,34 @@ export class BooksService implements OnModuleDestroy {
         });
         if (!account)
           throw new NotFoundException('Account not found in this workspace.');
+        if (!account.active)
+          return { id: account.id, deleted: false, archived: true };
         const sourceMapping = await tx.accountingMapping.findFirst({
           where: { company, kind: 'ACCOUNT', sourceId: accountId },
           select: { id: true },
         });
-        const reason = accountDeletionReason(account, !!sourceMapping);
-        if (reason) throw new ConflictException(reason);
+        if (accountDeleteAction(account, !!sourceMapping) === 'ARCHIVE') {
+          await tx.ledgerAccount.update({
+            where: { id: account.id },
+            data: { active: false },
+          });
+          await audit(
+            tx,
+            company,
+            actor,
+            'ARCHIVE',
+            'LedgerAccount',
+            account.id,
+            {
+              code: account.code,
+              name: account.name,
+              type: account.type,
+              previousActive: true,
+              active: false,
+            },
+          );
+          return { id: account.id, deleted: false, archived: true };
+        }
         await tx.ledgerAccount.delete({ where: { id: account.id } });
         await audit(tx, company, actor, 'DELETE', 'LedgerAccount', account.id, {
           code: account.code,
@@ -373,6 +396,34 @@ export class BooksService implements OnModuleDestroy {
         );
       throw error;
     }
+  }
+
+  async restoreAccount(company: string, actor: Actor, id: string) {
+    if (actor.role !== 'Super Admin')
+      throw new ForbiddenException(
+        'Only a Super Admin can restore ledger accounts.',
+      );
+    const accountId = v.text(id, 'Account ID', true, 100)!;
+    return this.transaction(company, actor, async (tx) => {
+      const account = await tx.ledgerAccount.findFirst({
+        where: { id: accountId, company },
+      });
+      if (!account)
+        throw new NotFoundException('Account not found in this workspace.');
+      if (account.active) return { id: account.id, active: true };
+      await tx.ledgerAccount.update({
+        where: { id: account.id },
+        data: { active: true },
+      });
+      await audit(tx, company, actor, 'RESTORE', 'LedgerAccount', account.id, {
+        code: account.code,
+        name: account.name,
+        type: account.type,
+        previousActive: false,
+        active: true,
+      });
+      return { id: account.id, active: true };
+    });
   }
 
   async createJournal(company: string, actor: Actor, body: unknown) {

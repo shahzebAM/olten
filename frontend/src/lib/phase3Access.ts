@@ -73,3 +73,13 @@ export function hasPhase3Access(
 export function phase3Scope(view: Phase3View): Phase3Scope {
   return view === 'ai_assistant' ? 'ai' : view;
 }
+
+export function canManageLedgerAccounts(
+  user: ErpUser | undefined,
+  company: string | null,
+): boolean {
+  return (
+    user?.role === 'Super Admin' &&
+    hasPhase3Access(user, company, 'books', true)
+  );
+}

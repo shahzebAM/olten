@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasPhase3Access } from '../src/lib/phase3Access.ts';
+import { canManageLedgerAccounts, hasPhase3Access } from '../src/lib/phase3Access.ts';
 
 const user = (roles, flags = {}) => ({
   role: 'Admin',
@@ -124,4 +124,17 @@ test('Super Admin retains access, while an absent company or user never grants a
   );
   assert.equal(hasPhase3Access({ role: 'Super Admin' }, null, 'books'), false);
   assert.equal(hasPhase3Access(undefined, 'Olten', 'books'), false);
+});
+
+test('only a Super Admin can delete or restore ledger accounts', () => {
+  assert.equal(canManageLedgerAccounts({ role: 'Super Admin' }, 'Olten'), true);
+  assert.equal(canManageLedgerAccounts({ role: 'Super Admin' }, null), false);
+  assert.equal(canManageLedgerAccounts(undefined, 'Olten'), false);
+  for (const role of ['Finance', 'Management', 'Auditor', 'Sales']) {
+    assert.equal(
+      canManageLedgerAccounts(user([role], { books: true }), 'Olten'),
+      false,
+    );
+  }
+  assert.equal(canManageLedgerAccounts({ role: 'super admin' }, 'Olten'), false);
 });

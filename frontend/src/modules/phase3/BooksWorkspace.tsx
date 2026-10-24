@@ -22,7 +22,8 @@ type Account = {
   code: string;
   name: string;
   type: string;
-  deleteBlockedReason?: string | null;
+  active: boolean;
+  deleteAction?: "DELETE" | "ARCHIVE";
 };
 type Entry = {
   id: string;
@@ -268,13 +269,16 @@ export default function BooksWorkspace({
   api,
   company,
   canWrite,
+  canManageAccounts,
 }: {
   api: string;
   company: string;
   canWrite: boolean;
+  canManageAccounts: boolean;
 }) {
   const state = usePhase3Data<Books>(api, company, "/books");
   const [tab, setTab] = useState("ledger");
+  const [showArchived, setShowArchived] = useState(false);
   const [mappingKind, setMappingKind] = useState("ITEM");
   const [bankEntries, setBankEntries] = useState<Record<string, BankEntry[]>>(
     {},
@@ -294,6 +298,8 @@ export default function BooksWorkspace({
   const [audit, setAudit] = useState<JsonRow[]>([]);
   const [auditError, setAuditError] = useState("");
   const data = state.data;
+  const activeAccounts = (data?.accounts || []).filter((account) => account.active !== false);
+  const archivedAccounts = (data?.accounts || []).filter((account) => account.active === false);
   const debit = lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
   const credit = lines.reduce(
     (sum, line) => sum + (Number(line.credit) || 0),
@@ -355,37 +361,64 @@ export default function BooksWorkspace({
               )
             }
           >
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-3xl text-sm text-slate-500">
+                Only a Super Admin can delete accounts. Unused accounts are removed;
+                accounts with history are archived and remain in reports. Archived
+                accounts must be restored before new postings use them. Deleted
+                standard accounts may be recreated when needed for posting.
+              </p>
+              <button
+                type="button"
+                className={secondary}
+                aria-pressed={showArchived}
+                onClick={() => setShowArchived((previous) => !previous)}
+              >
+                {showArchived ? "Show active accounts" : `Show archived accounts (${archivedAccounts.length})`}
+              </button>
+            </div>
             <DataTable
-              rows={data.accounts.map((account) => ({ ...account }))}
-              columns={["code", "name", "type"]}
+              rows={(showArchived ? archivedAccounts : activeAccounts).map((account) => ({
+                ...account,
+                status: account.active === false ? "Archived" : "Active",
+              }))}
+              columns={["code", "name", "type", "status"]}
               actions={
-                canWrite
+                canManageAccounts
                   ? (account) => (
                       <div className="space-y-1">
                         <button
                           type="button"
                           className={`${secondary} text-rose-700`}
-                          aria-label={`Delete account ${account.code} ${account.name}`}
-                          disabled={state.busy || !!account.deleteBlockedReason}
+                          aria-label={`${account.active === false ? "Restore" : "Delete"} account ${account.code} ${account.name}`}
+                          disabled={state.busy || state.loading}
                           onClick={() => {
+                            if (account.active === false) {
+                              void state.run(
+                                `/books/accounts/${encodeURIComponent(String(account.id))}/restore`,
+                                {},
+                                "Ledger account restored.",
+                              );
+                              return;
+                            }
                             if (
                               window.confirm(
-                                `Delete account ${account.code} · ${account.name}? This permanently removes this unused account.`,
+                                `Delete account ${account.code} · ${account.name}? Accounts with linked history are archived and retain their balances and audit trail. Unused accounts are permanently removed. Restore archived accounts before new postings or loading bank matching candidates.`,
                               )
                             )
                               void state.run(
                                 `/books/accounts/${encodeURIComponent(String(account.id))}`,
                                 undefined,
-                                "Ledger account deleted.",
+                                "Account removed from the active chart. Any linked history has been preserved.",
                                 "DELETE",
                               );
                           }}
                         >
-                          Delete
+                          {account.active === false ? "Restore" : "Delete"}
                         </button>
-                        {typeof account.deleteBlockedReason === "string" && (
+                        {account.active !== false && account.deleteAction === "ARCHIVE" && (
                           <p className="max-w-xs text-xs text-slate-500">
-                            {account.deleteBlockedReason}
+                            Linked history will be preserved by archiving this account.
                           </p>
                         )}
                       </div>
@@ -481,7 +514,7 @@ export default function BooksWorkspace({
                       <select
                         required
                         className={input}
-                        value={line.code}
+                        value={activeAccounts.some((account) => account.code === line.code) ? line.code : ""}
                         onChange={(event) =>
                           setLines((previous) =>
                             previous.map((row, position) =>
@@ -493,7 +526,7 @@ export default function BooksWorkspace({
                         }
                       >
                         <option value="">Select account</option>
-                        {data.accounts.map((account) => (
+                        {activeAccounts.map((account) => (
                           <option key={account.id} value={account.code}>
                             {account.code} · {account.name}
                           </option>
@@ -645,7 +678,7 @@ export default function BooksWorkspace({
                 <Field label="Ledger account">
                   <select required name="accountId" className={input}>
                     <option value="">Select account</option>
-                    {data.accounts.map((account) => (
+                    {activeAccounts.map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.code} · {account.name}
                       </option>
@@ -678,7 +711,7 @@ export default function BooksWorkspace({
             </p>
             {canWrite && (
               <ReconciliationForm
-                accounts={data.accounts}
+                accounts={activeAccounts}
                 busy={state.busy}
                 submit={(body) =>
                   state.run(

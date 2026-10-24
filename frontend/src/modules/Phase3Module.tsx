@@ -1,5 +1,9 @@
 import type { ErpUser, Phase3View } from '../lib/phase3Access';
-import { hasPhase3Access, phase3Scope } from '../lib/phase3Access';
+import {
+  canManageLedgerAccounts,
+  hasPhase3Access,
+  phase3Scope,
+} from '../lib/phase3Access';
 import FinanceWorkspace from './phase3/FinanceWorkspace';
 import BooksWorkspace from './phase3/BooksWorkspace';
 import {
@@ -74,6 +78,10 @@ export default function Phase3Module({
           <BooksWorkspace
             api={API_BASE_URL}
             company={selectedCompany}
+            canManageAccounts={canManageLedgerAccounts(
+              currentUser,
+              selectedCompany,
+            )}
             canWrite={hasPhase3Access(
               currentUser,
               selectedCompany,

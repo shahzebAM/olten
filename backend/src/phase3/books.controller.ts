@@ -61,6 +61,15 @@ export class BooksController {
     return this.books.deleteAccount(company, request.user, id);
   }
 
+  @Post('books/accounts/:id/restore')
+  restoreAccount(
+    @Headers('x-company') company: string,
+    @Req() request: Phase3Request,
+    @Param('id') id: string,
+  ) {
+    return this.books.restoreAccount(company, request.user, id);
+  }
+
   @Post('books/journals')
   journal(
     @Headers('x-company') company: string,
