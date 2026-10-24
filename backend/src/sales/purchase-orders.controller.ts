@@ -1,5 +1,9 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  createNumberedDocument,
+  nextDocumentNumber,
+} from './document-numbering';
 
 @Controller('procurement')
 export class ProcurementController {
@@ -155,29 +159,7 @@ export class ProcurementController {
 
   @Get('purchase-orders/next-po-number')
   async getNextPoNumber(@Query('company') company: string) {
-    if (!company?.trim()) throw new BadRequestException('Company is required.');
-    const orders = await this.prisma.purchaseOrder.findMany({
-      where: { company },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { poNumber: true },
-    });
-    const match = orders
-      .map((order) => order.poNumber.trim().match(/^(.*?)(\d+)$/))
-      .find((value) => value !== null);
-    const prefix = match?.[1] ?? 'PO-';
-    const padding = match?.[2].length ?? 6;
-    let next = match ? BigInt(match[2]) + 1n : 1n;
-    // poNumber is globally unique, including records in other companies.
-    const existing = await this.prisma.purchaseOrder.findMany({
-      where: { poNumber: { startsWith: prefix } },
-      select: { poNumber: true },
-    });
-    const used = new Set(existing.map((order) => order.poNumber));
-    let poNumber: string;
-    do {
-      poNumber = `${prefix}${String(next++).padStart(padding, '0')}`;
-    } while (used.has(poNumber));
-    return { poNumber };
+    return { poNumber: await nextDocumentNumber(this.prisma, 'PO', company) };
   }
 
   @Post('purchase-orders')
@@ -191,30 +173,31 @@ export class ProcurementController {
       supplierId,
     } = data;
     const fields = data as { poNumber?: unknown; osReference?: unknown };
-    const poNumber =
+    const requestedNumber =
       typeof fields.poNumber === 'string' ? fields.poNumber.trim() : '';
     const osReference =
       typeof fields.osReference === 'string' ? fields.osReference.trim() : '';
 
-    if (!company || !items || items.length === 0 || !poNumber) {
+    if (
+      typeof company !== 'string' ||
+      !company ||
+      !items ||
+      items.length === 0
+    ) {
       throw new BadRequestException('Missing required fields.');
     }
+    if (fields.poNumber !== undefined && typeof fields.poNumber !== 'string')
+      throw new BadRequestException('Invalid P.O. number.');
     if (!osReference.startsWith('OS')) {
       throw new BadRequestException(
         'A valid source Order Slip is required to create a P.O.',
       );
     }
-    if (!/\d$/.test(poNumber)) {
+    if (requestedNumber && !/\d$/.test(requestedNumber)) {
       throw new BadRequestException(
         'P.O. number must end in digits so the next number can increment.',
       );
     }
-
-    const existing = await this.prisma.purchaseOrder.findUnique({
-      where: { poNumber },
-    });
-    if (existing)
-      throw new BadRequestException(`P.O. Number ${poNumber} already exists!`);
 
     if (supplierId) {
       const supplier = await this.prisma.supplier.findUnique({
@@ -224,7 +207,7 @@ export class ProcurementController {
         throw new BadRequestException('The selected supplier does not exist.');
     }
 
-    return await this.importSafeTransaction(async (tx) => {
+    const save = async (tx: Prisma.TransactionClient, poNumber: string) => {
       const source = await tx.orderSlip.findFirst({
         where: { company, osNumber: osReference },
         select: { status: true },
@@ -276,7 +259,14 @@ export class ProcurementController {
         },
         include: { items: true },
       });
-    });
+    };
+    return createNumberedDocument(
+      this.prisma,
+      'PO',
+      company,
+      fields.poNumber,
+      save,
+    );
   }
 
   @Get('purchase-orders')

@@ -19,6 +19,10 @@ import {
   FulfillmentAuthGuard,
   type FulfillmentRequest,
 } from '../fulfillment/fulfillment-auth.guard';
+import {
+  createNumberedDocument,
+  nextDocumentNumber,
+} from './document-numbering';
 
 @Controller('sales/packing-lists')
 @FulfillmentAccess('sales')
@@ -36,7 +40,7 @@ export class PackingListsController {
       items: Prisma.PackingListItemUncheckedCreateWithoutPackingListInput[];
       isVatApplied: boolean;
       vatRate?: number;
-      plNumber: string;
+      plNumber?: string;
       referenceOs?: string;
       subtotal: number;
       vatAmount: number;
@@ -56,8 +60,8 @@ export class PackingListsController {
     } = data;
     if (
       !customerId ||
-      typeof plNumber !== 'string' ||
-      !plNumber.trim().startsWith('PL-') ||
+      (plNumber !== undefined &&
+        (typeof plNumber !== 'string' || !plNumber.trim().startsWith('PL-'))) ||
       !Array.isArray(items) ||
       !items.length
     ) {
@@ -66,8 +70,12 @@ export class PackingListsController {
       );
     }
     try {
-      return await this.prisma.$transaction(
-        async (tx) => {
+      return await createNumberedDocument(
+        this.prisma,
+        'PL',
+        company,
+        plNumber,
+        async (tx, number) => {
           if (
             !(await tx.customer.findFirst({
               where: { id: customerId, company },
@@ -93,7 +101,7 @@ export class PackingListsController {
           }
           const pl = await tx.packingList.create({
             data: {
-              plNumber: plNumber.trim(),
+              plNumber: number,
               referenceOs,
               company,
               customerId,
@@ -122,7 +130,6 @@ export class PackingListsController {
           });
           return pl;
         },
-        { isolationLevel: 'Serializable', maxWait: 5000, timeout: 20000 },
       );
     } catch (error: unknown) {
       if (
@@ -137,6 +144,12 @@ export class PackingListsController {
       }
       throw error;
     }
+  }
+
+  @Get('next-number')
+  async getNextNumber(@Query('company') company: string) {
+    if (!company) throw new BadRequestException('Company is required.');
+    return { plNumber: await nextDocumentNumber(this.prisma, 'PL', company) };
   }
 
   @Get()

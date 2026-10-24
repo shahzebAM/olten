@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { SessionAdmin } from '../auth/auth-session.service';
+import { numberedDocumentTransaction } from '../sales/document-numbering';
 import * as v from './importation.validation';
 
 const requisitionInclude = {
@@ -319,7 +320,7 @@ export class ImportationService implements OnModuleDestroy {
       true,
       100,
     )!;
-    return this.transaction(async (tx) => {
+    return numberedDocumentTransaction(this.prisma, 'PO', async (tx) => {
       const request = await tx.purchaseRequisition.findFirst({
         where: { id, company },
         include: requisitionInclude,

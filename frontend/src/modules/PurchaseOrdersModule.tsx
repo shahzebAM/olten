@@ -172,7 +172,8 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         throw new Error(errorData.message || "Failed to generate P.O.");
       }
       
-      showToast("Purchase Order generated successfully!", "success");
+      const createdPo: PurchaseOrder = await res.json();
+      showToast(`${createdPo.poNumber} generated successfully!`, "success");
       setPoForm({ supplierId: '', osReference: '', isVatApplied: false });
       setActiveTab('ledger');
     } catch (e: any) {
@@ -376,7 +377,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                     className="text-3xl font-black font-mono text-sky-700 w-full sm:w-64 outline-none border-b-2 border-transparent hover:border-slate-200 focus:border-sky-300 bg-transparent transition-colors text-left sm:text-right"
                     placeholder="PO-000000"
                   />
-                  <p className="mt-2 text-xs text-slate-500">The next P.O. continues from your last saved number.</p>
+                  <p className="mt-2 text-xs text-slate-500">Suggested number; advances on save if already taken.</p>
                   <label className="flex items-center justify-start sm:justify-end gap-2 mt-4 cursor-pointer">
                     <input type="checkbox" checked={poForm.isVatApplied} onChange={e => setPoForm({...poForm, isVatApplied: e.target.checked})} className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900" />
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Apply 12% VAT</span>

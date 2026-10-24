@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { getApiAuthHeaders } from '../lib/apiSession';
 
 // --- INTERFACES ---
@@ -55,6 +55,7 @@ const [activeTab, setActiveTab] = useState<'OS' | 'FO' | 'QT' | 'PL'>('OS');
   // --- MODAL STATES ---
   const [viewSlip, setViewSlip] = useState<OrderSlip | null>(null);
   const [foNumberInput, setFoNumberInput] = useState('');
+  const foNumberRequestRef = useRef(0);
 
   const showToast = (msg: string, type: 'success' | 'error') => { 
     setToast({ message: msg, type }); 
@@ -87,28 +88,23 @@ const fetchOrderSlips = useCallback(async () => {
 
   useEffect(() => { fetchOrderSlips(); }, [fetchOrderSlips]);
 
-  // PRE-CALCULATE NEXT FO NUMBER WHEN VIEWING AN OS
+  // Preview numbering comes from the complete server history; save assigns the final number.
   useEffect(() => {
     if (viewSlip && viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned') {
-      const foSlips = allSlips.filter(s => s.osNumber.startsWith('FO'));
-      foSlips.sort((a, b) => parseInt(b.osNumber.replace(/\D/g, '') || '0') - parseInt(a.osNumber.replace(/\D/g, '') || '0'));
-      
-      const lastFo = foSlips.length > 0 ? foSlips[0] : null;
-      if (lastFo) {
-        const match = lastFo.osNumber.match(/(\d+)$/); 
-        if (match) {
-          const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastFo.osNumber.substring(0, match.index);
-          const padding = Math.max(match[0].length, 6);
-          setFoNumberInput(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else {
-          setFoNumberInput('FO-000001');
-        }
-      } else {
-        setFoNumberInput('FO-000001');
-      }
+      const controller = new AbortController();
+      const request = ++foNumberRequestRef.current;
+      fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { signal: controller.signal })
+        .then(async res => {
+          if (!res.ok) throw new Error('Could not load the next Final Order number.');
+          const data = await res.json();
+          if (!controller.signal.aborted && request === foNumberRequestRef.current) setFoNumberInput(data.osNumber);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted && request === foNumberRequestRef.current) setFoNumberInput('FO-000001');
+        });
+      return () => controller.abort();
     }
-  }, [viewSlip, allSlips]);
+  }, [viewSlip, API_BASE_URL, selectedCompany]);
 
   // --- FILTERING LOGIC ---
 const filteredSlips = useMemo(() => {
@@ -147,27 +143,31 @@ const filteredSlips = useMemo(() => {
   };
 
   const handleGenerateFoFromLedger = async (documentType: 'FO' | 'PL' = 'FO') => {
-    if (!viewSlip || !foNumberInput.trim()) return;
+    if (!viewSlip || (documentType === 'FO' && !foNumberInput.trim())) return;
+    const requestedNumber = foNumberInput.trim();
+    const foNumber = /^\d+$/.test(requestedNumber) ? `FO-${requestedNumber.padStart(6, '0')}` : requestedNumber;
+    if (documentType === 'FO' && !foNumber.startsWith('FO')) return showToast('Enter a Final Order number starting with FO, or enter digits only.', 'error');
     setIsGeneratingFo(true);
     try {
       const payload = {
-        [documentType === 'PL' ? 'plNumber' : 'osNumber']: foNumberInput.trim().replace(/^(FO|PL)-/, `${documentType}-`), referenceOs: viewSlip.osNumber, company: selectedCompany, customerId: viewSlip.customerId,
-        isVatApplied: viewSlip.vatApplied, vatRate: viewSlip.vatRate, subtotal: viewSlip.subtotal, vatAmount: viewSlip.vatAmount, grandTotal: viewSlip.grandTotal, user: loginUsername,
+        ...(documentType === 'FO' ? { osNumber: foNumber, documentType: 'FO' } : {}), referenceOs: viewSlip.osNumber, company: selectedCompany, customerId: viewSlip.customerId,
+        isVatApplied: viewSlip.vatApplied, vatRate: Number(viewSlip.vatRate), subtotal: Number(viewSlip.subtotal), vatAmount: Number(viewSlip.vatAmount), grandTotal: Number(viewSlip.grandTotal), user: loginUsername,
         items: viewSlip.items.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
 
       const endpoint = documentType === 'PL' ? 'packing-lists' : 'order-slips';
       const res = await fetch(`${API_BASE_URL}/sales/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       if (!res.ok) {
-        const error = await res.json();
+        const error = await res.json().catch(() => ({}));
         throw new Error(error.message || `Failed to generate ${documentType}`);
       }
+      const createdDocument = await res.json();
       
       await fetch(`${API_BASE_URL}/sales/order-slips/${viewSlip.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ status: 'Finalized Order', user: loginUsername })
       });
 
-      showToast(`${documentType === 'PL' ? 'Packing List' : 'Final Order'} queued for picking and dispatch.`, "success");
+      showToast(`${documentType === 'PL' ? createdDocument.plNumber : createdDocument.osNumber} queued for picking and dispatch.`, "success");
       setViewSlip(null);
       fetchOrderSlips();
     } catch(e: any) { showToast(e.message || "Failed to generate Final Order", "error"); } finally { setIsGeneratingFo(false); }
@@ -370,10 +370,11 @@ const filteredSlips = useMemo(() => {
                 {/* NEW FO GENERATION WITH THICK TEAL STYLING */}
                 {viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned' && (
                   <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
-                    <input type="text" value={foNumberInput} onChange={(e) => setFoNumberInput(e.target.value.toUpperCase())}
+                    <input type="text" aria-label="Final Order number" title="Suggested number; advances on save if already taken." value={foNumberInput} onChange={(e) => { foNumberRequestRef.current += 1; setFoNumberInput(e.target.value.toUpperCase()); }}
                     onBlur={() => {
     // Auto-formats a typed number like "500" into "FO-000500"
     if (/^\d+$/.test(foNumberInput.trim())) {
+      foNumberRequestRef.current += 1;
       setFoNumberInput(`FO-${foNumberInput.trim().padStart(6, '0')}`);
     }
   }}
@@ -384,7 +385,7 @@ const filteredSlips = useMemo(() => {
                     {/* NEW PL GENERATION BUTTON */}
 <button 
   onClick={() => handleGenerateFoFromLedger('PL')}
-  disabled={isGeneratingFo || !foNumberInput} 
+  disabled={isGeneratingFo}
   className="px-5 py-2.5 bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-600 shadow-sm transition-colors ml-2"
 >
   Gen Packing List

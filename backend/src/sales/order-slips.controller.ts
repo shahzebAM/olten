@@ -16,6 +16,10 @@ import {
 import { PrismaClient, Prisma } from '@prisma/client';
 import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import {
+  createNumberedDocument,
+  nextDocumentNumber,
+} from './document-numbering';
+import {
   FulfillmentAccess,
   FulfillmentAuthGuard,
   type FulfillmentRequest,
@@ -172,6 +176,16 @@ export class OrderSlipsController {
      return await this.prisma.shortage.update({ where: { id }, data: { status: body.status } });
   }
 
+  @Get('next-number')
+  async getNextNumber(
+    @Query('company') company: string,
+    @Query('type') type = 'OS',
+  ) {
+    if (type !== 'OS' && type !== 'FO')
+      throw new BadRequestException('Select OS or FO numbering.');
+    return { osNumber: await nextDocumentNumber(this.prisma, type, company) };
+  }
+
   @Post()
   @UseGuards(FulfillmentAuthGuard)
   async createOrderSlip(
@@ -187,6 +201,7 @@ export class OrderSlipsController {
       isVatApplied: boolean;
       vatRate?: number;
       osNumber?: string;
+      documentType?: 'OS' | 'FO';
       referenceOs?: string;
     },
     @Req() request: FulfillmentRequest,
@@ -206,34 +221,28 @@ export class OrderSlipsController {
       throw new BadRequestException('Missing required fields.');
     if (customOsNumber !== undefined && typeof customOsNumber !== 'string')
       throw new BadRequestException('Invalid order number.');
+    if (
+      data.documentType !== undefined &&
+      !['OS', 'FO'].includes(data.documentType)
+    )
+      throw new BadRequestException('Select OS or FO numbering.');
+    if (
+      data.documentType &&
+      customOsNumber?.trim() &&
+      !customOsNumber.trim().startsWith(data.documentType)
+    )
+      throw new BadRequestException(
+        'The number must start with the selected document type.',
+      );
+    const kind =
+      data.documentType ??
+      (customOsNumber?.trim().startsWith('FO') ? 'FO' : 'OS');
 
-    return await this.mutate(async (tx) => {
+    const save = async (tx: Prisma.TransactionClient, osNumber: string) => {
       const customer = await tx.customer.findFirst({
         where: { id: customerId, company },
       });
       if (!customer) throw new NotFoundException('Customer record not found.');
-
-      let osNumber = customOsNumber?.trim();
-      if (osNumber) {
-        const existing = await tx.orderSlip.findFirst({
-          where: { company, osNumber },
-        });
-        if (existing)
-          throw new BadRequestException(
-            `Order Slip number ${osNumber} is already in use!`,
-          );
-      } else {
-        const lastOs = await tx.orderSlip.findFirst({
-          where: { company },
-          orderBy: { osNumber: 'desc' },
-        });
-        let nextNum = 1;
-        if (lastOs && lastOs.osNumber.startsWith('OS-')) {
-          const lastNum = parseInt(lastOs.osNumber.replace('OS-', ''), 10);
-          if (!isNaN(lastNum)) nextNum = lastNum + 1;
-        }
-        osNumber = `OS-${String(nextNum).padStart(6, '0')}`;
-      }
 
       const productIds = items.map((i) => Number(i.productId));
       const dbProducts = await tx.product.findMany({
@@ -323,7 +332,14 @@ export class OrderSlipsController {
           officeStock: i.product?.currentStock || 0,
         })),
       };
-    });
+    };
+    return createNumberedDocument(
+      this.prisma,
+      kind,
+      company,
+      customOsNumber,
+      save,
+    );
   }
 
   @Get()

@@ -3,7 +3,7 @@ jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(),
 }));
 
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ProcurementController } from './purchase-orders.controller';
 
@@ -17,6 +17,7 @@ describe('OS-based purchase orders and editable number sequence', () => {
     supplier: { findUnique: jest.fn() },
     orderSlip: { findFirst: jest.fn() },
     $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
   };
   const input = {
     company: 'Surgicom',
@@ -38,6 +39,7 @@ describe('OS-based purchase orders and editable number sequence', () => {
   let controller: ProcurementController;
   beforeEach(() => {
     jest.resetAllMocks();
+    database.$executeRaw.mockResolvedValue(1);
     controller = new ProcurementController();
     Object.assign(Reflect.get(controller, 'prisma') as object, database);
     database.purchaseOrder.findMany.mockResolvedValue([]);
@@ -136,6 +138,8 @@ describe('OS-based purchase orders and editable number sequence', () => {
     });
     expect(database.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5000,
+      timeout: 20000,
     });
   });
 
@@ -165,7 +169,7 @@ describe('OS-based purchase orders and editable number sequence', () => {
     },
   );
 
-  it.each(['MANUAL', ''])(
+  it.each(['MANUAL', null, 123])(
     'rejects a number that cannot be continued safely',
     async (poNumber) => {
       await expect(
@@ -175,24 +179,27 @@ describe('OS-based purchase orders and editable number sequence', () => {
     },
   );
 
-  it('rejects duplicate manual numbers without changing an existing PO', async () => {
-    database.purchaseOrder.findUnique.mockResolvedValue({ id: 'existing' });
-    await expect(controller.createPurchaseOrder(input)).rejects.toThrow(
-      'already exists',
-    );
-    expect(database.$transaction).not.toHaveBeenCalled();
+  it('advances a taken numeric starting number without changing an existing PO', async () => {
+    database.purchaseOrder.findMany.mockResolvedValue([
+      { poNumber: input.poNumber },
+    ]);
+    await expect(controller.createPurchaseOrder(input)).resolves.toMatchObject({
+      poNumber: 'CUSTOM-001527',
+    });
+    expect(database.purchaseOrder.findUnique).not.toHaveBeenCalled();
   });
 
-  it('reports a concurrent number collision as a retryable conflict', async () => {
-    database.purchaseOrder.create.mockRejectedValue(
+  it('retries a concurrent number collision in a fresh transaction', async () => {
+    database.purchaseOrder.create.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError('duplicate', {
         code: 'P2002',
         clientVersion: '6',
         meta: { target: ['poNumber'] },
       }),
     );
-    await expect(controller.createPurchaseOrder(input)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(controller.createPurchaseOrder(input)).resolves.toMatchObject({
+      poNumber: input.poNumber,
+    });
+    expect(database.$transaction).toHaveBeenCalledTimes(2);
   });
 });

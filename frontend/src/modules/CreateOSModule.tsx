@@ -29,6 +29,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const [isGeneratingFinalOrder, setIsGeneratingFinalOrder] = useState(false);
   const [finalOrderGenerated, setFinalOrderGenerated] = useState(false);
   const [finalOrderNumber, setFinalOrderNumber] = useState(''); 
+  const foNumberRequestRef = useRef(0);
 
   // --- DATA STATES ---
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -40,6 +41,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   // Editable OS Number & Reference & Update Tracker
   const [osNumber, setOsNumber] = useState<string>('');
+  const osNumberRequestRef = useRef(0);
   const [docType, setDocType] = useState<'OS' | 'QT'>('OS');
   const [referenceOs, setReferenceOs] = useState<string | null>(null);
   const [loadedOsId, setLoadedOsId] = useState<string | null>(null);
@@ -71,54 +73,50 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const showToast = (msg: string, type: 'success' | 'error') => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
-const fetchNextOsNumber = useCallback(async () => {
+  const fetchNextOsNumber = useCallback(async (signal?: AbortSignal) => {
+    const request = ++osNumberRequestRef.current;
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
+      const endpoint = docType === 'QT' ? 'quotations' : 'order-slips';
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/next-number?company=${encodeURIComponent(selectedCompany)}&type=${docType}`, { signal });
+      if (!res.ok) throw new Error('Could not load the next document number.');
       const data = await res.json();
-      const slips = data.data || [];
-      
-      setAllSlips(slips);
+      if (!signal?.aborted && request === osNumberRequestRef.current) setOsNumber(docType === 'QT' ? data.qtNumber : data.osNumber);
+    } catch {
+      if (!signal?.aborted && request === osNumberRequestRef.current) setOsNumber(`${docType}-000001`);
+    }
+  }, [selectedCompany, API_BASE_URL, docType]);
 
-      // Filter based on the selected docType ('OS' or 'QT')
-      const targetSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith(docType));
-      targetSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
-
-      const lastSlip = targetSlips.length > 0 ? targetSlips[0] : null;
-      if (lastSlip) {
-        const match = lastSlip.osNumber.match(/(\d+)$/); 
-        if (match) {
-          const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastSlip.osNumber.substring(0, match.index);
-          const padding = match[0].length;
-          setOsNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else setOsNumber(`${docType}-000001`);
-      } else setOsNumber(`${docType}-000001`);
-    } catch (e) { setOsNumber(`${docType}-000001`); }
-  }, [selectedCompany, API_BASE_URL, docType]); // Make sure docType is in the dependency array
-
-  const fetchNextFoNumber = useCallback(async () => {
+  const fetchNextFoNumber = useCallback(async (signal?: AbortSignal) => {
+    const request = ++foNumberRequestRef.current;
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { signal });
+      if (!res.ok) throw new Error('Could not load the next Final Order number.');
       const data = await res.json();
-      const slips = data.data || [];
-      
-      const foSlips = slips.filter((s: any) => s.osNumber && s.osNumber.startsWith('FO'));
-      foSlips.sort((a: any, b: any) => parseInt(b.osNumber.replace(/\D/g, '') || '0', 10) - parseInt(a.osNumber.replace(/\D/g, '') || '0', 10));
-
-      const lastFo = foSlips.length > 0 ? foSlips[0] : null;
-      if (lastFo) {
-        const match = lastFo.osNumber.match(/(\d+)$/); 
-        if (match) {
-          const nextNum = parseInt(match[0], 10) + 1;
-          const prefix = lastFo.osNumber.substring(0, match.index);
-          const padding = match[0].length;
-          setFinalOrderNumber(`${prefix}${String(nextNum).padStart(padding, '0')}`);
-        } else setFinalOrderNumber('FO-000001');
-      } else setFinalOrderNumber('FO-000001');
-    } catch (e) { setFinalOrderNumber('FO-000001'); }
+      if (!signal?.aborted && request === foNumberRequestRef.current) setFinalOrderNumber(data.osNumber);
+    } catch {
+      if (!signal?.aborted && request === foNumberRequestRef.current) setFinalOrderNumber('FO-000001');
+    }
   }, [selectedCompany, API_BASE_URL]);
 
-  useEffect(() => { fetchNextOsNumber(); fetchNextFoNumber(); }, [fetchNextOsNumber, fetchNextFoNumber]);
+  const fetchSlipHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
+      if (res.ok) {
+        const data = await res.json();
+        setAllSlips(data.data || []);
+      }
+    } catch {
+      // Existing templates remain available when a refresh fails.
+    }
+  }, [selectedCompany, API_BASE_URL]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchNextOsNumber(controller.signal);
+    fetchNextFoNumber(controller.signal);
+    fetchSlipHistory();
+    return () => controller.abort();
+  }, [fetchNextOsNumber, fetchNextFoNumber, fetchSlipHistory]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
@@ -196,6 +194,7 @@ const fetchNextOsNumber = useCallback(async () => {
 
 
   const handleLoadSlip = async (slip: any) => {
+    osNumberRequestRef.current += 1;
     setLoadedOsId(slip.id); setOsNumber(slip.osNumber); setReferenceOs(slip.referenceOs || null); setIsVatApplied(slip.vatApplied || false); setLoadedOsStatus(slip.status || 'Generated');
     
     if (slip.customer) { 
@@ -411,22 +410,26 @@ const handleSubmit = async () => {
       const payload = {
         // Use qtNumber if QT, otherwise osNumber
         [docType === 'QT' ? 'qtNumber' : 'osNumber']: osNumber.trim(), 
+        ...(docType === 'OS' ? { documentType: 'OS' } : {}),
         company: selectedCompany, customerId: selectedCustomer?.id, isVatApplied, vatRate, 
         subtotal, vatAmount, grandTotal, user: loginUsername, referenceOs: referenceOs || null,
         items: draftItems.map(i => ({ productId: i.productId, sku: i.sku, productName: i.productName, requestedQty: Number(i.requestedQty), unitPrice: Number(i.unitPrice), lineTotal: Number(i.lineTotal) }))
       };
       
       const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`Failed to create ${docType}.`);
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.message || `Failed to create ${docType}.`);
+      }
       
       const newlyCreatedDoc = await res.json();
       
       // Normalize the response so the UI components can read it consistently
       if (docType === 'QT') newlyCreatedDoc.osNumber = newlyCreatedDoc.qtNumber; 
       
-      showToast(`${docType} generated successfully.`, "success");
+      showToast(`${newlyCreatedDoc.osNumber} generated successfully.`, "success");
       setFinalizedOs(newlyCreatedDoc); setFinalOrderGenerated(false); setLoadedOsId(null); setLoadedOsStatus('Generated');
-      fetchNextOsNumber(); fetchNextFoNumber();
+      fetchNextOsNumber(); fetchNextFoNumber(); fetchSlipHistory();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
@@ -452,18 +455,21 @@ const handleSubmit = async () => {
       await handleRefreshStock(); 
       showToast("Order updated successfully.", "success");
       setFinalizedOs(updatedOs); setFinalOrderGenerated(updatedOs.osNumber.startsWith('FO'));
-      fetchNextOsNumber(); fetchNextFoNumber();
+      fetchNextFoNumber(); fetchSlipHistory();
     } catch (e: any) { showToast(e.message || "Network error. Please try again.", "error"); } finally { setIsProcessing(false); }
   };
 
   const handleGenerateFinalOrder = async () => {
     if (!finalizedOs) return;
-    if (!finalOrderNumber.trim()) return showToast("Please enter a valid Final Order Number", "error");
+    const requestedNumber = finalOrderNumber.trim();
+    const foNumber = /^\d+$/.test(requestedNumber) ? `FO-${requestedNumber.padStart(6, '0')}` : requestedNumber;
+    if (!foNumber.startsWith('FO')) return showToast('Enter a Final Order number starting with FO, or enter digits only.', 'error');
 
     setIsGeneratingFinalOrder(true);
     try {
       const payload = {
-        osNumber: finalOrderNumber.trim(), 
+        osNumber: foNumber,
+        documentType: 'FO',
         referenceOs: finalizedOs.osNumber, 
         company: selectedCompany, 
         customerId: selectedCustomer?.id || finalizedOs.customerId,
@@ -502,15 +508,16 @@ const handleSubmit = async () => {
       }
 
       await handleRefreshStock(); 
-      showToast("Final Order queued for picking and dispatch.", "success");
+      showToast(`${newFo.osNumber} queued for picking and dispatch.`, "success");
       
       const completeFo = { ...newFo, customer: selectedCustomer || finalizedOs.customer };
       
       setFinalizedOs(completeFo); 
       setFinalOrderGenerated(true); 
+      osNumberRequestRef.current += 1;
       setOsNumber(completeFo.osNumber); 
       setLoadedOsId(completeFo.id);
-      fetchNextFoNumber();
+      fetchNextFoNumber(); fetchSlipHistory();
     } catch (e: any) { 
       showToast(e.message || "Failed to generate Final Order.", "error"); 
     } finally { 
@@ -635,13 +642,15 @@ const handleSubmit = async () => {
             </div>
 
             <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{osNumber.startsWith('FO') ? 'F.O. Number' : 'O.S. Number'}</span>
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{osNumber.startsWith('FO') ? 'F.O. Number' : docType === 'QT' ? 'Quotation Number' : 'O.S. Number'}</span>
               <input 
                 type="text" value={osNumber} readOnly={loadedOsId !== null} 
-                onChange={e => setOsNumber(e.target.value.toUpperCase())}
+                aria-label={docType === 'QT' ? 'Quotation number' : 'Order Slip number'}
+                onChange={e => { osNumberRequestRef.current += 1; setOsNumber(e.target.value.toUpperCase()); }}
                 className={`w-full bg-transparent font-mono font-black text-sm sm:text-base outline-none transition-colors uppercase ${osNumber.startsWith('FO') ? 'text-teal-600 focus:text-teal-500' : 'text-indigo-700 focus:text-indigo-500'} ${loadedOsId !== null ? 'opacity-70 cursor-not-allowed' : ''}`}
-                placeholder="OS-000000"
+                placeholder={`${docType}-000000`}
               />
+              {!loadedOsId && <span className="text-[10px] text-slate-500 mt-1">Suggested; advances if already taken.</span>}
             </div>
           </div>
 
@@ -809,7 +818,10 @@ const handleSubmit = async () => {
                {onOpenFulfillment && <button onClick={onOpenFulfillment} className="px-4 py-2 rounded-lg border border-teal-300 text-teal-800 text-xs font-bold">Fulfillment & delivery</button>}
                {!finalOrderGenerated && finalizedOs.osNumber.startsWith('OS') ? (
                   <div className="flex items-center gap-2 bg-teal-50 p-2 rounded-xl border-2 border-teal-200 shadow-sm mr-2">
-                    <input type="text" value={finalOrderNumber} onChange={(e) => setFinalOrderNumber(e.target.value.toUpperCase())} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                    <div>
+                      <input type="text" aria-label="Final Order number" value={finalOrderNumber} onChange={(e) => { foNumberRequestRef.current += 1; setFinalOrderNumber(e.target.value.toUpperCase()); }} className="w-36 px-3 py-2 text-sm font-mono font-black text-slate-900 bg-white border-2 border-teal-400 rounded-lg outline-none focus:border-teal-600 uppercase placeholder:text-slate-400 placeholder:font-medium" placeholder="FO-000000" />
+                      <p className="text-[10px] text-teal-800 mt-1">Suggested; advances if taken.</p>
+                    </div>
                     
                     <button onClick={handleGenerateFinalOrder} disabled={isGeneratingFinalOrder || !finalOrderNumber} className="px-5 py-2.5 bg-teal-600 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-teal-700 disabled:bg-slate-400 shadow-sm transition-colors">
                       {isGeneratingFinalOrder ? 'Gen...' : 'Gen Final Order'}
@@ -818,11 +830,9 @@ const handleSubmit = async () => {
                     {/* NEW PL BUTTON FOR THE SUCCESS MODAL */}
                   <button 
                       onClick={async () => {
-                        const plNumber = finalOrderNumber.replace('FO-', 'PL-');
                         setIsGeneratingFinalOrder(true);
                         try {
  const payload = {
-                            plNumber, 
                             referenceOs: finalizedOs.osNumber, 
                             company: selectedCompany, 
                             customerId: finalizedOs.customerId,
@@ -854,7 +864,7 @@ const handleSubmit = async () => {
                           newPl.osNumber = newPl.plNumber; // Normalize for the UI
 
                           await handleRefreshStock(); 
-                          showToast("Packing List queued for picking and dispatch.", "success");
+                          showToast(`${newPl.plNumber} queued for picking and dispatch.`, "success");
                           setFinalizedOs({ ...newPl, customer: selectedCustomer || finalizedOs.customer }); 
                           setFinalOrderGenerated(true); 
                         } catch (e: any) { 
@@ -863,7 +873,7 @@ const handleSubmit = async () => {
                           setIsGeneratingFinalOrder(false); 
                         }
                       }} 
-                      disabled={isGeneratingFinalOrder || !finalOrderNumber} 
+                      disabled={isGeneratingFinalOrder}
                       className="px-5 py-2.5 bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest rounded-lg hover:bg-amber-600 shadow-sm transition-colors ml-2"
                     >
                       Gen Packing List

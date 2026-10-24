@@ -78,6 +78,7 @@ describe('sales Phase 2 fulfillment integration', () => {
     customer: { findFirst: jest.fn() },
     product: { findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     orderSlip: {
+      findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -85,6 +86,7 @@ describe('sales Phase 2 fulfillment integration', () => {
     },
     orderSlipItem: { deleteMany: jest.fn(), update: jest.fn() },
     packingList: {
+      findMany: jest.fn(),
       create: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -92,6 +94,7 @@ describe('sales Phase 2 fulfillment integration', () => {
     },
     shortage: { create: jest.fn() },
     $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
   };
   const fulfillment = {
     ensureDocumentDelivery: jest.fn(),
@@ -104,6 +107,9 @@ describe('sales Phase 2 fulfillment integration', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    db.$executeRaw.mockResolvedValue(1);
+    db.orderSlip.findMany.mockResolvedValue([]);
+    db.packingList.findMany.mockResolvedValue([]);
     db.customer.findFirst.mockResolvedValue({
       id: 'SU-01',
       company: 'Surgicom',
@@ -477,11 +483,13 @@ describe('sales Phase 2 fulfillment integration', () => {
     expect(db.orderSlip.update).not.toHaveBeenCalled();
   });
 
-  it('turns concurrent transaction failures into retryable conflicts', async () => {
+  it('automatically retries a concurrent creation transaction without duplicating the order', async () => {
     db.$transaction.mockRejectedValueOnce({ code: 'P2034' });
     await expect(
       controller.createOrderSlip(payload, request),
-    ).rejects.toBeInstanceOf(ConflictException);
+    ).resolves.toMatchObject({ osNumber: 'OS-000001' });
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+    expect(db.orderSlip.create).toHaveBeenCalledTimes(1);
   });
 
   it('protects stock-affecting mutations without changing the legacy QR sync route', () => {

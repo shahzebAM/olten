@@ -7,6 +7,7 @@ const containing = (value: Record<string, unknown>): unknown =>
 
 function setup() {
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     product: { count: jest.fn(), findFirst: jest.fn() },
     supplier: { findFirst: jest.fn() },
     purchaseRequisition: {
@@ -124,8 +125,13 @@ describe('Phase 1 procurement and importation service', () => {
     await service.approve('Surgicom', admin, 'pr', { quotationId: 'quote' });
     expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: 'Serializable',
-      timeout: 15000,
+      maxWait: 5000,
+      timeout: 20000,
     });
+    expect(tx.$executeRaw).toHaveBeenCalledWith(
+      expect.anything(),
+      'sales-document-number:poNumber',
+    );
     expect(tx.purchaseOrder.create).toHaveBeenCalledWith({
       data: containing({
         subtotal: 1725.3,
@@ -182,6 +188,44 @@ describe('Phase 1 procurement and importation service', () => {
     expect(tx.purchaseOrder.create).toHaveBeenCalledWith({
       data: containing({ subtotal: 3.02, grandTotal: 3.02 }),
     });
+  });
+
+  it('retries PO approval with a fresh transaction after a concurrent save', async () => {
+    const { tx, service, client } = setup();
+    tx.purchaseRequisition.findFirst
+      .mockRejectedValueOnce({ code: 'P2034' })
+      .mockResolvedValue(requisition);
+    tx.purchaseOrder.create.mockResolvedValue({ id: 'generated-po' });
+    tx.purchaseRequisition.update.mockResolvedValue({ status: 'Approved' });
+    const approval = service.approve('Surgicom', admin, 'pr', {
+      quotationId: 'quote',
+    });
+    const result = expect(approval).resolves.toMatchObject({
+      status: 'Approved',
+    });
+    await jest.runAllTimersAsync();
+    await result;
+    expect(client.$transaction).toHaveBeenCalledTimes(2);
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(tx.purchaseOrder.create).toHaveBeenCalledTimes(1);
+    expect(tx.purchaseRequisition.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps import PO format and advances past numbers used by ordinary POs', async () => {
+    const { tx, service } = setup();
+    tx.purchaseRequisition.findFirst.mockResolvedValue(requisition);
+    tx.importSequence.upsert
+      .mockResolvedValueOnce({ value: 1 })
+      .mockResolvedValueOnce({ value: 2 });
+    tx.purchaseOrder.findUnique
+      .mockResolvedValueOnce({ id: 'existing-ordinary-po' })
+      .mockResolvedValueOnce(null);
+    tx.purchaseOrder.create.mockResolvedValue({ id: 'generated-po' });
+    await service.approve('Surgicom', admin, 'pr', { quotationId: 'quote' });
+    expect(tx.purchaseOrder.create).toHaveBeenCalledWith({
+      data: containing({ poNumber: 'PO-2026-000002' }),
+    });
+    expect(tx.importSequence.upsert).toHaveBeenCalledTimes(2);
   });
 
   it('requires approver rights and prevents repeated approval', async () => {
