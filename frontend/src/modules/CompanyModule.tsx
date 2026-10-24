@@ -282,7 +282,7 @@ useEffect(() => {
           ai_assistant: { title: 'Executive AI & Invoice OCR', description: 'Role-aware questions and invoice reading for review.', icon: '✧' },
         };
         const card = cards[id];
-        return <button onClick={() => onSelectModule(id)} className="group flex h-full w-full items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:border-teal-300 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-teal-400/10"><div className="flex min-w-0 flex-1 items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-2xl text-teal-700">{card.icon}</div><div><h3 className="text-[15px] font-bold text-slate-800">{card.title}</h3><p className="mt-0.5 text-xs font-medium text-slate-500">{card.description}</p></div></div><div className="ml-4 text-slate-300">{rightArrow}</div></button>;
+        return <button onClick={() => onSelectModule(id)} className="group flex h-full w-full items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:border-teal-300 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-teal-400/10"><div className="flex min-w-0 flex-1 items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-2xl text-teal-700">{card.icon}</div><div className="min-w-0 flex-1"><h3 className="truncate text-[15px] font-bold text-slate-800">{card.title}</h3><p className="mt-0.5 truncate text-xs font-medium text-slate-500">{card.description}</p></div></div><div className="ml-4 shrink-0 text-slate-300">{rightArrow}</div></button>;
       }
       case 'suppliers':
         return (
@@ -364,8 +364,8 @@ useEffect(() => {
           <button onClick={() => onSelectModule('importation')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10">
             <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">↗</div>
-              <div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800">Importation & Receiving</h3><p className="text-xs font-medium text-slate-500 mt-0.5">Requisitions, shipments, customs and QC.</p></div>
-            </div><div className="ml-4 text-slate-300">{rightArrow}</div>
+              <div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800 truncate">Importation & Receiving</h3><p className="text-xs font-medium text-slate-500 truncate mt-0.5">Requisitions, shipments, customs and QC.</p></div>
+            </div><div className="flex-shrink-0 ml-4 text-slate-300">{rightArrow}</div>
           </button>
         );
       case 'warehouse_ops':
@@ -373,7 +373,7 @@ useEffect(() => {
       case 'deliveries': {
         const title = id === 'warehouse_ops' ? 'Warehouse & Cycle Counts' : id === 'customer_pos' ? 'Customer Orders & Fulfillment' : 'Delivery & Proof of Delivery';
         const description = id === 'warehouse_ops' ? 'Bins, stock conditions, transfers and counts.' : id === 'customer_pos' ? 'Track Order Slip reservations and partial deliveries.' : 'FEFO picking, dispatch schedules and signed PODs.';
-        return <button onClick={() => onSelectModule(id)} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10"><div className="flex items-center gap-4 min-w-0 flex-1"><div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">{id === 'warehouse_ops' ? '▦' : id === 'customer_pos' ? '≡' : '→'}</div><div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800">{title}</h3><p className="text-xs font-medium text-slate-500 mt-0.5">{description}</p></div></div><div className="ml-4 text-slate-300">{rightArrow}</div></button>;
+        return <button onClick={() => onSelectModule(id)} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-cyan-400/10"><div className="flex items-center gap-4 min-w-0 flex-1"><div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-cyan-50 text-cyan-700 text-2xl">{id === 'warehouse_ops' ? '▦' : id === 'customer_pos' ? '≡' : '→'}</div><div className="min-w-0 flex-1"><h3 className="text-[15px] font-bold text-slate-800 truncate">{title}</h3><p className="text-xs font-medium text-slate-500 truncate mt-0.5">{description}</p></div></div><div className="flex-shrink-0 ml-4 text-slate-300">{rightArrow}</div></button>;
       }
       case 'inventory':
         return (
@@ -423,18 +423,21 @@ useEffect(() => {
 
       case 'generate_qr':
         return (
-          <button 
-  onClick={() => onSelectModule('qr_system')} 
-  className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-indigo-300 transition-all flex flex-col items-center justify-center gap-3 group"
->
-  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-    {/* QR Icon */}
-    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm14 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-    </svg>
-  </div>
-  <span className="font-black text-sm uppercase tracking-widest text-slate-800">QR Generator</span>
-</button>);
+          <button onClick={() => onSelectModule('qr_system')} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left w-full h-full focus:outline-none focus:ring-4 focus:ring-slate-400/10">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm14 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-bold text-slate-800 truncate transition-colors group-hover:text-indigo-800">QR Generator</h3>
+                <p className="text-xs font-medium text-slate-500 truncate mt-0.5">Generate QR codes and print product labels.</p>
+              </div>
+            </div>
+            <div className="flex-shrink-0 ml-4 text-slate-300 group-hover:text-indigo-500 transition-colors">{rightArrow}</div>
+          </button>
+        );
         
       default:
         return null;
