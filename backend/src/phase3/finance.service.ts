@@ -113,7 +113,9 @@ export class FinanceService implements OnModuleDestroy {
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        ['P2002', 'P2034'].includes(error.code)
+        (['P2002', 'P2034'].includes(error.code) ||
+          (error.code === 'P2010' &&
+            ['40001', '40P01'].includes(String(error.meta?.code))))
       )
         throw new ConflictException(
           'This record changed or was already submitted. Refresh and retry.',

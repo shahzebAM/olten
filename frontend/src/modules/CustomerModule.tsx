@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 import { CustomerFinanceBalance } from './phase3/ProfilePanels';
 
 // --- INTERFACES ---
@@ -86,7 +87,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
         url += `&category=${encodeURIComponent(selectedCategoryFilter)}`;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!res.ok) throw new Error("Failed to fetch");
       
       const responseData = await res.json();
@@ -109,7 +110,7 @@ export default function CustomerModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchCategories = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/customer-categories?company=${selectedCompany}`);
+      const res = await fetch(`${API_BASE_URL}/sales/customer-categories?company=${selectedCompany}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) setCategories(await res.json());
     } catch (e) {
       console.error("Failed to fetch categories");
@@ -141,7 +142,7 @@ useEffect(() => {
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
@@ -162,7 +163,7 @@ useEffect(() => {
     
     setIsLoading(true);
     try {
-      await fetch(`${API_BASE_URL}/sales/customers/${id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/sales/customers/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' });
       showToast("Customer record deleted instantly.", "success");
       fetchCustomers();
       setViewCustomer(null);
@@ -180,7 +181,7 @@ useEffect(() => {
       try {
           const res = await fetch(`${API_BASE_URL}/sales/customer-categories`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: newCategoryName.trim(), company: selectedCompany })
           });
           if (!res.ok) throw new Error();
@@ -195,7 +196,7 @@ useEffect(() => {
   const handleDeleteCategory = async (id: string) => {
       if (!window.confirm("Delete this category? Customers assigned to it will still retain the name but it won't be selectable.")) return;
       try {
-          await fetch(`${API_BASE_URL}/sales/customer-categories/${id}`, { method: 'DELETE' });
+          await fetch(`${API_BASE_URL}/sales/customer-categories/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' });
           fetchCategories();
           showToast("Category deleted.", "success");
       } catch (e) {
@@ -228,7 +229,7 @@ useEffect(() => {
 
         const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
         body: JSON.stringify({ company: selectedCompany, categoryName: pricingCategory, prices: payload })
         });
         

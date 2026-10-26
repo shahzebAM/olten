@@ -66,9 +66,9 @@ const fetchOrderSlips = useCallback(async () => {
     setIsLoading(true);
     try {
       const [osRes, qtRes, plRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`),
-        fetch(`${API_BASE_URL}/sales/quotations?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/sales/packing-lists?company=${encodeURIComponent(selectedCompany)}`)
+        fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/sales/quotations?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/sales/packing-lists?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       ]);
       
       const osData = osRes.ok ? await osRes.json() : { data: [] };
@@ -93,7 +93,7 @@ const fetchOrderSlips = useCallback(async () => {
     if (viewSlip && viewSlip.osNumber.startsWith('OS') && viewSlip.status !== 'Finalized Order' && viewSlip.status !== 'Cancelled' && viewSlip.status !== 'Returned') {
       const controller = new AbortController();
       const request = ++foNumberRequestRef.current;
-      fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { signal: controller.signal })
+      fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal: controller.signal })
         .then(async res => {
           if (!res.ok) throw new Error('Could not load the next Final Order number.');
           const data = await res.json();

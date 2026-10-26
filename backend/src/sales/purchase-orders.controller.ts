@@ -1,11 +1,14 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, BadRequestException, NotFoundException, ConflictException, UseGuards } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard, LegacyReadModules, LegacyWriteModules } from '../auth/legacy-erp-auth.guard';
 import {
   createNumberedDocument,
   nextDocumentNumber,
 } from './document-numbering';
 
 @Controller('procurement')
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('purchasing')
 export class ProcurementController {
   private readonly prisma = new PrismaClient();
 
@@ -98,6 +101,7 @@ export class ProcurementController {
   }
 
   @Patch('suppliers/:id')
+  @LegacyCompanyRecord('supplier')
   async updateSupplier(@Param('id') id: string, @Body() data: any) {
     const supplier = await this.prisma.supplier.findUnique({ where: { id } });
     if (!supplier) throw new NotFoundException('Supplier not found.');
@@ -110,6 +114,7 @@ export class ProcurementController {
   }
 
   @Delete('suppliers/:id')
+  @LegacyCompanyRecord('supplier')
   async deleteSupplier(@Param('id') id: string) {
     try {
       return await this.prisma.$transaction(
@@ -217,13 +222,14 @@ export class ProcurementController {
           'The source Order Slip must exist in this company and must not be cancelled or returned.',
         );
       }
-      let calculatedSubtotal = 0;
+      let calculatedSubtotal = new Prisma.Decimal(0);
 
       const cleanItems = items.map((item: any) => {
-        const lineTotal =
-          Math.round(Number(item.requestedQty) * Number(item.unitCost) * 100) /
-          100;
-        calculatedSubtotal += lineTotal;
+        const lineTotal = new Prisma.Decimal(Number(item.requestedQty))
+          .mul(Number(item.unitCost))
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+          .toNumber();
+        calculatedSubtotal = calculatedSubtotal.add(lineTotal);
 
         return {
           productId: Number(item.productId), // Safely parsing the 32-bit integer generated on frontend
@@ -235,12 +241,17 @@ export class ProcurementController {
         };
       });
 
-      calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
       const calculatedVat = isVatApplied
-        ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+        ? calculatedSubtotal
+            .mul(Number(vatRate))
+            .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+            .toNumber()
         : 0;
       const calculatedGrandTotal =
-        Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+        calculatedSubtotal
+          .add(calculatedVat)
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+          .toNumber();
 
       return await tx.purchaseOrder.create({
         data: {
@@ -248,7 +259,7 @@ export class ProcurementController {
           company,
           osReference,
           status: 'Generated',
-          subtotal: calculatedSubtotal,
+          subtotal: calculatedSubtotal.toNumber(),
           vatApplied: isVatApplied,
           vatRate: Number(vatRate),
           vatAmount: calculatedVat,
@@ -270,6 +281,7 @@ export class ProcurementController {
   }
 
   @Get('purchase-orders')
+  @LegacyReadModules('products', 'inventory', 'master_inventory', 'warehouses')
   async listPurchaseOrders(@Query('company') company: string) {
     if (!company) throw new BadRequestException('Company is required.');
     
@@ -292,6 +304,7 @@ export class ProcurementController {
   }
 
   @Post('purchase-orders/:id/receive')
+  @LegacyCompanyRecord('purchaseOrder')
   async receivePurchaseOrder(@Param('id') id: string, @Body() data: any) {
     const { user, verifications } = data; 
     return await this.importSafeTransaction(async (tx) => {
@@ -345,6 +358,7 @@ export class ProcurementController {
   }
 
   @Patch('suppliers/:id/catalog')
+  @LegacyCompanyRecord('supplier')
   async updateSupplierCatalog(@Param('id') id: string, @Body() data: { catalog: any[] }) {
     const supplier = await this.prisma.supplier.findUnique({ where: { id } });
     if (!supplier) throw new NotFoundException('Supplier not found.');
@@ -357,6 +371,8 @@ export class ProcurementController {
 
   // --- ADD THIS AT THE BOTTOM OF THE FILE ---
   @Patch('purchase-orders/:id/status')
+  @LegacyWriteModules('products', 'inventory', 'master_inventory', 'warehouse', 'warehouses')
+  @LegacyCompanyRecord('purchaseOrder')
   async updatePurchaseOrderStatus(@Param('id') id: string, @Body() data: { status: string; user: string }) {
     const existing = await this.prisma.purchaseOrder.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('P.O. not found.');
@@ -368,6 +384,7 @@ export class ProcurementController {
   }
 
   @Delete('purchase-orders/:id/cancel')
+  @LegacyCompanyRecord('purchaseOrder')
   async cancelPurchaseOrder(@Param('id') id: string, @Body('user') user: string) {
     return this.importSafeTransaction(async tx => {
       const existing = await tx.purchaseOrder.findUnique({ where: { id } });
@@ -383,6 +400,7 @@ export class ProcurementController {
   }
 
   @Delete('purchase-orders/:id')
+  @LegacyCompanyRecord('purchaseOrder')
   async hardDeletePurchaseOrder(@Param('id') id: string) {
     return this.importSafeTransaction(async tx => {
       await this.requireLegacyReceiving(tx, id);

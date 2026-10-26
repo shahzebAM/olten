@@ -315,7 +315,11 @@ export default function BooksWorkspace({
   );
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-2">
+      <div
+        className="phase3-tabs flex flex-wrap gap-2"
+        role="group"
+        aria-label="Accounting sections"
+      >
         {[
           ["ledger", "Accounts & journals"],
           ["mapping", "Reference mappings"],
@@ -325,6 +329,7 @@ export default function BooksWorkspace({
           <button
             className={tab === id ? primary : secondary}
             key={id}
+            aria-pressed={tab === id}
             onClick={() => setTab(id)}
           >
             {title}
@@ -383,6 +388,7 @@ export default function BooksWorkspace({
                 status: account.active === false ? "Archived" : "Active",
               }))}
               columns={["code", "name", "type", "status"]}
+              searchLabel="Search accounts"
               actions={
                 canManageAccounts
                   ? (account) => (
@@ -613,6 +619,20 @@ export default function BooksWorkspace({
                 <p className="text-sm text-slate-500">No journals posted.</p>
               )}
             </div>
+          </Panel>
+          <Panel title="General ledger · journal history">
+            <p className="mb-4 text-xs text-slate-500">
+              Entries from the journal history currently loaded in this workspace.
+            </p>
+            <DataTable
+              rows={entries.map((entry) => ({
+                ...entry,
+                date: date(entry.date),
+                account: `${entry.account?.code || ""} ${entry.account?.name || entry.accountId}`,
+              }))}
+              columns={["date", "journal", "account", "memo", "debit", "credit"]}
+              searchLabel="Search journal entries"
+            />
           </Panel>
           <Panel title="Trial balance">
             <DataTable

@@ -32,6 +32,9 @@ import {
   filterAndAggregatePayrollRecords,
 } from './employees.service';
 import { EmployeesController } from './employees.controller';
+import { PayrollAuthGuard } from '../auth/payroll-auth.guard';
+import { AdminAuthGuard } from '../auth/admin-auth.guard';
+import type { ExecutionContext } from '@nestjs/common';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -591,7 +594,22 @@ describe('attendance source records and payroll snapshots', () => {
       const module = await Test.createTestingModule({
         controllers: [EmployeesController],
         providers: [{ provide: EmployeesService, useValue: service }],
-      }).compile();
+      })
+        // Authentication requirements are independently tested with real guards.
+        // Keep these existing transport/calculation fixtures in Company A.
+        .overrideGuard(PayrollAuthGuard)
+        .useValue({
+          canActivate: (context: ExecutionContext) => {
+            const req = context
+              .switchToHttp()
+              .getRequest<{ headers: Record<string, string> }>();
+            req.headers['x-company'] = 'Company A';
+            return true;
+          },
+        })
+        .overrideGuard(AdminAuthGuard)
+        .useValue({ canActivate: () => true })
+        .compile();
       app = module.createNestApplication<INestApplication<Server>>();
       await app.init();
     });

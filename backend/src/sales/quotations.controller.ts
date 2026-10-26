@@ -5,14 +5,18 @@ import {
   Body,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { LegacyErpAccess, LegacyErpAuthGuard } from '../auth/legacy-erp-auth.guard';
 import {
   createNumberedDocument,
   nextDocumentNumber,
 } from './document-numbering';
 
 @Controller('sales/quotations')
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('sales')
 export class QuotationsController {
   private readonly prisma = new PrismaClient();
 

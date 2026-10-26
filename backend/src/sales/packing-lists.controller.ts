@@ -13,6 +13,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaClient, type Prisma } from '@prisma/client';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard } from '../auth/legacy-erp-auth.guard';
 import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import {
   FulfillmentAccess,
@@ -25,6 +26,8 @@ import {
 } from './document-numbering';
 
 @Controller('sales/packing-lists')
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('sales')
 @FulfillmentAccess('sales')
 export class PackingListsController {
   private readonly prisma = new PrismaClient();
@@ -162,6 +165,7 @@ export class PackingListsController {
   }
 
   @Delete(':id/cancel')
+  @LegacyCompanyRecord('packingList')
   @UseGuards(FulfillmentAuthGuard)
   cancelPackingList(
     @Param('id') id: string,
@@ -171,6 +175,7 @@ export class PackingListsController {
   }
 
   @Delete(':id')
+  @LegacyCompanyRecord('packingList')
   @UseGuards(FulfillmentAuthGuard)
   deletePackingList(
     @Param('id') id: string,

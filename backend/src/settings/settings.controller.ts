@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, Headers, UseGuards, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { PayrollAuthGuard } from '../auth/payroll-auth.guard';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard, LegacyReadModules } from '../auth/legacy-erp-auth.guard';
 
 const prisma = new PrismaClient();
 
@@ -11,7 +13,8 @@ export class SettingsController {
   // ==========================================
 
   @Get()
-  async getSettings(@Query('company') company: string) {
+  @UseGuards(PayrollAuthGuard)
+  async getSettings(@Headers('x-company') company: string) {
     if (!company) return []; 
     
     try {
@@ -28,6 +31,7 @@ export class SettingsController {
   }
 
   @Post()
+  @UseGuards(PayrollAuthGuard)
   async updateSettings(@Body() data: { company: string, shiftStart: string, shiftEnd: string }) {
     if (!data.company) {
       throw new HttpException("Company is required", HttpStatus.BAD_REQUEST);
@@ -69,6 +73,9 @@ export class SettingsController {
   // ==========================================
 
   @Get('warehouses')
+  @UseGuards(LegacyErpAuthGuard)
+  @LegacyErpAccess('inventory')
+  @LegacyReadModules('purchasing', 'sales', 'importation')
   async getWarehouses(@Query('company') company: string) {
     if (!company) return [];
     try {
@@ -83,6 +90,8 @@ export class SettingsController {
   }
 
   @Post('warehouses')
+  @UseGuards(LegacyErpAuthGuard)
+  @LegacyErpAccess('inventory')
   async createWarehouse(@Body() data: { company: string, name: string, address: string, status: string }) {
     if (!data.company || !data.name || !data.address) {
       throw new HttpException("Missing required fields", HttpStatus.BAD_REQUEST);
@@ -103,6 +112,9 @@ export class SettingsController {
   }
 
   @Patch('warehouses/:id')
+  @UseGuards(LegacyErpAuthGuard)
+  @LegacyErpAccess('inventory')
+  @LegacyCompanyRecord('warehouse')
   async updateWarehouseStatus(@Param('id') id: string, @Body() data: { status: string }) {
     try {
       return await prisma.warehouse.update({

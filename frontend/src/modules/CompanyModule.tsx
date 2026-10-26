@@ -4,6 +4,7 @@ import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSens
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { matchesWorkspaceModule, workspaceNavigation } from '../lib/workspaceNavigation';
 
 // --- DRAG AND DROP WRAPPER COMPONENT ---
 function SortableModuleCard({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
@@ -37,12 +38,14 @@ export default function CompanyModule({
   selectedCompany, loginUsername, currentUser, adminUsers = [],
   hasPayroll, hasAiDocs, hasProducts, hasInventory, hasWarehouses, hasPurchasing, hasSales, hasImportation,
   hasFinance, hasBooks, hasService, hasExecutive, hasAiAssistant,
-  onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL
+  onChangeCompany, onSelectModule, onAddCompany, onRemoveCompany, companiesList = [], API_BASE_URL,
+  navigationOnly = false, activeModule = 'none', onWorkspace
 }: any) {
   
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCompany, setNewCompany] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [moduleSearch, setModuleSearch] = useState('');
   const [deletingCompany, setDeletingCompany] = useState<string | null>(null);
   const deletingCompanyRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -444,6 +447,17 @@ useEffect(() => {
     }
   };
 
+  if (navigationOnly) {
+    const availableLinks = workspaceNavigation.filter(item => moduleOrder.includes(item.id));
+    return <nav className="erp-navigation" aria-label="Modules">
+      <button type="button" className={`erp-nav-item${activeModule === 'none' ? ' is-active' : ''}`} aria-current={activeModule === 'none' ? 'page' : undefined} data-workspace-link onClick={onWorkspace} title="Workspace overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m3 10 9-7 9 7v11h-7v-7h-4v7H3z" /></svg><span className="erp-nav-label">Workspace overview</span></button>
+      {[...new Set(availableLinks.map(item => item.group))].map(group => <div className="erp-nav-group" key={group}>
+        <p className="erp-nav-group-title erp-nav-label">{group}</p>
+        {availableLinks.filter(item => item.group === group).map(item => <button type="button" data-workspace-link key={item.id} title={item.title} aria-current={activeModule === item.module ? 'page' : undefined} className={`erp-nav-item${activeModule === item.module ? ' is-active' : ''}`} onClick={() => onSelectModule(item.module)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={item.icon} /></svg><span className="erp-nav-label">{item.title}</span></button>)}
+      </div>)}
+    </nav>;
+  }
+
   // --- WORKSPACE LIST VIEW (GATEWAY OFF) ---
   if (!isGateway) {
     const available = companiesList.filter((c: string) => allowedCompanies[c]);
@@ -551,7 +565,7 @@ useEffect(() => {
 
   // --- GATEWAY VIEW (WITH DRAG & DROP) ---
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200 relative pb-24">
+    <div className="erp-workspace-home min-h-screen bg-[#F8FAFC] flex flex-col items-center p-4 sm:p-8 font-sans selection:bg-slate-200 relative pb-24">
       
       {/* TOAST MOVED TO TOP RIGHT */}
       {toast && (
@@ -563,7 +577,8 @@ useEffect(() => {
       {/* GATEWAY HEADER */}
       <div className="w-full max-w-[1440px] mx-auto px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-10">
         <div className="w-full sm:w-auto">
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{selectedCompany} Workspace</h1>
+          <p className="erp-eyebrow">YOUR BUSINESS, CONNECTED</p>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Workspace overview</h1>
           <p className="text-slate-500 text-sm mt-1">Logged in as <span className="font-bold text-slate-700">{loginUsername}</span> ({currentUser?.role || 'Admin'})</p>
         </div>
         <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3 shrink-0">
@@ -571,6 +586,12 @@ useEffect(() => {
           <button onClick={onLogout} className="flex-1 sm:flex-none w-full sm:w-auto px-4 sm:px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl shadow-sm font-bold transition-colors text-sm text-center">Logout</button>
         </div>
       </div>
+
+      <div className="erp-workspace-intro">
+        <div><h2>Everything you need to keep business moving.</h2><p>Manage sales, stock and finance in one connected workspace. Choose a module to get started.</p></div>
+        {hasExecutive && <button type="button" className="erp-overview-action" onClick={() => onSelectModule('executive')}>View executive overview <span aria-hidden="true">↗</span></button>}
+      </div>
+      <div className="erp-module-toolbar"><div><h2>Your modules</h2><p>{isAdmin ? 'Open a module, or hold and drag a card to arrange your workspace.' : 'The tools available to your account.'}</p></div><label className="erp-module-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg><input type="search" aria-label="Find a module" placeholder="Find a module…" value={moduleSearch} onChange={event => setModuleSearch(event.target.value)} /></label></div>
 
       <DndContext 
         sensors={sensors} 
@@ -582,7 +603,7 @@ useEffect(() => {
           
           <div className="w-full max-w-[1440px] mx-auto px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             
-            {moduleOrder.map(moduleId => (
+            {moduleOrder.filter(moduleId => matchesWorkspaceModule(moduleId, moduleSearch)).map(moduleId => (
               <SortableModuleCard key={moduleId} id={moduleId} disabled={!isAdmin}>
                 {renderModuleCard(moduleId)}
               </SortableModuleCard>
@@ -591,6 +612,8 @@ useEffect(() => {
           </div>
         </SortableContext>
       </DndContext>
+
+      {moduleSearch.trim() && !moduleOrder.some(moduleId => matchesWorkspaceModule(moduleId, moduleSearch)) && <p role="status" className="erp-module-empty">No modules match “{moduleSearch}”. Try another name.</p>}
 
       {/* INJECT ONLINE WIDGET HERE */}
       {renderOnlineWidget()}

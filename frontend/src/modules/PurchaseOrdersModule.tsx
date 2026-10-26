@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
+import { roundSalesLine, salesTotals } from '../lib/salesAmounts';
 import type { ReactNode } from 'react';
 
 // --- INTERFACES ---
@@ -48,7 +50,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const fetchPurchaseOrders = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) setPurchaseOrders(await res.json());
     } catch (e) {
       showToast("Error loading POs.", "error");
@@ -59,7 +61,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) setSuppliers(await res.json());
     } catch (e) {
       console.error("Failed to load suppliers");
@@ -70,7 +72,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     setNumberLoading(true);
     setNextPoNumber('');
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/next-po-number?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/next-po-number?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!res.ok) throw new Error('Could not load the next P.O. number.');
       const data = await res.json();
       setNextPoNumber(data.poNumber);
@@ -129,9 +131,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const removePoItem = (index: number) => setPoItems(poItems.filter((_, i) => i !== index));
 
   const calculateTotals = () => {
-    let subtotal = poItems.reduce((sum, item) => sum + (Number(item.requestedQty) * Number(item.unitCost)), 0);
-    let vatAmount = poForm.isVatApplied ? subtotal * 0.12 : 0;
-    return { subtotal, vatAmount, grandTotal: subtotal + vatAmount };
+    return salesTotals(poItems.map(item => roundSalesLine(item.requestedQty, item.unitCost)), poForm.isVatApplied);
   };
 
   const handleGeneratePO = async () => {
@@ -164,7 +164,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       };
 
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       
       if (!res.ok) {
@@ -211,7 +211,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     try {
       const payload = { user: loginUsername, verifications: receiveItems.map(i => ({ itemId: i.id, confirmedQty: Number(i.confirmedQty) })) };
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${receivePo.id}/receive`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error();
       showToast("Purchase Order received successfully.", "success");
@@ -224,7 +224,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     if (!window.confirm("Void this Purchase Order? It will remain in history as Cancelled.")) return;
     try {
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}/cancel`, {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername })
+        method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername })
       });
       if (!res.ok) throw new Error();
       showToast("Purchase Order cancelled.", "success");
@@ -237,7 +237,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
     if (!window.confirm("CRITICAL WARNING: This will permanently wipe this P.O. Are you sure?")) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast("Purchase Order permanently deleted.", "success");
       fetchPurchaseOrders();
@@ -405,7 +405,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                         <td className="p-2"><input type="text" value={item.productName} onChange={e => handleItemChange(idx, 'productName', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-bold outline-none focus:border-slate-400 bg-white" placeholder="Product Description"/></td>
                         <td className="p-2"><input type="number" min="1" value={item.requestedQty} onChange={e => handleItemChange(idx, 'requestedQty', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-black text-center outline-none focus:border-slate-400 bg-white"/></td>
                         <td className="p-2"><input type="number" min="0" step="0.01" value={item.unitCost} onChange={e => handleItemChange(idx, 'unitCost', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-mono text-right outline-none focus:border-slate-400 bg-white"/></td>
-                        <td className="p-2 text-right font-black font-mono text-slate-700 pr-4">₱{(item.requestedQty * item.unitCost).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                        <td className="p-2 text-right font-black font-mono text-slate-700 pr-4">₱{roundSalesLine(item.requestedQty, item.unitCost).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                         <td className="p-2 text-center">
                           {poItems.length > 1 && (
                             <button onClick={() => removePoItem(idx)} className="text-rose-400 hover:text-rose-600 font-bold p-1">✕</button>

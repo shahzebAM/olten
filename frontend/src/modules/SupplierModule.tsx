@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 
 interface AssignedProduct { productId: number; sku: string; name: string; supplierCost: number; }
 interface Supplier {
@@ -36,8 +37,8 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     setIsLoading(true);
     try {
       const [supRes, prodRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`)
+        fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       ]);
       if (supRes.ok) setSuppliers(await supRes.json());
       if (prodRes.ok) setCatalogProducts(await prodRes.json());
@@ -69,7 +70,7 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     const url = editingSupplierId ? `${API_BASE_URL}/procurement/suppliers/${editingSupplierId}` : `${API_BASE_URL}/procurement/suppliers`;
     try {
       const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+        method, headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...supplierForm, company: selectedCompany, user: loginUsername })
       });
       if (!res.ok) throw new Error();
@@ -82,7 +83,7 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
   const handleDeleteSupplier = async (id: string) => {
     if (!window.confirm("Delete this supplier? All associated PO references may be affected.")) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast("Supplier deleted.", "success");
       fetchAllData();
@@ -113,7 +114,7 @@ export default function SupplierModule({ selectedCompany, loginUsername, API_BAS
     try {
       const res = await fetch(`${API_BASE_URL}/procurement/suppliers/${activeProductsModal}/catalog`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
         body: JSON.stringify({ catalog: activeCatalog })
       });
       if (!res.ok) throw new Error();

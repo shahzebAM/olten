@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { getApiAuthHeaders } from '../lib/apiSession';
+import { roundSalesLine, salesTotals } from '../lib/salesAmounts';
 import { useInvisibleScanner } from '../lib/useInvisibleScanner';
 
 // --- INTERFACES ---
@@ -77,7 +78,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     const request = ++osNumberRequestRef.current;
     try {
       const endpoint = docType === 'QT' ? 'quotations' : 'order-slips';
-      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/next-number?company=${encodeURIComponent(selectedCompany)}&type=${docType}`, { signal });
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/next-number?company=${encodeURIComponent(selectedCompany)}&type=${docType}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal });
       if (!res.ok) throw new Error('Could not load the next document number.');
       const data = await res.json();
       if (!signal?.aborted && request === osNumberRequestRef.current) setOsNumber(docType === 'QT' ? data.qtNumber : data.osNumber);
@@ -89,7 +90,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const fetchNextFoNumber = useCallback(async (signal?: AbortSignal) => {
     const request = ++foNumberRequestRef.current;
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { signal });
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal });
       if (!res.ok) throw new Error('Could not load the next Final Order number.');
       const data = await res.json();
       if (!signal?.aborted && request === foNumberRequestRef.current) setFinalOrderNumber(data.osNumber);
@@ -100,7 +101,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchSlipHistory = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) {
         const data = await res.json();
         setAllSlips(data.data || []);
@@ -119,7 +120,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   }, [fetchNextOsNumber, fetchNextFoNumber, fetchSlipHistory]);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
+    fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       .then(res => res.json())
       .then(data => {
         const list = Array.isArray(data) ? data : (data.data || []);
@@ -138,7 +139,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   // --- FETCH CATALOG FOR INSTANT SCANNING ---
   useEffect(() => {
-    fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`)
+    fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       .then(res => res.json())
       .then(data => setAllProducts(data || []))
       .catch(() => {});
@@ -149,7 +150,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     const handler = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(productSearch)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(productSearch)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
         if (res.ok) { setProductSearchResults(await res.json()); setHighlightedIndex(-1); }
       } catch (e) {} finally { setIsSearchingProducts(false); }
     }, 50);
@@ -177,7 +178,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
     if (customer.category && customer.category !== 'General') {
       try {
-        const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
         if (res.ok) {
           const data = await res.json();
           const priceMap: Record<number, number> = {};
@@ -337,9 +338,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { console.warn("Failed to refresh stock.", e); } finally { setIsRefreshingStock(false); }
   };
 
-  const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
-  const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
-  const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
+  const decimalTotals = salesTotals(draftItems.map(item => roundSalesLine(item.requestedQty, item.unitPrice)), isVatApplied, vatRate);
+  const subtotal = docType === 'OS' ? decimalTotals.subtotal : Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
+  const vatAmount = docType === 'OS' ? decimalTotals.vatAmount : isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
+  const grandTotal = docType === 'OS' ? decimalTotals.grandTotal : Math.round((subtotal + vatAmount) * 100) / 100;
   
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => {
     const q = Number(i.requestedQty);
@@ -691,7 +693,7 @@ const handleSubmit = async () => {
                         <input type="text" inputMode="decimal" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
                       </td>
 
-                      <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                      <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(docType === 'OS' ? roundSalesLine(item.requestedQty, item.unitPrice) : item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
 
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">

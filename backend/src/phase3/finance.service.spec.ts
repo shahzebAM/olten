@@ -544,6 +544,40 @@ describe('Phase 3 Finance service business safeguards', () => {
       containing({ data: containing({ quantity: 4, unitCost: d('25') }) }),
     );
   });
+  it.each(['40001', '40P01'])(
+    'returns a controlled conflict for raw SQL concurrency code %s without retrying a posting',
+    async (code) => {
+      db.$transaction.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Transaction conflict', {
+          code: 'P2010',
+          clientVersion: 'test',
+          meta: { code },
+        }),
+      );
+      await expect(
+        service.postDocument('Test', actor(), 'invoice-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+      expect(postJournal).not.toHaveBeenCalled();
+      expect(db.financeDocument.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves unrelated raw SQL errors instead of misclassifying constraint failures', async () => {
+    const error = new Prisma.PrismaClientKnownRequestError(
+      'Constraint failed',
+      {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { code: '23514' },
+      },
+    );
+    db.$transaction.mockRejectedValueOnce(error);
+    await expect(
+      service.postDocument('Test', actor(), 'invoice-1'),
+    ).rejects.toBe(error);
+  });
+
   it('rejects grouped landed quantity above the database integer boundary', async () => {
     db.landedCost.findFirst.mockResolvedValue({
       id: 'cost-1',

@@ -177,12 +177,12 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
   const fetchAllData = useCallback(async () => {
     try {
       const [prodRes, movRes, whRes, stkRes, poRes, catRes, grnRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/inventory-movements?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/warehouses?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/warehouse-stock?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`),
-        fetch(`${API_BASE_URL}/sales/customer-categories?company=${encodeURIComponent(selectedCompany)}`),
+        fetch(`${API_BASE_URL}/products?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/inventory-movements?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/warehouses?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/warehouse-stock?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/sales/customer-categories?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
         fetch(`${API_BASE_URL}/importation/receiving-queue`, {
           headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany },
         }).catch(() => null)
@@ -216,7 +216,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         
         try {
             const pricePromises = categories.map(async (cat: any) => {
-                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${encodeURIComponent(selectedCompany)}&categoryName=${encodeURIComponent(cat.name)}`);
+                const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${encodeURIComponent(selectedCompany)}&categoryName=${encodeURIComponent(cat.name)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
                 if (res.ok) {
                     const data = await res.json();
                     return { catName: cat.name, data: Array.isArray(data) ? data : (data.data || []) };
@@ -270,7 +270,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
     
     setIsProcessing(true);
     try {
-      await Promise.all(ids.map(id => fetch(`${API_BASE_URL}/products/${id}`, { method: 'DELETE' })));
+      await Promise.all(ids.map(id => fetch(`${API_BASE_URL}/products/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' })));
       
       setProducts(prev => prev.filter(p => !ids.includes(p.id)));
       setSelectedProductIds(prev => prev.filter(id => !ids.includes(id)));
@@ -405,7 +405,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
         const url = productModal.editingId ? `${API_BASE_URL}/products/${productModal.editingId}` : `${API_BASE_URL}/products`;
         const res = await fetch(url, { 
           method: productModal.editingId ? 'PATCH' : 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
+          headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
           body: JSON.stringify(cleanPayload) 
         });
         if (!res.ok) throw new Error(`Product sync failed (${res.status})`);
@@ -417,7 +417,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
             const pricePromises = Object.entries(sanitizedPricesToSave).map(([catName, price]) => {
                 return fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
                     method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         company: selectedCompany, 
                         categoryName: catName, 
@@ -485,7 +485,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
       try {
           const res = await fetch(`${API_BASE_URL}/sales/category-prices/bulk`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
               body: JSON.stringify({ 
                 company: selectedCompany, 
                 categoryName: bulkPricingModal.tier, 
@@ -527,8 +527,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     try {
       await Promise.all([
-        fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: warehouseId, productId: prod.id, sku: prod.sku, quantity: deltaQty }) }),
-        fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: absQty, previousStock: currentHubStock, newStock: currentHubStock + deltaQty, reference: 'Direct Hub Adjustment', remarks: remarks, user: loginUsername, company: selectedCompany, warehouseId: warehouseId }) })
+        fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: warehouseId, productId: prod.id, sku: prod.sku, quantity: deltaQty }) }),
+        fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: absQty, previousStock: currentHubStock, newStock: currentHubStock + deltaQty, reference: 'Direct Hub Adjustment', remarks: remarks, user: loginUsername, company: selectedCompany, warehouseId: warehouseId }) })
       ]);
       showToast("Warehouse stock successfully adjusted.", "success");
       fetchAllData();
@@ -583,8 +583,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           currentMasterStock += q;
           if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
           
-          apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
-          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevMaster, newStock: currentMasterStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevMaster, newStock: currentMasterStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
         } else {
           const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(destId) && Number(h.productId) === Number(prod.id));
           const prevHubStock = dIdx > -1 ? nextHubStock[dIdx].quantity : 0;
@@ -593,13 +593,13 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
           if(dIdx > -1) nextHubStock[dIdx].quantity = newHubStock;
           else nextHubStock.push({ id: 'temp', warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: q });
 
-          apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: q }) }));
-          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevHubStock, newStock: newHubStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: destId }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: destId, productId: prod.id, sku: prod.sku, quantity: q }) }));
+          apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'RECEIVE', quantity: q, previousStock: prevHubStock, newStock: newHubStock, reference: placementPo.poNumber, remarks: `Supplier: ${placementPo.supplierName || 'Unknown'}`, user: loginUsername, company: selectedCompany, warehouseId: destId }) }));
         }
       }
 
       apiPromises.push(fetch(`${API_BASE_URL}/procurement/purchase-orders/${placementPo.id}/status`, { 
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Stocked', user: loginUsername }) 
+        method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Stocked', user: loginUsername })
       }));
 
       setProducts(nextProducts);
@@ -660,9 +660,9 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
 
     try {
        await Promise.all([
-          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.sourceId, productId: prod.id, sku: prod.sku, quantity: -qty }) }),
-          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.destId, productId: prod.id, sku: prod.sku, quantity: qty }) }),
-          fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'TRANSFER', quantity: qty, previousStock: currentSourceStock, newStock: currentSourceStock - qty, reference: 'Inter-Hub Transfer', remarks: `From WH-${hubTransferForm.sourceId.padStart(3,'0')} to WH-${hubTransferForm.destId.padStart(3,'0')}`, user: loginUsername, company: selectedCompany, warehouseId: hubTransferForm.destId }) })
+          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.sourceId, productId: prod.id, sku: prod.sku, quantity: -qty }) }),
+          fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: hubTransferForm.destId, productId: prod.id, sku: prod.sku, quantity: qty }) }),
+          fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'TRANSFER', quantity: qty, previousStock: currentSourceStock, newStock: currentSourceStock - qty, reference: 'Inter-Hub Transfer', remarks: `From WH-${hubTransferForm.sourceId.padStart(3,'0')} to WH-${hubTransferForm.destId.padStart(3,'0')}`, user: loginUsername, company: selectedCompany, warehouseId: hubTransferForm.destId }) })
        ]);
        showToast("Transfer successful.", "success");
        setHubTransferForm({ sourceId: '', destId: '', productId: '', quantity: '' });
@@ -727,7 +727,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   // UPDATE EXISTING PRODUCT
                   await fetch(`${API_BASE_URL}/products/${existingProd.id}`, {
                       method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
                       body: JSON.stringify({ name, purchasePrice: costPrice, currentStock: qty })
                   });
               } else {
@@ -740,7 +740,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                   };
                   await fetch(`${API_BASE_URL}/products`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
                       body: JSON.stringify(payload)
                   });
               }
@@ -1612,7 +1612,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
               try {
                 const url = editingWarehouseId ? `${API_BASE_URL}/warehouses/${editingWarehouseId}` : `${API_BASE_URL}/warehouses`;
                 const method = editingWarehouseId ? 'PATCH' : 'POST';
-                const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...warehouseForm, company: selectedCompany }) });
+                const response = await fetch(url, { method, headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...warehouseForm, company: selectedCompany }) });
                 if (response.ok) {
                   showToast(`Warehouse ${editingWarehouseId ? 'updated' : 'registered'}.`, "success");
                   setWarehouseForm({ name: '', address: '', status: 'Active' });
@@ -1765,8 +1765,8 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     currentMasterStock = adjQ;
                     if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
 
-                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
-                    apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: delta, previousStock: prod.currentStock, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: 'ADJUST', quantity: delta, previousStock: prod.currentStock, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: null }) }));
                     continue;
                   }
 
@@ -1790,7 +1790,7 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     if (sourceStock < q) throw new Error(`Not enough stock of ${prod.sku} in Source Location.`);
                     const sIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(source) && Number(h.productId) === Number(prod.id));
                     if(sIdx > -1) nextHubStock[sIdx].quantity -= q;
-                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: source, productId: prod.id, sku: prod.sku, quantity: -q }) }));
                   }
 
                   // 2. ADD TO DESTINATION
@@ -1800,17 +1800,17 @@ export default function MasterInventory({ selectedCompany, loginUsername, API_BA
                     const dIdx = nextHubStock.findIndex(h => String(h.warehouseId) === String(dest) && Number(h.productId) === Number(prod.id));
                     if(dIdx > -1) nextHubStock[dIdx].quantity += q;
                     else nextHubStock.push({ id: 'temp', warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q });
-                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany, warehouseId: dest, productId: prod.id, sku: prod.sku, quantity: q }) }));
                   }
 
                   // 3. LOG MOVEMENT
                   const logWarehouseId = (dest !== 'MASTER' && dest !== 'EXTERNAL') ? dest : ((source !== 'MASTER' && source !== 'EXTERNAL') ? source : null);
-                  apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
+                  apiPromises.push(fetch(`${API_BASE_URL}/inventory-movements`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ productId: prod.id, productName: prod.name, sku: prod.sku, type: txModal.type, quantity: q, previousStock: prevMasterForLog, newStock: currentMasterStock, reference: txForm.reference, remarks: txForm.remarks, user: loginUsername, company: selectedCompany, warehouseId: logWarehouseId, batchNumber: txForm.batchNumber, expirationDate: txForm.expirationDate }) }));
 
                   // 4. MASTER STOCK PATCH
                   if (currentMasterStock !== (Number(prod.currentStock) || 0)) {
                     if(pIdx > -1) nextProducts[pIdx].currentStock = currentMasterStock;
-                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
+                    apiPromises.push(fetch(`${API_BASE_URL}/products/${prod.id}`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ currentStock: currentMasterStock }) }));
                   }
                 }
 

@@ -375,8 +375,10 @@ export class EmployeesService {
   // ==========================================
   // EMPLOYEES
   // ==========================================
-  async getEmployees() {
-    return await prisma.employee.findMany();
+  async getEmployees(company?: string) {
+    return company
+      ? await prisma.employee.findMany({ where: { company } })
+      : await prisma.employee.findMany();
   }
 
   async createEmployee(data: any) {
@@ -627,8 +629,8 @@ export class EmployeesService {
   // ==========================================
   async auditHistoricalAttendance(company?: string) {
     const [allLogs, employees, recalculated] = await Promise.all([
-      prisma.attendance.findMany(),
-      prisma.employee.findMany(),
+      prisma.attendance.findMany(company ? { where: { employee: { company } } } : undefined),
+      prisma.employee.findMany(company ? { where: { company } } : undefined),
       this.getAttendances(company),
     ]);
     const sourceById = new Map(allLogs.map((log) => [log.id, log]));
@@ -709,11 +711,15 @@ export class EmployeesService {
   // PAYROLLS
   // ==========================================
   async getPayrolls(query?: PayrollFilterQuery) {
-    const allPayrolls = await prisma.payroll.findMany();
+    const allPayrolls = query?.company
+      ? await prisma.payroll.findMany({ where: { employee: { company: query.company } } })
+      : await prisma.payroll.findMany();
     if (!query || Object.keys(query).length === 0) {
       return allPayrolls;
     }
-    const employees = await prisma.employee.findMany();
+    const employees = query.company
+      ? await prisma.employee.findMany({ where: { company: query.company } })
+      : await prisma.employee.findMany();
     return filterAndAggregatePayrollRecords(allPayrolls, employees, query);
   }
 
@@ -997,8 +1003,12 @@ export class EmployeesService {
   // HISTORICAL PAYROLL TAX AUDIT & SAFE RECALCULATION
   // ==========================================
   async auditHistoricalPayrollTax(company?: string) {
-    const allPayrolls = await prisma.payroll.findMany();
-    const employees = await prisma.employee.findMany();
+    const allPayrolls = company
+      ? await prisma.payroll.findMany({ where: { employee: { company } } })
+      : await prisma.payroll.findMany();
+    const employees = company
+      ? await prisma.employee.findMany({ where: { company } })
+      : await prisma.employee.findMany();
     const empMap = new Map(employees.map(e => [e.id, e]));
 
     const discrepancies: any[] = [];

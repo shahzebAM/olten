@@ -10,6 +10,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  UseGuards,
 } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
@@ -18,7 +19,10 @@ import {
   validateLocation,
 } from '../fulfillment/fulfillment.stock';
 import { object } from '../importation/importation.validation';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard, LegacyReadModules } from '../auth/legacy-erp-auth.guard';
 @Controller() 
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('inventory')
 export class MasterInventoryController {
   private prisma = new PrismaClient();
 
@@ -88,12 +92,14 @@ export class MasterInventoryController {
   }
 
   @Get('products')
+  @LegacyReadModules('purchasing', 'sales', 'importation')
   async findAllProducts(@Query('company') company: string) {
     if (!company) return [];
     return this.prisma.product.findMany({ where: { company }, orderBy: { id: 'desc' } });
   }
 
   @Patch('products/:id')
+  @LegacyCompanyRecord('product')
   async updateProduct(@Param('id') id: string, @Body() data: any) {
     // Strip all non-schema or immutable parameters to prevent Prisma validation crashes
     const {
@@ -169,6 +175,7 @@ export class MasterInventoryController {
   }
 
   @Delete('products/:id')
+  @LegacyCompanyRecord('product')
   async removeProduct(@Param('id') id: string) {
     return this.prisma.$transaction(
       async (tx) => {
@@ -258,12 +265,14 @@ export class MasterInventoryController {
   }
 
   @Get('warehouses')
+  @LegacyReadModules('purchasing', 'sales', 'importation')
   async findAllWarehouses(@Query('company') company: string) {
     if (!company) return [];
     return this.prisma.warehouse.findMany({ where: { company }, orderBy: { id: 'asc' } });
   }
 
   @Patch('warehouses/:id')
+  @LegacyCompanyRecord('warehouse')
   async updateWarehouse(@Param('id') id: string, @Body() data: any) {
     return this.prisma.warehouse.update({
       where: { id: parseInt(id) },
@@ -272,6 +281,7 @@ export class MasterInventoryController {
   }
 
   @Delete('warehouses/:id')
+  @LegacyCompanyRecord('warehouse')
   async removeWarehouse(@Param('id') id: string) {
     const wId = parseInt(id);
     return await this.prisma.$transaction(

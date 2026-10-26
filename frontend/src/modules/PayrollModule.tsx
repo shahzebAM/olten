@@ -465,7 +465,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
 
   const fetchSettings = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/settings?company=${selectedCompany}`);
+      const response = await fetch(`${API_BASE_URL}/settings?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (response.ok) {
         const data = await response.json();
         const settingsObj = Array.isArray(data) ? data[0] : data;
@@ -486,7 +486,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
 
   const fetchEmployees = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setEmployees(Array.isArray(data) ? data : (data.data || []));
@@ -495,7 +495,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
 
   const fetchAttendances = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setAttendances(Array.isArray(data) ? data : (data.data || []));
@@ -504,7 +504,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
 
   const fetchPayrolls = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/payroll/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`${API_BASE_URL}/employees/payroll/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setPayrolls(Array.isArray(data) ? data : (data.data || []));
@@ -863,7 +863,7 @@ const toCents = (val: any): number => {
 
           const res = await fetch(`${API_BASE_URL}/employees/attendance`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }, 
+            headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany },
             body: JSON.stringify(payload) 
           });
           
@@ -955,7 +955,7 @@ const toCents = (val: any): number => {
     const method = editingId ? 'PATCH' : 'POST';
 
     try {
-      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       if (!response.ok) { 
         const errorData = await response.json().catch(() => ({}));
         showToast(errorData.message || "Failed to save. Employee ID or Govt ID already exists.", "error"); 
@@ -973,7 +973,7 @@ const toCents = (val: any): number => {
   const deleteEmployee = async (id: number) => {
     if (!window.confirm("Are you sure you want to permanently delete this employee?")) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/${id}`, { method: 'DELETE' });
+      const response = await fetch(`${API_BASE_URL}/employees/${id}`, { method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       await fetchEmployees();
       showToast("Employee deleted successfully.", "success");
@@ -1000,7 +1000,7 @@ const toCents = (val: any): number => {
     setIsSaving(true);
     try {
       const response = await fetch(`${API_BASE_URL}/settings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany },
         body: JSON.stringify({ company: selectedCompany, shiftStart: tempShiftStart, shiftEnd: tempShiftEnd })
       });
       if (!response.ok) throw new Error();
@@ -1046,7 +1046,7 @@ const toCents = (val: any): number => {
       setPreviewBusy(true); setPreviewError('');
       try {
         const payload = JSON.parse(payrollRequestKey);
-        const response = await fetch(API_BASE_URL + '/employees/payroll/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: payrollRequestKey, signal: controller.signal });
+        const response = await fetch(API_BASE_URL + '/employees/payroll/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: payrollRequestKey, signal: controller.signal });
         const result = await response.json();
         if (!response.ok) throw new Error(typeof result.message === 'string' ? result.message : 'Payroll preview could not be refreshed.');
         if (result.employee?.id !== payload.employeeId || result.employee?.company !== payload.company || result.attendanceSummary?.cutoffStart !== payload.cutoffStart || result.attendanceSummary?.cutoffEnd !== payload.cutoffEnd || !/^[a-f0-9]{64}$/.test(result.previewFingerprint) || !Number.isFinite(result.computed?.netPay)) throw new Error('The server returned an invalid payroll preview.');
@@ -1058,7 +1058,7 @@ const toCents = (val: any): number => {
       } finally { if (!controller.signal.aborted) setPreviewBusy(false); }
     }, 200);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [isPayrollModalOpen, payrollRequestKey, previewKey, API_BASE_URL]);
+  }, [isPayrollModalOpen, payrollRequestKey, previewKey, API_BASE_URL, selectedCompany]);
 
   const savedPreview = payrollPreview?.data;
   const summary = savedPreview?.attendanceSummary;
@@ -1098,7 +1098,7 @@ const toCents = (val: any): number => {
 
     let saveResponse: Response | undefined;
     try {
-      saveResponse = await fetch(`${API_BASE_URL}/employees/payroll`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() }, body: JSON.stringify(payload) });
+      saveResponse = await fetch(`${API_BASE_URL}/employees/payroll`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify(payload) });
       const saved = await saveResponse.json();
       if (!saveResponse.ok) throw new Error(typeof saved.message === 'string' ? saved.message : 'Payroll could not be saved.');
       if (saved.employeeId !== activeEmployee.id || !Number.isFinite(saved.id) || !Number.isFinite(saved.netPay)) throw new Error('The payroll save reply could not be confirmed.');
@@ -1106,11 +1106,11 @@ const toCents = (val: any): number => {
       const balancePatches = [];
       if (computed.cashAdvanceDed > 0) {
         const newBalance = Math.max(0, activeEmployee.cashAdvanceBalance - computed.cashAdvanceDed);
-        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cashAdvanceBalance: newBalance }) }));
+        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ cashAdvanceBalance: newBalance }) }));
       }
       if (computed.companyLoanDed > 0) {
         const newLoanBalance = Math.max(0, activeEmployee.loanBalance - computed.companyLoanDed);
-        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loanBalance: newLoanBalance }) }));
+        balancePatches.push(fetch(`${API_BASE_URL}/employees/${activeEmployee.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany }, body: JSON.stringify({ loanBalance: newLoanBalance }) }));
       }
 
       if (balancePatches.length > 0) {
@@ -1131,7 +1131,7 @@ const toCents = (val: any): number => {
 
   const deletePayroll = async (id: number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/employees/payroll/${id}`, { method: 'DELETE' });
+      const response = await fetch(`${API_BASE_URL}/employees/payroll/${id}`, { method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       await fetchPayrolls(); showToast("Saved payroll record successfully removed.", "success");
     } catch (error) { showToast("Failed to remove payroll record.", "error"); }

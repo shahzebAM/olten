@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 import { QRCodeSVG } from 'qrcode.react';
 
 // --- INTERFACES ---
@@ -45,7 +46,7 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!res.ok) throw new Error("Failed to fetch products");
       const data = await res.json();
       setProducts(data || []);
@@ -85,11 +86,12 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
     if (pendingCount > 0) {
       setIsLoading(true);
       try {
-        await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
+        const response = await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' },
           body: JSON.stringify({ company: selectedCompany })
         });
+        if (!response.ok) throw new Error('The server did not authorize or complete QR synchronization.');
         
         await fetchProducts(); 
         setActiveTab('ALL'); 
@@ -112,9 +114,10 @@ export default function ProductQRModule({ selectedCompany, loginUsername, API_BA
       
       setIsLoading(true);
       try {
-        await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany })
+        const response = await fetch(`${API_BASE_URL}/sales/order-slips/save-qrs`, {
+          method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: selectedCompany })
         });
+        if (!response.ok) throw new Error('The server did not authorize or complete QR synchronization.');
         await fetchProducts();
         showToast("Admin verified. Database QRs forcefully synced.", "success");
       } catch (e) {
