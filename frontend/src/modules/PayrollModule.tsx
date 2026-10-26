@@ -12,6 +12,7 @@ import { getCutoffDates, getInitialCutoff, moveCutoff } from '../lib/attendanceE
 import type { AttendanceEntryRecord as AttendanceRecord, CutoffSelection } from '../lib/attendanceEntry';
 import { getApiAuthHeaders } from '../lib/apiSession';
 import { getSavedPayslipBreakdown } from '../lib/savedPayslip';
+import './payroll-workspace.css';
 
 // ==========================================
 // 1. GLOBAL FORMATTERS & STYLES
@@ -1209,7 +1210,7 @@ const toCents = (val: any): number => {
 
   // --- UI RENDER ---
   return (
-    <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden print:h-auto print:block selection:bg-blue-100">
+    <div className="payroll-workspace flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden print:h-auto print:block selection:bg-blue-100">
       
       {/* FOOLPROOF SINGLE-PAGE PRINT CSS */}
       <style>{`
@@ -1239,7 +1240,7 @@ const toCents = (val: any): number => {
       {/* EDIT EMPLOYEE MODAL */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
+          <div className="payroll-edit-dialog bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 shrink-0">
               <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
               <button type="button" onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors">✕</button>
@@ -1261,7 +1262,7 @@ const toCents = (val: any): number => {
       {selectedPayslip && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print shrink-0">
+            <div className="payroll-preview-toolbar flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 z-10 sticky top-0 no-print shrink-0">
               <h2 className="font-bold text-slate-800">Generated Payslip</h2>
               <div className="flex gap-2">
                 <button onClick={() => window.print()} className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-sm font-bold text-sm hover:bg-blue-700 flex items-center gap-2 transition-colors">
@@ -1365,7 +1366,7 @@ const toCents = (val: any): number => {
       )}
       {isPayrollModalOpen && activeEmployee && computed && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-sm print-hidden">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
+          <div className="payroll-compute-dialog bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[98vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-3 sm:p-4 border-b border-slate-200 bg-emerald-50/50 shrink-0">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-emerald-950 leading-tight">Compute Payroll: {activeEmployee.firstName} {activeEmployee.lastName}</h2>
@@ -1430,7 +1431,7 @@ const toCents = (val: any): number => {
                 </div>
               </fieldset>
 
-              <div className={`bg-slate-50 p-4 rounded-xl border border-slate-200 flex-col h-full ${savedPreview?.configurationRequired ? 'hidden' : 'flex'}`}>
+              <div className={`payroll-calculation-card bg-slate-50 p-4 rounded-xl border border-slate-200 flex-col h-full ${savedPreview?.configurationRequired ? 'hidden' : 'flex'}`}>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mb-2.5 text-[11px] uppercase tracking-wider">Calculation Breakdown</h3>
                 <div className="space-y-1 text-xs flex-1">
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
@@ -1488,7 +1489,7 @@ const toCents = (val: any): number => {
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print-modal-release">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden relative print-modal-box">
             
-            <div className="flex justify-between items-center p-5 border-b border-slate-200 bg-amber-50 z-10 sticky top-0 no-print shrink-0">
+            <div className="payroll-preview-toolbar flex justify-between items-center p-5 border-b border-slate-200 bg-amber-50 z-10 sticky top-0 no-print shrink-0">
               <div>
                 <h2 className="font-bold text-amber-900 text-lg">Payroll Summary Report</h2>
                 <p className="text-xs font-medium text-amber-700 mt-0.5">
@@ -1571,15 +1572,15 @@ const toCents = (val: any): number => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 md:hidden print-hidden" onClick={() => setIsMobileMenuOpen(false)}></div>
       )}
       
-      <aside className={`fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
+      <aside className={`payroll-sidebar fixed inset-y-0 left-0 z-50 transform bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print-hidden border-r border-slate-800 shadow-2xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="payroll-brand h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
           <h1 className="text-xl font-black text-white tracking-wider uppercase">{selectedCompany}<span className="text-blue-500">Admin</span></h1>
           <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
+        <div className="payroll-navigation flex-1 overflow-y-auto py-6 px-3 space-y-1">
           <div className="px-3 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Main Menu</div>
           <button onClick={() => { changeTab('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Dashboard Overview</button>
           
@@ -1596,10 +1597,10 @@ const toCents = (val: any): number => {
       </aside>
 
       {/* MAIN WORKSPACE CANVAS */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden print:h-auto print:block">
+      <div className="payroll-canvas flex-1 flex flex-col min-w-0 h-screen overflow-hidden print:h-auto print:block">
         
         {/* TOP HEADER */}
-        <header className="h-auto sm:h-20 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-8 py-3 sm:py-0 shadow-sm relative z-10 print-hidden shrink-0 gap-3 sm:gap-0">
+        <header className="payroll-header h-auto sm:h-20 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-8 py-3 sm:py-0 shadow-sm relative z-10 print-hidden shrink-0 gap-3 sm:gap-0">
           <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
             <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 sm:p-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors border border-slate-200 shrink-0">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -1624,7 +1625,7 @@ const toCents = (val: any): number => {
         </header>
 
         {/* SCROLLABLE MAIN CONTENT */}
-        <main className={`flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible ${selectedPayslip ? 'print-hidden' : ''}`}>
+        <main className={`payroll-main flex-1 overflow-y-auto p-4 sm:p-8 relative print:p-0 print:overflow-visible ${selectedPayslip ? 'print-hidden' : ''}`}>
           <div className="max-w-[1400px] mx-auto space-y-6 sm:space-y-8">
 
             {/* DASHBOARD TAB */}
@@ -1643,17 +1644,17 @@ const toCents = (val: any): number => {
 
                   return (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                      <div className="payroll-metric bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
                         <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Employees</p>
                         <h3 className="text-4xl font-black text-blue-950 mt-1">{companyEmployees.length}</h3>
                         <p className="text-sm text-slate-500 font-medium mt-4"><span className="text-emerald-500 font-bold">Active</span> in personnel directory</p>
                       </div>
-                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                      <div className="payroll-metric bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
                         <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Net Processed</p>
                         <h3 className="text-4xl font-black text-emerald-900 mt-1">₱{formatMoney(companyPayrolls.reduce((sum, p) => sum + p.netPay, 0))}</h3>
                         <p className="text-sm text-slate-500 font-medium mt-4">Across <span className="font-bold text-emerald-600">{companyPayrolls.length}</span> historical records</p>
                       </div>
-                      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
+                      <div className="payroll-metric bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-center">
                         <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Shift Logs</p>
                         <h3 className="text-4xl font-black text-indigo-950 mt-1">{companyAttendances.length}</h3>
                         <p className="text-sm text-slate-500 font-medium mt-4">Stored attendance records</p>
@@ -1672,7 +1673,7 @@ const toCents = (val: any): number => {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300 flex flex-col relative overflow-hidden">
+                  <div className="payroll-configuration bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm text-slate-300 flex flex-col relative overflow-hidden">
                     <h3 className="text-lg font-bold text-white mb-4 relative z-10">System Configuration</h3>
                     <div className="space-y-4 flex-1 relative z-10">
                       <div>

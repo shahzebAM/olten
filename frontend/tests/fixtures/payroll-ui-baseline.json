@@ -1,0 +1,8 @@
+{
+  "baselineCommit": "8033924cca89a39ac99e7331cad6d4917924fd4f",
+  "nonClassCodeSHA256": "0a92c04117263139ef943be4f7277b7cbfcfdd72cfb1629d79b6ef76bcfb02bf",
+  "printTemplatesSHA256": {
+    "payslip-print-area": "35be2efac034c722e90a1c7af29d5b195c58f82f30cec6247dcd39cac7181167",
+    "report-print-area": "df036fb72dbe68cdaa579a1886b558a687789ea339593686592e6188476742a3"
+  }
+}
