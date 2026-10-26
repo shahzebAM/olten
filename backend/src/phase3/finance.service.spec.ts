@@ -47,7 +47,10 @@ const document = (overrides: Record<string, unknown> = {}) => ({
   taxAmount: d('12'),
   dueDate: new Date('2026-10-11'),
   issueDate: new Date('2026-10-01'),
-  data: { items: [{ productId: 1, quantity: 2, unitCost: '25.000000' }] },
+  data:
+    overrides.kind === 'BILL'
+      ? { items: [{ accountCode: '5000', subtotal: '100.00' }] }
+      : { items: [{ productId: 1, quantity: 2, unitCost: '25.000000' }] },
   memos: [],
   allocations: [],
   ...overrides,
@@ -77,6 +80,8 @@ describe('Phase 3 Finance service business safeguards', () => {
       update: jest.fn(),
     },
     company: { findUnique: jest.fn() },
+    accountingMapping: { findMany: jest.fn() },
+    accountingJournal: { findUnique: jest.fn() },
     financePayment: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -104,6 +109,61 @@ describe('Phase 3 Finance service business safeguards', () => {
     );
     db.$queryRaw.mockResolvedValue([]);
     db.company.findUnique.mockResolvedValue({ id: 'company-1', name: 'Test' });
+    db.accountingMapping.findMany.mockResolvedValue([]);
+    db.accountingJournal.findUnique.mockImplementation(async () => {
+      const latest = db.financeDocument.findFirst.mock.results.at(-1);
+      const original = (await latest?.value) as
+        ReturnType<typeof document> | undefined;
+      const source = original ?? document();
+      const lines: {
+        code: string;
+        debit: Prisma.Decimal;
+        credit: Prisma.Decimal;
+      }[] = [];
+      const add = (code: string, value: Prisma.Decimal, debit: boolean) => {
+        if (!value.isZero())
+          lines.push({
+            code,
+            debit: debit ? value : d(0),
+            credit: debit ? d(0) : value,
+          });
+      };
+      if (source.direction === 'AR') {
+        add('1300', source.total, true);
+        add('4000', source.subtotal, false);
+        add('2200', source.taxAmount, false);
+      } else {
+        add('2100', source.total, false);
+        add('1400', source.taxAmount, true);
+      }
+      const items = source.data.items as {
+        accountCode?: string;
+        subtotal?: string;
+        unitCost?: string;
+        quantity?: number;
+      }[];
+      if (source.kind === 'BILL')
+        for (const item of items)
+          add(item.accountCode!, d(item.subtotal!), true);
+      else {
+        const cost = items.reduce(
+          (sum, item) =>
+            sum.add(d(item.unitCost!).mul(item.quantity!).toDecimalPlaces(2)),
+          d(0),
+        );
+        add('5100', cost, true);
+        add('1200', cost, false);
+      }
+      return {
+        sourceId: source.id,
+        sourceType: source.kind,
+        status: 'POSTED',
+        entries: lines.map((line) => ({
+          ...line,
+          account: { code: line.code, company: source.company },
+        })),
+      };
+    });
     db.customer.findFirst.mockResolvedValue({ id: 'customer-1' });
     db.customer.findMany.mockResolvedValue([
       { id: 'customer-1', name: 'Test hospital' },
@@ -388,6 +448,7 @@ describe('Phase 3 Finance service business safeguards', () => {
   it('does not allow a credit memo beyond the original document plus debit memos', async () => {
     await expect(
       service.createMemo('Test', actor(), {
+        submissionKey: 'memo-single',
         documentId: 'invoice-1',
         kind: 'CREDIT_MEMO',
         amount: '112.01',
@@ -395,6 +456,86 @@ describe('Phase 3 Finance service business safeguards', () => {
       }),
     ).rejects.toThrow('cannot exceed');
     expect(db.financeDocument.create).not.toHaveBeenCalled();
+  });
+  const memoInput = (overrides: Record<string, unknown> = {}) => ({
+    documentId: 'invoice-1',
+    kind: 'CREDIT_MEMO',
+    amount: '11.20',
+    reason: 'Adjustment',
+    submissionKey: 'memo-test',
+    ...overrides,
+  });
+  it('returns an exact memo replay without another number, document, journal or audit', async () => {
+    const first = await service.createMemo('Test', actor(), memoInput());
+    db.financeDocument.findUnique.mockResolvedValue(first);
+    expect(
+      await service.createMemo(
+        'Test',
+        actor(),
+        memoInput({ amount: '11.2', reason: ' Adjustment ' }),
+      ),
+    ).toBe(first);
+    expect(db.financeDocument.findUnique).toHaveBeenLastCalledWith({
+      where: {
+        company_sourceKey: { company: 'Test', sourceKey: 'MEMO:memo-test' },
+      },
+    });
+    for (const call of [
+      db.financeDocument.create,
+      nextNumber,
+      postJournal,
+      audit,
+    ])
+      expect(call).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { documentId: 'other' },
+    { kind: 'DEBIT_MEMO' },
+    { amount: '11.21' },
+    { reason: 'Different reason' },
+  ])(
+    'rejects changed memo details under an existing submission key: %j',
+    async (change) => {
+      const first = await service.createMemo('Test', actor(), memoInput());
+      db.financeDocument.findUnique.mockResolvedValue(first);
+      await expect(
+        service.createMemo('Test', actor(), memoInput(change)),
+      ).rejects.toThrow('different memo details');
+      expect(db.financeDocument.create).toHaveBeenCalledTimes(1);
+      expect(postJournal).toHaveBeenCalledTimes(1);
+    },
+  );
+  it('permits intentional separate memos with different keys', async () => {
+    await service.createMemo('Test', actor(), memoInput());
+    await service.createMemo(
+      'Test',
+      actor(),
+      memoInput({ submissionKey: 'second-intent' }),
+    );
+    expect(db.financeDocument.create).toHaveBeenCalledTimes(2);
+    expect(db.financeDocument.create).toHaveBeenLastCalledWith(
+      containing({ data: containing({ sourceKey: 'MEMO:second-intent' }) }),
+    );
+  });
+  it('resolves a committed exact memo after a concurrent transaction conflict', async () => {
+    const first = await service.createMemo('Test', actor(), memoInput());
+    db.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('serialization', {
+        code: 'P2034',
+        clientVersion: 'test',
+      }),
+    );
+    db.financeDocument.findUnique.mockResolvedValue(first);
+    expect(await service.createMemo('Test', actor(), memoInput())).toBe(first);
+    expect(db.financeDocument.create).toHaveBeenCalledTimes(1);
+  });
+  it('rejects missing or blank memo submission keys before any write', async () => {
+    for (const submissionKey of [undefined, '', ' ']) {
+      await expect(
+        service.createMemo('Test', actor(), memoInput({ submissionKey })),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
   it('conserves VAT when a document is fully credited through one-cent memos', async () => {
     const original = document({
@@ -416,6 +557,7 @@ describe('Phase 3 Finance service business safeguards', () => {
     );
     for (let index = 0; index < 11; index++) {
       const memo = await service.createMemo('Test', actor(), {
+        submissionKey: 'memo-' + index,
         documentId: 'invoice-1',
         kind: 'CREDIT_MEMO',
         amount: '0.01',
@@ -458,6 +600,7 @@ describe('Phase 3 Finance service business safeguards', () => {
     );
     for (let index = 0; index < 9; index++) {
       const memo = await service.createMemo('Test', actor(), {
+        submissionKey: 'memo-' + index,
         documentId: 'invoice-1',
         kind: 'CREDIT_MEMO',
         amount: '0.01',

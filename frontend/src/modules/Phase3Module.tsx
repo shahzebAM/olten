@@ -91,6 +91,7 @@ export default function Phase3Module({
           <BooksWorkspace
             api={API_BASE_URL}
             company={selectedCompany}
+            canReconcileInventory={hasPhase3Access(currentUser, selectedCompany, 'finance')}
             canManageAccounts={canManageLedgerAccounts(
               currentUser,
               selectedCompany,
@@ -114,7 +115,7 @@ export default function Phase3Module({
             )}
           />
         ) : view === 'executive' ? (
-          <ExecutiveWorkspace api={API_BASE_URL} company={selectedCompany} />
+          <ExecutiveWorkspace api={API_BASE_URL} company={selectedCompany} canReadBooks={hasPhase3Access(currentUser, selectedCompany, 'books')} />
         ) : (
           <AiWorkspace
             api={API_BASE_URL}

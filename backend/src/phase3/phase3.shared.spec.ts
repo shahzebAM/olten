@@ -3,7 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type LedgerAccount } from '@prisma/client';
 import {
   Actor,
   assertApproval,
@@ -49,7 +49,10 @@ const journal = {
 };
 
 function mockTransaction() {
-  const accounts = DEFAULT_ACCOUNTS.map(([code, name, type]) => ({
+  const accounts: Pick<
+    LedgerAccount,
+    'id' | 'company' | 'code' | 'name' | 'type' | 'active'
+  >[] = DEFAULT_ACCOUNTS.map(([code, name, type]) => ({
     id: `account-${code}`,
     company: 'Surgicom',
     code,

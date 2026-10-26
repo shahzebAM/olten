@@ -1,4 +1,5 @@
 import { useState } from "react";
+import FinancialReports from "./FinancialReports";
 import * as XLSX from "xlsx";
 import type { ErpUser } from "../../lib/phase3Access";
 import { hasPhase3Access } from "../../lib/phase3Access";
@@ -171,15 +172,18 @@ function DemandChart({ rows }: { rows: JsonRow[] }) {
 export function ExecutiveWorkspace({
   api,
   company,
+  canReadBooks = false,
 }: {
   api: string;
   company: string;
+  canReadBooks?: boolean;
 }) {
   const state = usePhase3Data<Executive>(api, company, "/executive");
   const [reportId, setReportId] = useState("");
   const data = state.data;
   return (
     <div className="space-y-5">
+      {canReadBooks && <FinancialReports api={api} company={company} overviewOnly />}
       <div className="phase3-dashboard-heading">
         <div>
           <h2>Business at a glance</h2>

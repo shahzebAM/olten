@@ -8,6 +8,15 @@ import {
 } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import * as v from '../importation/importation.validation';
+import { financialReport, type ReportQuery } from './books.reports';
+import { reportPeriod } from './books.reports';
+import {
+  cashAccounts,
+  designateCashAccount,
+  classifyCashEntry,
+} from './cash-flow';
+import { POSTING_ROLES, postingAccounts } from './posting-accounts';
+import { inventoryReconciliation } from './inventory-reconciliation';
 import {
   Actor,
   assertApproval,
@@ -66,6 +75,102 @@ export class BooksService implements OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.prisma.$disconnect();
+  }
+
+  report(company: string, kind: string, query: ReportQuery) {
+    return financialReport(this.prisma, company, kind, query);
+  }
+
+  inventoryReconciliation(company: string, actor: Actor) {
+    if (!hasAccess(actor, 'books') || !hasAccess(actor, 'finance'))
+      throw new ForbiddenException(
+        'Books and Finance read access are required for inventory reconciliation.',
+      );
+    return this.prisma.$transaction(
+      (tx) => inventoryReconciliation(tx, company),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+  }
+
+  async cashFlowEntries(company: string, query: ReportQuery) {
+    const period = reportPeriod(query);
+    const page = Number(query.page ?? 1),
+      limit = Number(query.limit ?? 50);
+    if (
+      !Number.isSafeInteger(page) ||
+      page < 1 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 200 ||
+      !Number.isSafeInteger((page - 1) * limit)
+    )
+      throw new BadRequestException('Invalid cash entry pagination.');
+    return this.prisma.$transaction(
+      async (tx) => {
+        const accounts = await cashAccounts(tx, company);
+        const ids = accounts
+          .filter((account) => account.cash)
+          .map((account) => account.id);
+        const where = {
+          accountId: { in: ids },
+          journal: {
+            company,
+            status: 'POSTED',
+            date: { gte: period.from, lt: period.end },
+          },
+        };
+        const [entries, count] = await Promise.all([
+          tx.ledgerEntry.findMany({
+            where,
+            include: {
+              journal: true,
+              cashClassifications: {
+                where: { company },
+                orderBy: { version: 'desc' },
+                take: 1,
+              },
+            },
+            orderBy: [
+              { journal: { date: 'asc' } },
+              { journalId: 'asc' },
+              { id: 'asc' },
+            ],
+            skip: (page - 1) * limit,
+            take: limit,
+          }),
+          tx.ledgerEntry.count({ where }),
+        ]);
+        return {
+          accounts,
+          entries: entries.map((entry) => ({
+            id: entry.id,
+            accountId: entry.accountId,
+            journal: entry.journal.number,
+            date: entry.journal.date.toISOString(),
+            amount: entry.debit.minus(entry.credit).toFixed(2),
+            classification: entry.cashClassifications[0] ?? null,
+          })),
+          pagination: {
+            page,
+            count,
+            pages: Math.max(1, Math.ceil(count / limit)),
+          },
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+  }
+
+  setCashAccount(company: string, actor: Actor, body: unknown) {
+    return this.transaction(company, actor, (tx) =>
+      designateCashAccount(tx, company, actor, body),
+    );
+  }
+
+  classifyCash(company: string, actor: Actor, body: unknown) {
+    return this.transaction(company, actor, (tx) =>
+      classifyCashEntry(tx, company, actor, body),
+    );
   }
 
   private async transaction<T>(
@@ -219,6 +324,11 @@ export class BooksService implements OnModuleDestroy {
                 code: account.code,
                 name: account.name,
               })),
+            POSTING_ROLE: POSTING_ROLES.map(([id, code, type]) => ({
+              id,
+              code,
+              name: `${id} · ${type} · default ${code}`,
+            })),
           },
           trialBalance: accounts.map((account) => {
             const totals = sums.get(account.id);
@@ -453,36 +563,43 @@ export class BooksService implements OnModuleDestroy {
     const input = v.object(body);
     const kind = v.choice(
       input.kind,
-      ['ITEM', 'CUSTOMER', 'SUPPLIER', 'ACCOUNT'],
+      ['ITEM', 'CUSTOMER', 'SUPPLIER', 'ACCOUNT', 'POSTING_ROLE'],
       'mapping kind',
     );
     const sourceId = v.text(input.sourceId, 'Source ID', true, 200)!;
     const accountId = v.text(input.accountId, 'Account ID', true, 100)!;
     return this.transaction(company, actor, async (tx) => {
-      await this.account(tx, company, accountId);
+      const account = await this.account(tx, company, accountId);
+      const role = POSTING_ROLES.find(([name]) => name === sourceId);
+      if (kind === 'POSTING_ROLE' && (!role || account.type !== role[2]))
+        throw new BadRequestException(
+          'Select a valid posting role and an account with its required type.',
+        );
       const source =
-        kind === 'ITEM'
-          ? /^[1-9]\d*$/.test(sourceId) &&
-            Number.isSafeInteger(Number(sourceId))
-            ? await tx.product.findFirst({
-                where: { id: Number(sourceId), company },
-                select: { id: true },
-              })
-            : null
-          : kind === 'CUSTOMER'
-            ? await tx.customer.findFirst({
-                where: { id: sourceId, company },
-                select: { id: true },
-              })
-            : kind === 'SUPPLIER'
-              ? await tx.supplier.findFirst({
+        kind === 'POSTING_ROLE'
+          ? { id: sourceId }
+          : kind === 'ITEM'
+            ? /^[1-9]\d*$/.test(sourceId) &&
+              Number.isSafeInteger(Number(sourceId))
+              ? await tx.product.findFirst({
+                  where: { id: Number(sourceId), company },
+                  select: { id: true },
+                })
+              : null
+            : kind === 'CUSTOMER'
+              ? await tx.customer.findFirst({
                   where: { id: sourceId, company },
                   select: { id: true },
                 })
-              : await tx.ledgerAccount.findFirst({
-                  where: { id: sourceId, company, active: true },
-                  select: { id: true },
-                });
+              : kind === 'SUPPLIER'
+                ? await tx.supplier.findFirst({
+                    where: { id: sourceId, company },
+                    select: { id: true },
+                  })
+                : await tx.ledgerAccount.findFirst({
+                    where: { id: sourceId, company, active: true },
+                    select: { id: true },
+                  });
       if (!source)
         throw new NotFoundException(
           'Mapping source not found in this workspace.',
@@ -495,6 +612,20 @@ export class BooksService implements OnModuleDestroy {
         create: { company, kind, sourceId, accountId },
         update: { accountId },
       });
+      if (kind === 'POSTING_ROLE') {
+        await postingAccounts(tx, company);
+        if (sourceId === 'BANK_CASH') {
+          const setting = (await cashAccounts(tx, company)).find(
+            (row) => row.id === accountId,
+          )!;
+          if (!setting.cash)
+            await designateCashAccount(tx, company, actor, {
+              accountId,
+              active: true,
+              expectedVersion: setting.version,
+            });
+        }
+      }
       await audit(
         tx,
         company,

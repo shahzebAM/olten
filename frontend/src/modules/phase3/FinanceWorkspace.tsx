@@ -755,6 +755,7 @@ export default function FinanceWorkspace({
       ? "documents"
       : requestedTab;
   const [direction, setDirection] = useState("AR");
+  const memoSubmission = useRef<{ signature: string; key: string } | null>(null);
   const state = usePhase3Data<Overview>(api, company, "/finance/overview");
   const balances = usePhase3Data<Balances>(
     api,
@@ -951,16 +952,24 @@ export default function FinanceWorkspace({
                   title="Authorize credit or debit memo"
                   disabled={state.busy}
                   onSubmit={async (form) => {
-                    await run(
+                    const details = {
+                      documentId: formValue(form, "documentId"),
+                      kind: formValue(form, "kind"),
+                      amount: formValue(form, "amount"),
+                      reason: formValue(form, "reason").trim(),
+                    };
+                    const signature = JSON.stringify(details);
+                    if (memoSubmission.current?.signature !== signature)
+                      memoSubmission.current = { signature, key: crypto.randomUUID() };
+                    const ok = await run(
                       "/memos",
                       {
-                        documentId: formValue(form, "documentId"),
-                        kind: formValue(form, "kind"),
-                        amount: formValue(form, "amount"),
-                        reason: formValue(form, "reason"),
+                        ...details,
+                        submissionKey: memoSubmission.current.key,
                       },
                       "Authorized memo posted and balances adjusted.",
                     );
+                    if (ok) memoSubmission.current = null;
                   }}
                 >
                   <div className={grid}>

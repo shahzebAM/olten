@@ -54,7 +54,11 @@ test('approved transport and UI work preserves payroll calculators, attendance U
   assert.equal(baseline.length, 7);
   for (const entry of baseline) {
     const content = readFileSync(new URL(`../../${entry.File.replaceAll('\\', '/')}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
-    assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
+    if (entry.ApprovedAllocationModels) {
+      assert.deepEqual(entry.ApprovedAllocationModels, ['FinanceDocument', 'FinancePayment', 'FinanceAllocation', 'LedgerAccount', 'LedgerEntry', 'CashAccountSetting', 'CashFlowClassification']);
+      const protectedSchema = entry.ApprovedAllocationModels.reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/\n{3,}/g, '\n\n');
+      assert.equal(createHash('sha256').update(protectedSchema).digest('hex').toUpperCase(), entry.ProtectedSchemaSHA256, 'All schema models outside the approved financial metadata changes remain unchanged');
+    } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });
 

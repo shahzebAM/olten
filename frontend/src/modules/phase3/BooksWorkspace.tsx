@@ -16,6 +16,9 @@ import {
   usePhase3Data,
 } from "./api";
 import type { JsonRow } from "./api";
+import FinancialReports from "./FinancialReports";
+import CashFlowWorkspace from "./CashFlowWorkspace";
+import InventoryReconciliation from "./InventoryReconciliation";
 
 type Account = {
   id: string;
@@ -270,11 +273,13 @@ export default function BooksWorkspace({
   company,
   canWrite,
   canManageAccounts,
+  canReconcileInventory = false,
 }: {
   api: string;
   company: string;
   canWrite: boolean;
   canManageAccounts: boolean;
+  canReconcileInventory?: boolean;
 }) {
   const state = usePhase3Data<Books>(api, company, "/books");
   const [tab, setTab] = useState("ledger");
@@ -322,9 +327,12 @@ export default function BooksWorkspace({
       >
         {[
           ["ledger", "Accounts & journals"],
-          ["mapping", "Reference mappings"],
+          ["mapping", "Account mappings"],
           ["reconciliation", "Bank reconciliation"],
           ["audit", "Audit log"],
+          ["reports", "Financial statements"],
+          ["cash-flow", "Cash flow classification"],
+          ...(canReconcileInventory ? [["inventory-reconciliation", "Inventory reconciliation"]] : []),
         ].map(([id, title]) => (
           <button
             className={tab === id ? primary : secondary}
@@ -344,6 +352,9 @@ export default function BooksWorkspace({
         </button>
       </div>
       <Notice {...state} />
+      {tab === "reports" && <FinancialReports api={api} company={company} />}
+      {tab === "cash-flow" && <CashFlowWorkspace api={api} company={company} canWrite={canWrite} />}
+      {tab === "inventory-reconciliation" && canReconcileInventory && <InventoryReconciliation api={api} company={company} />}
       {data && tab === "ledger" && (
         <>
           <Panel
@@ -647,12 +658,11 @@ export default function BooksWorkspace({
         </>
       )}
       {data && tab === "mapping" && (
-        <Panel title="Item, customer, supplier & account reference mappings">
+        <Panel title="Posting roles and reference mappings">
           <p className="mb-4 text-sm text-slate-500">
-            Reference mappings record the ledger account associated with an ERP
-            item, customer, supplier or account. They do not override the system
-            accounts used for automatic finance postings. Use manual journals
-            when posting to custom accounts.
+            POSTING_ROLE controls the accounts used by new automatic Finance postings.
+            Payments and memos retain their original source accounts. ITEM, CUSTOMER,
+            SUPPLIER and ACCOUNT links remain references; manual journals use the accounts you select.
           </p>
           {canWrite && (
             <Form
@@ -678,7 +688,7 @@ export default function BooksWorkspace({
                     onChange={(event) => setMappingKind(event.target.value)}
                     className={input}
                   >
-                    {["ITEM", "CUSTOMER", "SUPPLIER", "ACCOUNT"].map((kind) => (
+                    {["ITEM", "CUSTOMER", "SUPPLIER", "ACCOUNT", "POSTING_ROLE"].map((kind) => (
                       <option key={kind}>{kind}</option>
                     ))}
                   </select>

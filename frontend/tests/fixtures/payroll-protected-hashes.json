@@ -17,7 +17,17 @@
   },
   {
     "File": "backend/prisma\\schema.prisma",
-    "SHA256": "65734E15F6D8C35E955052A5DED60BFF429B1E81BF365ECC149E301711037055"
+    "SHA256": "65734E15F6D8C35E955052A5DED60BFF429B1E81BF365ECC149E301711037055",
+    "ApprovedAllocationModels": [
+      "FinanceDocument",
+      "FinancePayment",
+      "FinanceAllocation",
+      "LedgerAccount",
+      "LedgerEntry",
+      "CashAccountSetting",
+      "CashFlowClassification"
+    ],
+    "ProtectedSchemaSHA256": "45A87D1662A2D0B6D849BFAA9AB72CACCB65CE580ACC5318B33B0D12C7B5395F"
   },
   {
     "File": "backend/src/employees\\payroll-profile.ts",

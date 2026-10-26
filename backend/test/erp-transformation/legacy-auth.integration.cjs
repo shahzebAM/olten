@@ -72,6 +72,27 @@ async function check(name, path, expected, token, company, method = 'GET', body)
   assert.equal((await db.customer.findUnique({ where: { id: foreignCustomer.id } })).balance, 0);
   assert.equal(await db.payroll.count({ where: { employeeId: foreignEmployee.id } }), 0);
   results.push({ name: 'Foreign records retain original amounts and no payroll was created', status: 'passed' });
+  const books = await actor('books', { books: true, finance: true, erpRoles: ['Finance'], approvalLimits: { [company]: '10000.00' } });
+  const booksOnly = await actor('books_only', { books: true, erpRoles: ['Finance'] });
+  const auditor = await actor('auditor', { books: true, finance: true, erpRoles: ['Auditor'] });
+  const dates = 'from=2026-10-01&to=2026-10-31';
+  for (const kind of ['profit-loss','balance-sheet','trial-balance','financial-overview','cash-flow']) {
+    await check(`Unauthenticated ${kind} rejected`, `/phase3/books/reports/${kind}?${dates}`, 401);
+    await check(`Authorized ${kind} returns scoped ledger`, `/phase3/books/reports/${kind}?${dates}`, 200, books, company);
+  }
+  await check('Purchasing cannot read Books financial statements', `/phase3/books/reports/profit-loss?${dates}`, 403, purchasing, company);
+  await check('Auditor can read statements', `/phase3/books/reports/profit-loss?${dates}`, 200, auditor, company);
+  await check('Auditor cannot classify cash movements', '/phase3/books/cash-flow/classifications', 403, auditor, company, 'POST', {});
+  await check('Cash classification cannot locate a foreign entry', '/phase3/books/cash-flow/classifications', 404, books, company, 'POST', { ledgerEntryId: 'foreign-entry', expectedVersion: 0, reason: 'Must reject' });
+  await check('Books plus Finance can read inventory reconciliation', '/phase3/books/inventory-reconciliation', 200, books, company);
+  await check('Books alone cannot read inventory cost reconciliation', '/phase3/books/inventory-reconciliation', 403, booksOnly, company);
+  const invoice = await db.financeDocument.create({ data: { company, number: `INV-HTTP-${run}`, kind: 'INVOICE', direction: 'AR', partyId: ownCustomer.id, status: 'DRAFT', exchangeRate: '1', issueDate: new Date('2026-10-01'), dueDate: new Date('2026-10-31'), subtotal: '1', taxAmount: '.12', total: '1.12', data: { items: [{ productId: ownProduct.id, quantity: 1, unitCost: '0' }] }, createdBy: 'synthetic-http-fixture' } });
+  await check('Finance can post an owned fixture invoice through the API', `/phase3/documents/${invoice.id}/post`, 201, books, company, 'POST', {});
+  const memoBody = { documentId: invoice.id, kind: 'CREDIT_MEMO', amount: '0.11', reason: 'Synthetic API retry check', submissionKey: `api-memo-${run}` };
+  const memo = await check('Memo submission succeeds with a key', '/phase3/memos', 201, books, company, 'POST', memoBody);
+  const retry = await check('Memo retry returns the saved document', '/phase3/memos', 201, books, company, 'POST', memoBody);
+  assert.equal(retry.id, memo.id);
+  await check('Changed memo payload with same key conflicts', '/phase3/memos', 409, books, company, 'POST', { ...memoBody, amount: '0.12' });
   const report = { checkedAt: new Date().toISOString(), database: name, productionWrites: false, company, passed: results.length, results };
   fs.writeFileSync('.tmp/erp-transformation/legacy-auth-integration-report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ passed: results.length, productionWrites: false }));

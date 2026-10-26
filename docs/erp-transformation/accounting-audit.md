@@ -1,5 +1,7 @@
 # Accounting implementation audit
 
+**Follow-up — October 26, 2026:** The approved fixes/reporting work following this audit are documented in [completion verification](completion-verification.md). The original findings and failing baseline evidence below are preserved; their initial status is not the current implementation status.
+
 Audit date: October 25, 2026 (Asia/Manila). Baseline: `8eb736acd32922c1d93e4d398da3266eefc9e443`. Development branch: `codex/erp-ui-accounting-audit`.
 
 This is an implementation audit and isolated test exercise, not an independent accountant's certification or a claim of complete accounting accuracy. The findings below retain the October 25 baseline evidence. On October 26, the user specifically approved A-RND; the approved calculation correction and a technical conflict-response correction are recorded below. No schema, production data or payroll calculation changed.

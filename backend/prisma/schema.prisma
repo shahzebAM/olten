@@ -1064,6 +1064,7 @@ model FinanceDocument {
   memos FinanceDocument[] @relation("DocumentMemos")
   allocations FinanceAllocation[]
   @@unique([company, sourceKey])
+  @@unique([id, company, direction, partyId])
   @@index([company, direction, status, dueDate])
   @@index([company, partyId])
   @@index([deliveryId])
@@ -1087,6 +1088,7 @@ model FinancePayment {
   allocations FinanceAllocation[]
   paymentRequests PaymentRequest[]
   @@unique([company, idempotencyKey])
+  @@unique([id, company, direction, partyId])
   @@index([company, direction, partyId])
   @@index([company, paidAt])
 }
@@ -1095,9 +1097,12 @@ model FinanceAllocation {
   id String @id @default(uuid())
   paymentId String
   documentId String
+  company String
+  direction String
+  partyId String
   amount Decimal @db.Decimal(18, 2)
-  payment FinancePayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  document FinanceDocument @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  payment FinancePayment @relation(fields: [paymentId, company, direction, partyId], references: [id, company, direction, partyId], onDelete: Restrict, onUpdate: Restrict)
+  document FinanceDocument @relation(fields: [documentId, company, direction, partyId], references: [id, company, direction, partyId], onDelete: Restrict, onUpdate: Restrict)
   @@unique([paymentId, documentId])
   @@index([documentId])
 }
@@ -1136,7 +1141,10 @@ model LedgerAccount {
   entries LedgerEntry[]
   mappings AccountingMapping[]
   reconciliations BankReconciliation[]
+  cashSettings CashAccountSetting[]
+  cashClassifications CashFlowClassification[]
   @@unique([company, code])
+  @@unique([id, company])
 }
 
 model AccountingJournal {
@@ -1165,8 +1173,42 @@ model LedgerEntry {
   journal AccountingJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
   account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   statementLine BankStatementLine?
+  cashClassifications CashFlowClassification[]
+  @@unique([id, accountId])
   @@index([journalId])
   @@index([accountId])
+}
+
+model CashAccountSetting {
+  id String @id @default(uuid())
+  company String
+  accountId String
+  version Int
+  active Boolean
+  actor String
+  createdAt DateTime @default(now())
+  account LedgerAccount @relation(fields: [accountId, company], references: [id, company], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([accountId, version])
+  @@index([company, createdAt])
+}
+
+model CashFlowClassification {
+  id String @id @default(uuid())
+  company String
+  ledgerEntryId String
+  accountId String
+  version Int
+  operating Decimal @db.Decimal(18, 2)
+  investing Decimal @db.Decimal(18, 2)
+  financing Decimal @db.Decimal(18, 2)
+  transfer Decimal @db.Decimal(18, 2)
+  reason String
+  actor String
+  createdAt DateTime @default(now())
+  entry LedgerEntry @relation(fields: [ledgerEntryId, accountId], references: [id, accountId], onDelete: Restrict, onUpdate: Restrict, map: "CashFlowClassification_entry_fkey")
+  account LedgerAccount @relation(fields: [accountId, company], references: [id, company], onDelete: Restrict, onUpdate: Restrict, map: "CashFlowClassification_account_fkey")
+  @@unique([ledgerEntryId, version])
+  @@index([company, createdAt])
 }
 
 model AccountingMapping {

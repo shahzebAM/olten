@@ -36,7 +36,7 @@ type Entry = {
   accountId: string;
   debit: Prisma.Decimal;
   credit: Prisma.Decimal;
-  account: { code: string };
+  account: { code: string; company: string };
 };
 type Journal = {
   id: string;
@@ -101,7 +101,7 @@ function fixture() {
             status: 'POSTED',
             entries: data.entries.create.map((e) => ({
               ...e,
-              account: { code: e.accountId },
+              account: { code: e.accountId, company: 'Audit' },
             })),
           };
           journals.push(row);
@@ -467,6 +467,8 @@ describe('Independent accounting audit: fixed-point amounts and reconciliation',
       finance.createPayment('Audit', actor, payment),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(journals).toHaveLength(0);
+    documents.set('invoice', document({ status: 'DRAFT' }));
+    await finance.postDocument('Audit', actor, 'invoice');
     await finance.createPayment('Audit', actor, {
       ...payment,
       amount: '50.00',
@@ -479,7 +481,10 @@ describe('Independent accounting audit: fixed-point amounts and reconciliation',
         allocations: [{ documentId: 'invoice', amount: '51.00' }],
       }),
     ).rejects.toBeInstanceOf(ConflictException);
-    expect(journals).toHaveLength(1);
+    expect(journals).toHaveLength(2);
+    expect(
+      journals.filter((journal) => journal.sourceType === 'CUSTOMER_PAYMENT'),
+    ).toHaveLength(1);
   });
 
   it('posts a mixed-account bill and supplier payment against independently expected accounts', async () => {
@@ -562,12 +567,14 @@ describe('Independent accounting audit: fixed-point amounts and reconciliation',
       subtotal: d('0.89'),
       taxAmount: d('0.11'),
       total: d('1.00'),
-      status: 'POSTED',
+      status: 'DRAFT',
     });
     documents.set('invoice', original);
+    await finance.postDocument('Audit', actor, 'invoice');
     const actualTaxes: string[] = [];
     for (const amount of ['0.33', '0.33', '0.34']) {
       const memo = await finance.createMemo('Audit', actor, {
+        submissionKey: 'memo-' + original.memos.length,
         documentId: 'invoice',
         kind: 'CREDIT_MEMO',
         amount,
@@ -578,7 +585,12 @@ describe('Independent accounting audit: fixed-point amounts and reconciliation',
     }
     expect(actualTaxes).toEqual(['0.04', '0.03', '0.04']);
     expect(outstanding(original).outstanding.toFixed(2)).toBe('0.00');
-    expect(journals).toHaveLength(3);
+    expect(journals).toHaveLength(4);
+    expect(
+      journals.filter((journal) =>
+        ['CREDIT_MEMO', 'DEBIT_MEMO'].includes(journal.sourceType),
+      ),
+    ).toHaveLength(3);
     for (const journal of journals) {
       expect(
         journal.entries.reduce(

@@ -1,5 +1,7 @@
 # ERP transformation: implementation and verification
 
+**Continuation:** The subsequently approved allocation, memo, financial statements, cash-flow, posting-role and inventory reconciliation packages are now implemented and tested. See [completion verification](completion-verification.md) for current results, file manifest and release/rollback plan. The historical observations below describe the earlier commits.
+
 Completed approved scope: October 26, 2026, Asia/Manila. Branch: `codex/erp-ui-accounting-audit`. Baseline: `8eb736acd32922c1d93e4d398da3266eefc9e443`.
 
 The non-payroll workspace now uses a QuickBooks-inspired charcoal, green and neutral palette, with collapsible desktop navigation, a mobile menu, company context, module search and compact forms/tables. Existing workflows remain in their modules. No production database, deployment configuration or credentials were changed. This report records defined test evidence and open limitations; it does not certify accounting accuracy or regulatory compliance.
