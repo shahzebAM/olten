@@ -22,7 +22,7 @@ See [implementation and verification](implementation-and-verification.md) for th
 - **Backend:** NestJS 11. `AppModule` imports employee/payroll, document, authentication, importation, fulfillment and Phase 3 modules; legacy sales, procurement, inventory, company and settings controllers are also registered. Controllers/services instantiate Prisma clients. There is no application-wide authentication guard in `main.ts` or `AppModule`.
 - **Persistence:** Prisma 6 client and PostgreSQL. Company scoping is mostly a `company` string; the Prisma model does not contain a separate Branch entity or global tenant RLS policy. Warehouses/bins are storage locations within a company, not independently authenticated branches.
 - **Authentication:** `AuthSessionService` issues eight-hour HMAC-SHA256 signed bearer sessions; validates issuer, identity, time bounds, signature and a password-derived version; looks up current Active account permissions on each authentication. `SESSION_SECRET`/`JWT_SECRET` is required operationally for sessions surviving restarts/multiple instances. Its configured production value was not inspected.
-- **Frontend session transport:** `apiSession.ts` stores the bearer in sessionStorage. A number of legacy fetches still omit bearer headers because their APIs currently permit unauthenticated access. Any proposed API-guard rollout must update those fetches together.
+- **Frontend session transport:** `apiSession.ts` stores the bearer in sessionStorage. At baseline several legacy fetches omitted bearer headers while their APIs allowed unauthenticated access. Approved SEC-A/SEC-B updated those fetches together with their API guards.
 
 ```mermaid
 flowchart LR

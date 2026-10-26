@@ -54,6 +54,7 @@ Commands below ran from the named directory, using existing dependencies. Local 
 | frontend | `npx tsc -b` | Passed. |
 | frontend | `npm run build` | Passed. Existing large-chunk warning remains; final build also reports plugin timing information. |
 | backend | `node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js src/auth/legacy-erp-auth.guard.ts src/auth/legacy-erp-auth.guard.spec.ts src/auth/payroll-auth.guard.ts src/auth/payroll-auth.guard.spec.ts` | Passed. An initial run with the default heap exhausted memory; rerunning with 4GB passed. |
+| backend | `node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js src/auth/legacy-security.audit-spec.ts src/phase3/accounting.audit-spec.ts` | Passed. |
 | frontend | `node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js src/components/ErpShell.tsx src/lib/workspaceNavigation.ts src/lib/salesAmounts.ts src/modules/phase3/*.tsx src/modules/phase3/api.ts src/modules/Phase3Module.tsx` | Passed. |
 | frontend | `node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js . --format json --output-file ../backend/.tmp/erp-transformation/frontend-lint-complete.json` | **Fails on existing issues.** Source errors decreased240→238; warnings remain7, with no new source-file violations. The broader command also includes3 errors in an existing ignored `phase2-sales.local` harness absent from the initial lint snapshot, so whole-tree total is241 errors. |
 | backend | `npx tsc --noEmit` | Fails on3 existing test-configuration/type errors: the intentional invalid-account-type fixture in `phase3.shared.spec.ts:259`, plus2 NodeNext extension errors in protected `frontend/src/lib/attendanceEntry.ts`. Production Nest build and frontend type check pass. |
@@ -104,7 +105,7 @@ The detailed findings, numerical examples, impact and approval/rollback proposal
 
 ## Release and rollback
 
-Commit and push the development branch for review. Do not merge into the production branch or run a migration as part of this task. Deploy frontend and backend from the same reviewed revision when the release is approved, because the newly authenticated APIs require the updated client headers. Production needs a stable existing session secret shared between instances; this task did not inspect or change its value.
+Implementation commit `eff9cc9` was pushed to `origin/codex/erp-ui-accounting-audit`. No production merge or migration was performed. Deploy frontend and backend from the same reviewed revision when the release is approved, because the newly authenticated APIs require the updated client headers. Production needs a stable existing session secret shared between instances; this task did not inspect or change its value.
 
 Rollback is a code revert to the reviewed baseline; there is no database migration or automatic historical recalculation to undo. Reverting the access guards reopens the documented vulnerabilities, so prefer a forward fix for authentication incidents. Do not delete posted records or recalculate saved payroll to roll back this UI/security change.
 

@@ -20,7 +20,7 @@ See [implementation and verification](implementation-and-verification.md) for fi
 - React/Vite modules call NestJS APIs. Prisma uses PostgreSQL. Company is generally stored as a company-name string; financial API guards check company/role access. Production database state, credentials and financial records were not queried or changed for this audit.
 - Operational flow: catalog/suppliers → requisition/import PO/shipment → receipt and QC → warehouse lots and stock → OS approval/reservation → FO/PL draft delivery → dispatch stock issue → POD → draft Finance invoice → approved posting → allocated payment and optional financial memo. Legacy manual PO receiving and office-stock flows also exist.
 - Accounting starts in Phase 3 Finance/Books. A confirmed POD plus active FO is required for invoice drafting. Stock issue is at dispatch; COGS posting occurs later when the Finance invoice is posted. Generating an FO/PL does not post COGS or issue stock. These timing rules were preserved.
-- Finance documents, allocations, payments, ledger entries, landed costs and cost references use `Prisma.Decimal`/PostgreSQL numeric columns. Legacy quotation/packing-list/manual PO totals, catalog manual prices, customer balances and supplier running balances still use floating-point fields. OS uses decimal storage but its controller calculates with JavaScript numbers first. Payroll retains its existing numeric implementation without edits.
+- Finance documents, allocations, payments, ledger entries, landed costs and cost references use `Prisma.Decimal`/PostgreSQL numeric columns. Legacy quotation/packing-list/manual PO totals, catalog manual prices, customer balances and supplier running balances still use floating-point storage fields. At baseline OS used decimal storage after JavaScript-number calculations; approved A-RND now calculates OS/FO/manual PO totals with Decimal before persistence. Payroll retains its existing numeric implementation unchanged.
 - Inventory costing is **latest approved landed/manual product cost reference**, not FIFO, moving weighted average or historical cost layers. Invoice cost is snapshotted when its draft is created. FEFO is the physical picking order and does not establish a financial costing method.
 - `FinanceService.finalizeLandedCost` changes `landedCostReference` and appends cost history; it preserves manual purchase prices/tier prices and creates no accounting journal. Operational inventory receipts, transfers, adjustments and dispatches write `InventoryMovement`, not automatic double-entry journals.
 - Automatic invoice, bill, payment and memo journals use fixed standard account codes. `AccountingMapping` stores reference links; it does not select these posting accounts.
@@ -43,7 +43,7 @@ See [implementation and verification](implementation-and-verification.md) for fi
 
 ## Findings and severity
 
-### High — A-RND: verified inconsistent manual PO cent rounding
+### Original high finding — A-RND: manual PO cent rounding (now corrected)
 
 `backend/src/sales/purchase-orders.controller.ts:224` uses `Math.round(Number(quantity) * Number(unitCost) * 100) / 100`. The actual controller, exercised by the new audit test, returns **1.00 for quantity 1 × unit cost 1.005**. A separate BigInt rational half-up oracle and the established Phase 3 decimal behavior give **1.01**. With 12% VAT the example is total1.12 vs1.13. This is not a display-only change.
 
@@ -91,7 +91,7 @@ The audit does **not** assume every product/customer/transaction is VATable, nor
 
 Books account/mapping lists cap at1,000 and recent journals at100; management reports cap at1,000 and identify truncation. Finance balances reject a query beyond5,000 rather than silently presenting a complete balance. Phase 3 AR/AP reports exclude legacy `Customer.balance`/`Supplier.apBalance` opening balances. Use narrow, evidenced reports or accountant-approved opening journals; do not silently add legacy balances and risk double counting.
 
-### Medium — A-CON: raw concurrent row-lock serialization failure is not translated
+### Original medium finding — A-CON: raw concurrency error response (now corrected)
 
 An actual four-way simultaneous `FinanceService.postDocument` test against the isolated PostgreSQL database produced one successful invoice posting and three raw Prisma `P2010` errors with SQLSTATE40001. The handler translates `P2034`/`P2002` only; a raw `FOR UPDATE` serialization failure escapes the intended controlled409 path. The journal remained unique and balanced, so this test found an error-handling defect rather than duplicate postings. Returning the same existing409 conflict for raw40001 (without retrying/reposting/changing state) is a candidate safe technical correction; no such production-code change was made by this audit.
 
