@@ -1,0 +1,2251 @@
+{
+  "title": "Olten ERP - Complete Customer User Guide",
+  "subtitle": "From first-time setup to delivery, accounting, service and payroll",
+  "version": "Customer training edition - 26 October 2026",
+  "asOf": "26 October 2026",
+  "overview": "Follow this handbook in order when setting up a new organization. Once setup is complete, use the workflow maps and chapter headings to find a daily task. Screenshots show synthetic training records, not a customer's live information. Buttons are shown only when the signed-in account has the required access. Save each record and check the success message before proceeding to the next module. New accounting screens require the matching app release; contact your administrator if a screen described here is missing.",
+  "chapters": [
+    {
+      "id": "sign-in",
+      "title": "1. Sign in and choose the organization",
+      "module": "Login and company selection",
+      "roles": "Every authorized user",
+      "purpose": "Start in the correct company before creating any customer, stock or accounting record.",
+      "before": [
+        "Obtain your own username and password from the administrator.",
+        "Confirm which company workspace you should use."
+      ],
+      "steps": [
+        "Open the app address supplied by your administrator. Enter Username and Password, then select Access Systems.",
+        "On Select Organization, select your assigned company card. The training screenshots use Demo Medical Trading.",
+        "Confirm the organization name in the workspace heading before opening a module.",
+        "Use Switch Org to return to company selection when changing organizations. Use Logout or Secure Logout when finished."
+      ],
+      "result": "The company workspace displays the modules available to your account.",
+      "notes": [
+        "No workspaces assigned means your administrator must grant company access. A missing module can also mean the account lacks its permission.",
+        "If the session expires, sign in again. For a connection warning, restore the connection and use Retry connection before repeating a save."
+      ],
+      "connections": {
+        "Comes from": "Administrator-created account",
+        "Next module": "User access setup, then Books initialization"
+      },
+      "screenshots": [
+        {
+          "id": "01-login",
+          "caption": "Enter your own credentials and select Access Systems."
+        },
+        {
+          "id": "02-company-selector",
+          "caption": "Select the organization that owns the records you will enter."
+        }
+      ]
+    },
+    {
+      "id": "company-admin",
+      "title": "2. Add and govern a company workspace",
+      "module": "Select Organization",
+      "roles": "Super Admin",
+      "purpose": "Separate each organization's operational and financial records before staff begin using the app.",
+      "before": [
+        "Agree the official workspace name and who should have access."
+      ],
+      "steps": [
+        "From Select Organization, select Add Company.",
+        "In Register Workspace, enter Organization Name and select Save Org. Wait for the saved company to appear.",
+        "Open Manage Users and assign this company under Allowed Companies & Workspaces for each authorized user.",
+        "For financial staff, configure the required ERP roles, module clearances and per-company Approval limits (PHP).",
+        "Select the company and initialize its standard chart of accounts before its first financial posting. Create the company's master records rather than assuming another company's records are shared.",
+        "Use Switch Org and verify the company heading whenever moving between organizations. Limit workspace deletion to an explicitly approved cleanup and read the confirmation and any history-protection rejection."
+      ],
+      "result": "The organization has a separate workspace, assigned staff and its own operational/accounting setup.",
+      "notes": [
+        "Workspace deletion also concerns its associated document storage folder. It is not a routine way to close an accounting period.",
+        "Financial/service history protects the company identity from deletion. Do not remove a live organization to resolve an ordinary data-entry mistake."
+      ],
+      "connections": {
+        "Comes from": "New organization decision",
+        "Next module": "User access, Books initialization and master records"
+      },
+      "screenshots": [
+        {
+          "id": "60-add-company",
+          "caption": "Create the company, then grant access before staff enter records."
+        },
+        {
+          "id": "61-approval-limits",
+          "caption": "Each company's Finance approval authority must be configured explicitly."
+        }
+      ]
+    },
+    {
+      "id": "user-access",
+      "title": "3. Create staff accounts and assign access",
+      "module": "Manage Users / Access & Governance",
+      "roles": "Super Admin",
+      "purpose": "Give each staff member the companies, modules and responsibilities needed for their work.",
+      "before": [
+        "Prepare the staff username, account role, company memberships and approved responsibilities."
+      ],
+      "steps": [
+        "From Select Organization, select Manage Users. Select + Register New Account, or edit an existing account.",
+        "Enter Username and Password. Choose Account Role and Account Status. When editing, leave Password blank to retain it.",
+        "Under Module Access Clearances, enable only the required modules. Finance responsibilities need the relevant Finance or Books module as well as an ERP role.",
+        "Select the applicable ERP roles: Management, Purchasing, Importation, Warehouse, QC/Regulatory, Sales, Delivery, Finance, Auditor or AI.",
+        "Under Allowed Companies & Workspaces, select each permitted company. For Finance, enter a positive Approval limit per company (PHP). Save the account.",
+        "Have the staff member sign in and confirm the expected workspace cards appear."
+      ],
+      "result": "The staff member can use the permitted modules in the assigned companies.",
+      "notes": [
+        "An Admin account alone does not grant the new financial privileges. Auditor is read-only, even when another ERP role is also selected.",
+        "Finance requires a configured positive company limit for approvals. A blank Management limit permits its authorized approvals without an amount cap; set a limit when company policy requires one."
+      ],
+      "connections": {
+        "Comes from": "Company and staff responsibility decisions",
+        "Next module": "Books setup and operational master records"
+      },
+      "screenshots": [
+        {
+          "id": "03-users",
+          "caption": "Access & Governance lists registered accounts."
+        },
+        {
+          "id": "04-permissions",
+          "caption": "Assign module access and company permissions."
+        },
+        {
+          "id": "05-erp-roles",
+          "caption": "Choose ERP responsibilities and company approval limits."
+        }
+      ]
+    },
+    {
+      "id": "initialize-accounts",
+      "title": "4. Initialize the chart of accounts first",
+      "module": "Books & Reconciliation / Accounts & journals",
+      "roles": "Authorized Finance or Management user with Books access; Super Admin",
+      "purpose": "Prepare the standard ledger accounts before posting bills, invoices or payments.",
+      "before": [
+        "Complete company access and financial role setup.",
+        "Agree how opening balances and historical invoices will be handled before starting live accounting."
+      ],
+      "steps": [
+        "Open Books & Reconciliation from the company workspace. Stay on Accounts & journals.",
+        "In Chart of accounts, select Initialize standard accounts. Wait for Default accounting accounts are ready.",
+        "Review the standard accounts. They cover Bank, Inventory, Receivables, Input VAT, Payables, Output VAT, accrued landed costs, Equity, Revenue, import expenses, cost of goods sold and service expenses.",
+        "To add a company-specific account, expand Add ledger account. Enter a unique Account code, Account name and Account type: ASSET, LIABILITY, EQUITY, REVENUE or EXPENSE.",
+        "Save, then confirm the new account appears in the chart. Use it in an approved manual journal or choose it as a compatible POSTING_ROLE target under Account mappings when the company's accounting setup requires it.",
+        "Review Account mappings before the first automatic posting. Leave the standard defaults when no remapping is needed. In Cash flow classification, review which asset accounts are designated as cash/bank before relying on cash reports."
+      ],
+      "result": "The company has its standard accounts and any required custom accounts.",
+      "notes": [
+        "Books is internal accounting; it does not connect to an external QuickBooks subscription.",
+        "Only the global Super Admin can delete or restore ledger accounts. A deleted unused standard account can be recreated when an automatic posting needs it.",
+        "Opening manual journals affect Books balances. They do not create customer invoices, supplier bills or invoice aging. Arrange a reviewed historical balance migration separately."
+      ],
+      "connections": {
+        "Comes from": "Role and company setup",
+        "Next module": "Customers, suppliers, product catalog and warehouse setup"
+      },
+      "screenshots": [
+        {
+          "id": "39-chart-accounts",
+          "caption": "Initialize and review the standard chart of accounts."
+        },
+        {
+          "id": "40-add-account",
+          "caption": "Add a custom account with the correct account type."
+        }
+      ]
+    },
+    {
+      "id": "delete-account",
+      "title": "5. Delete, archive or restore an account",
+      "module": "Books & Reconciliation / Chart of accounts",
+      "roles": "Global Super Admin only",
+      "purpose": "Remove an unused account or archive a used account while preserving its accounting history.",
+      "before": [
+        "Sign in as the global Super Admin and select the correct company.",
+        "Confirm the account is no longer needed. Review its journals, posting roles, reference mappings, cash/bank designations and bank reconciliations before proceeding."
+      ],
+      "steps": [
+        "Open Books & Reconciliation, then Accounts & journals.",
+        "Locate the account in Chart of accounts. Check its code and name carefully; Delete is available for standard and custom accounts to the global Super Admin.",
+        "Select Delete, read the confirmation and confirm only when it is the intended account. An unused account is permanently removed; an account referenced by journals, mappings or reconciliations is archived instead.",
+        "Wait for the success message, then verify the account is absent from the active chart. Existing journals, balances, reports and reconciliation history remain available for archived accounts.",
+        "To bring back an archived account, enable Show archived accounts, locate its row and select Restore. Verify that it returns to the active chart before using it for new transactions."
+      ],
+      "result": "The unused account is removed, or the used account is archived with its history intact. Delete and Restore actions remain in the audit log.",
+      "notes": [
+        "Archived accounts cannot receive new postings or appear as new bank-match candidates. Existing reconciliation matches and historical reports are retained.",
+        "Unused accounts can be deleted regardless of code, including the twelve standard accounts. Automatic posting can recreate a missing standard account when needed; restore an archived standard account before using it again.",
+        "Deleting an account is not a way to reverse a posted journal. Use an authorized correcting journal for an accounting correction.",
+        "Review active posting-role targets and cash/bank designations before archiving. A mapping to an archived account blocks new postings until Finance restores the account or selects a valid replacement. Existing source journals and their verified clearing accounts remain part of history."
+      ],
+      "connections": {
+        "Comes from": "Account setup or review of an existing ledger account",
+        "Next module": "Continue master-record setup or review journals"
+      },
+      "screenshots": [
+        {
+          "id": "62-delete-custom-account",
+          "caption": "Show archived accounts to review retained accounts; only the global Super Admin can select Restore."
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "6. Understand the connected workspace",
+      "module": "Company workspace",
+      "roles": "Every authorized user",
+      "purpose": "Understand where records start and where the next person continues the work.",
+      "before": [
+        "Initialize accounts and grant each team member the appropriate access."
+      ],
+      "steps": [
+        "Use the collapsible side navigation and module search to find a workspace. Check the company context and page heading before entering records; expand the mobile menu when the side navigation is hidden.",
+        "Use Customer Directory, Supplier Directory and Master Inventory to prepare reusable master records before entering transactions.",
+        "For a customer request, start with Create Order Slip. The resulting order feeds P.O. > Fulfillment and Delivery & Proof of Delivery.",
+        "If stock must be purchased, use P.O. for supplier procurement, and Importation & Receiving for shipment, customs and inspected receipt.",
+        "Use Warehouse & Cycle Counts to locate goods, place accepted receipts, maintain conditions and count stock.",
+        "After dispatch and signed POD, create and post the customer invoice in Landed Cost & Finance. Use Books & Reconciliation to inspect the resulting accounting.",
+        "Use Books & Reconciliation for Account mappings, Financial statements, Cash flow classification, Inventory reconciliation and Bank reconciliation. Inventory reconciliation requires both Books and Finance read access.",
+        "Use Medical Device Service for delivered serials; Executive Dashboard for reports; AI Docs Engine for documents; Payroll Engine for the separate staff-pay workflow."
+      ],
+      "result": "Each team knows which saved record the next module needs.",
+      "notes": [
+        "The running training example uses Northstar Demo Hospital, Global Demo Medical Supplies and Patient Monitor Demo Model.",
+        "Customer fulfillment starts from an Order Slip. Supplier procurement and customer fulfillment share one P.O. workspace but remain different transaction types."
+      ],
+      "connections": {
+        "Comes from": "Configured company workspace",
+        "Next module": "Master records, then the connected worked example"
+      },
+      "screenshots": [
+        {
+          "id": "06-workspace",
+          "caption": "Use the company workspace, side navigation and search to reach each connected module."
+        }
+      ]
+    },
+    {
+      "id": "customers",
+      "title": "7. Register the customer and pricing category",
+      "module": "Customer Directory",
+      "roles": "User with Sales access; category management where authorized",
+      "purpose": "Create the hospital/customer identity that will be reused by orders, invoices, payments and service records.",
+      "before": [
+        "Prepare the customer's official name, address, contact details, tax identifier and agreed credit limit."
+      ],
+      "steps": [
+        "Open Customer Directory. Search Name, Code, Phone first to avoid creating a duplicate.",
+        "Select the register action (+ Register on a narrow screen). Enter the customer's name and required contact details.",
+        "Enter the address, TIN and optional phone, email and website. Choose the agreed category and credit limit, then save.",
+        "If authorized, open Category & Pricing to create a customer category and maintain category prices. Review any percentage change before saving.",
+        "Find Northstar Demo Hospital in the directory and open its profile. Confirm the details before selecting its order-slip action.",
+        "When Finance access is available, review the profile's new finance balance panel separately from any legacy balance field."
+      ],
+      "result": "The customer can be selected in Create Order Slip and remains linked through fulfillment and billing.",
+      "notes": [
+        "A customer category can determine the product selling price used when preparing an order. Review the displayed unit price before issuing a document.",
+        "Existing legacy balances are not automatically imported into the new invoice aging totals."
+      ],
+      "connections": {
+        "Comes from": "Customer onboarding details",
+        "Next module": "Create Order Slip; later invoice, receipt and service"
+      },
+      "screenshots": [
+        {
+          "id": "07-customers",
+          "caption": "Search the directory before registering a new customer."
+        },
+        {
+          "id": "08-customer-form",
+          "caption": "Complete the customer identity and category fields."
+        }
+      ]
+    },
+    {
+      "id": "product-catalog",
+      "title": "8. Register products and review prices",
+      "module": "Master Inventory / Product Catalog",
+      "roles": "User with Master Inventory access; restricted actions require administrator authority",
+      "purpose": "Create the product identity used by purchasing, receiving, reservation, dispatch and costing.",
+      "before": [
+        "Agree a unique SKU, product description, category, manual cost and selling prices.",
+        "Create customer categories before setting category-specific overrides."
+      ],
+      "steps": [
+        "Open Master Inventory and Product Catalog. Search SKU or Name to avoid duplicating a product.",
+        "Select + Register Item. Enter SKU, product name and the required specifications. Set the product category and CMDN where applicable.",
+        "Enter the manual Cost Price and selling price. Set Customer Category Pricing Overrides only when an agreed tier price is needed.",
+        "Review any Initial Master / Office Audit quantity before saving. For incoming purchases, receive through the proper receiving workflow instead of adding the same goods as initial stock.",
+        "Use product-category, customer-tier and hub filters to inspect the catalog. Use Prev / Next for the paginated list.",
+        "When Finance access is available, review approved landed-cost reference and cost history without replacing the manual cost or selling-price decision."
+      ],
+      "result": "Patient Monitor Demo Model has one reusable catalog record and appears in searchable product selectors.",
+      "notes": [
+        "Available stock for an order depends on reservation and lot condition, not just a catalog total.",
+        "Set batch/expiry and serial tracking controls in Warehouse & Cycle Counts before handling controlled goods."
+      ],
+      "connections": {
+        "Comes from": "Approved product specifications and pricing",
+        "Next module": "Supplier catalog, warehouse controls, QR labels and customer OS"
+      },
+      "screenshots": [
+        {
+          "id": "11-inventory-catalog",
+          "caption": "Catalog search, category filters, tier prices and stock."
+        },
+        {
+          "id": "12-product-form",
+          "caption": "Product identity, manual costs and category-price overrides."
+        }
+      ]
+    },
+    {
+      "id": "catalog-excel",
+      "title": "9. Use catalog Excel import and export safely",
+      "module": "Master Inventory / Product Catalog",
+      "roles": "Authorized administrator",
+      "purpose": "Load or update multiple catalog rows using the app's existing spreadsheet format.",
+      "before": [
+        "Prepare a reviewed spreadsheet and export the current catalog before a bulk update.",
+        "Confirm that each SKU points to the intended product."
+      ],
+      "steps": [
+        "Open Product Catalog and select Export Excel to keep a current reference copy.",
+        "Select Get Template. Keep the template headings: SKU, Product Name, Master Stock and Cost Price (₱). Replace the example row with your reviewed data.",
+        "Use one row per intended SKU and confirm stock quantities and costs before uploading. Save the file as Excel or CSV.",
+        "Select Import Excel, choose the file and read the confirmation explaining how existing SKUs will be updated.",
+        "Confirm only after review. Wait for the Import complete message and check the Success and Errors counts.",
+        "Search a sample of imported SKUs and inspect names, costs and quantities. Correct reported error rows before importing them again."
+      ],
+      "result": "New SKUs are created and matching existing SKUs receive the imported updates.",
+      "notes": [
+        "This import can update existing product names, manual costs and stock. It is not an append-only operation.",
+        "Do not import receipt quantities that have already been received through GRN, warehouse placement or another stock movement."
+      ],
+      "connections": {
+        "Comes from": "Reviewed catalog spreadsheet",
+        "Next module": "Catalog verification, warehouse records and operational orders"
+      },
+      "screenshots": [
+        {
+          "id": "11-inventory-catalog",
+          "caption": "Get Template, Import Excel and Export Excel are on the catalog toolbar."
+        }
+      ]
+    },
+    {
+      "id": "suppliers",
+      "title": "10. Register the supplier and assigned products",
+      "module": "Supplier Directory",
+      "roles": "User with Purchasing access",
+      "purpose": "Prepare the vendor identity and supplier-specific cost list for purchase orders and bills.",
+      "before": [
+        "Collect legal name, TIN, complete address, payment terms and contact details."
+      ],
+      "steps": [
+        "Open Supplier Directory and check Approved Vendors for an existing record.",
+        "Select + Register Supplier. Enter Legal Name, Brand / Trade Name where applicable, TIN / Tax ID and Complete Address.",
+        "Add contact person, phone, email and payment terms, then save the profile.",
+        "After products exist in Master Inventory, select the supplier's Products button to open Supplier Catalog Link.",
+        "Search the master catalog by Name or SKU. Tick products supplied by this vendor and enter the agreed Custom Cost.",
+        "Select Save & Sync Catalog. Return to the directory and confirm the assigned-item count."
+      ],
+      "result": "Global Demo Medical Supplies can be selected for procurement and supplier billing.",
+      "notes": [
+        "Supplier-specific cost is a purchasing reference; it is separate from the customer's selling price.",
+        "The directory's legacy A/P Balance is separate from balances calculated from posted bills in the new Finance module."
+      ],
+      "connections": {
+        "Comes from": "Vendor onboarding and product catalog",
+        "Next module": "Supplier PO, quotation comparison and supplier bill"
+      },
+      "screenshots": [
+        {
+          "id": "09-suppliers",
+          "caption": "Supplier directory, terms and assigned products."
+        },
+        {
+          "id": "10-supplier-form",
+          "caption": "Register the vendor's legal and contact details."
+        }
+      ]
+    },
+    {
+      "id": "warehouse-setup",
+      "title": "11. Create facilities, bins and tracking controls",
+      "module": "Master Inventory and Warehouse & Cycle Counts",
+      "roles": "Warehouse user; administrator or warehouse approver for product controls",
+      "purpose": "Give stock a physical home before receiving and allocating controlled items.",
+      "before": [
+        "Agree facility names and a consistent building-to-bin naming scheme.",
+        "Create the product catalog records."
+      ],
+      "steps": [
+        "Open Master Inventory, select its Warehouses view and register each facility with Facility Name and Physical Address.",
+        "Return to the workspace and open Warehouse & Cycle Counts. Expand Create a six-level bin.",
+        "Choose Facility and enter Building, Floor, Zone, Rack, Shelf and Bin. Select Create bin.",
+        "Use a consistent example such as WH1 / F2 / ZA / R03 / S02 / B04. Confirm the resulting code in Warehouse bin hierarchy.",
+        "Expand Product tracking controls. Select the product and configure expiry-controlled and serial-controlled handling as applicable; save with an authorized approver.",
+        "For existing stock already recorded in the system, use Register existing stock in a bin / batch to locate it. Imported receipts instead use Place QC-accepted goods in a bin after inspection."
+      ],
+      "result": "Facilities and six-level bin locations are ready for receipt placement, FEFO picking and physical counts.",
+      "notes": [
+        "Registering existing stock in a bin identifies stock already on hand; it must not duplicate a new receipt.",
+        "Serial-controlled placement uses one unit per serial. Record the real batch and expiry for expiry-controlled items."
+      ],
+      "connections": {
+        "Comes from": "Facility plan and catalog tracking decisions",
+        "Next module": "QR labels, receiving placement, reservation and picking"
+      },
+      "screenshots": [
+        {
+          "id": "14-warehouses",
+          "caption": "Maintain warehouse facilities in Master Inventory."
+        },
+        {
+          "id": "30-bin-form",
+          "caption": "Create a bin using the six physical location levels."
+        }
+      ]
+    },
+    {
+      "id": "qr-labels",
+      "title": "12. Generate labels and use the scanner",
+      "module": "QR Generator",
+      "roles": "Authorized QR user; administrator verification for database generation or regeneration",
+      "purpose": "Print readable product labels and use the same product identity in stock counts, transfers and picking.",
+      "before": [
+        "Save the product catalog and connect the intended label printer or barcode scanner."
+      ],
+      "steps": [
+        "Open QR Generator. Search SKU or Name and use All Products or Pending QRs to find the product.",
+        "Select Generate Missing when labels are missing. Complete Admin Verification when requested. Regenerate (Admin) is for an authorized regeneration.",
+        "Confirm a QR appears for the intended SKU and description. Select Print on that product row.",
+        "Choose the label printer in the browser print dialog, check paper size and print a test label before a batch.",
+        "In a warehouse count, transfer or delivery pick, scan the sticker into the relevant scan field. Check the selected product before confirming the action.",
+        "For controlled goods, also inspect the physical batch, serial and bin. Enter those values where requested."
+      ],
+      "result": "A product label can identify the catalog product during warehouse work.",
+      "notes": [
+        "A product QR identifies the SKU. It does not by itself prove a particular serial, batch, expiry or bin.",
+        "Scanning identifies or fills a product; the workflow's Confirm action is still required to save the business transaction."
+      ],
+      "connections": {
+        "Comes from": "Saved product catalog",
+        "Next module": "Stock placement, transfer, cycle count and FEFO pick verification"
+      },
+      "screenshots": [
+        {
+          "id": "15-product-qr",
+          "caption": "Search products, generate missing QR records and print the required label."
+        }
+      ]
+    },
+    {
+      "id": "os-demand",
+      "title": "13. Start the customer request with an Order Slip",
+      "module": "Create Order Slip",
+      "roles": "User with Sales access",
+      "purpose": "Capture the customer's demand once, before procurement or delivery work begins.",
+      "before": [
+        "Create Northstar Demo Hospital and the requested products.",
+        "Check whether usable stock already exists. If it does, follow the in-stock shortcut after saving the OS."
+      ],
+      "steps": [
+        "Open Create Order Slip. Search customer and select Northstar Demo Hospital.",
+        "Check the proposed OS number. Search to add the first product and select Patient Monitor Demo Model.",
+        "Enter the requested quantity. The main fulfilled example uses one Patient Monitor Demo Model. Review unit prices from the selected customer's category and add any other requested items.",
+        "Apply 12% VAT only when appropriate for the document. Review subtotal, VAT and total before generating the Order Slip.",
+        "Save/generate the OS and record the actual saved number shown in the success view. Numbers shown before saving are suggestions; if another user saves that number first, the app advances to an available number. A saved document keeps its number. The main fulfilled example is OS-1001. Use Print Order Slip when a copy is required.",
+        "If sufficient eligible stock is already available, proceed to Approve & reserve. If stock is missing, retain the OS as the source demand and continue to supplier procurement; reserve after accepted stock is available."
+      ],
+      "result": "One saved OS records the customer, items, quantities, prices and tax choice.",
+      "notes": [
+        "Generating a document does not issue physical stock. Approval reserves eligible stock; dispatch later issues it.",
+        "Do not create another standalone customer PO for the same request. The fulfillment record is derived from this OS."
+      ],
+      "connections": {
+        "Comes from": "Customer and catalog records",
+        "Next module": "Supplier procurement when short of stock; otherwise approval/reservation and FO/PL"
+      },
+      "screenshots": [
+        {
+          "id": "16-create-os",
+          "caption": "Separate entry example: ten Sterile Syringe 5 mL units. The main fulfillment example uses one monitor on OS-1001."
+        },
+        {
+          "id": "17-os-success",
+          "caption": "Separate generated example OS-1002 for ten syringes (PHP 257.60). The same approval and document controls apply to the main OS-1001 example."
+        }
+      ]
+    },
+    {
+      "id": "supplier-po",
+      "title": "14. Create the supplier PO from the OS demand",
+      "module": "P.O. / Generate P.O.",
+      "roles": "User with Purchasing access",
+      "purpose": "Order the goods that are missing for an existing customer request, using the shared P.O. workspace.",
+      "before": [
+        "Save the source OS and prepare the selected supplier's catalog and costs.",
+        "Decide whether this purchase will use ordinary local delivery verification or the importation/GRN route."
+      ],
+      "steps": [
+        "Open P.O. and select Generate P.O. Choose Global Demo Medical Supplies under Select Supplier.",
+        "Enter the saved Source O.S., for example OS-1001. Confirm it belongs to this company and represents the customer's demand.",
+        "Review the proposed P.O. Number. It continues from the last saved numeric seed; if an authorized user enters another starting number, check it carefully. If the suggestion is already taken when saved, the app advances to an available number. Record the actual number shown in P.O. Ledger.",
+        "Review automatically assigned supplier items. Enter the required quantities and vendor unit costs; use + Add Ad-hoc Row only when a needed item is absent.",
+        "Set Apply 12% VAT when appropriate, review the totals, then select Issue Purchase Order.",
+        "Open P.O. Ledger and View the saved PO. For ordinary purchases use Verify Delivery when the goods arrive. If marked Receive in Importation / GRN & QC, continue through that controlled import route."
+      ],
+      "result": "The supplier PO records what the business is buying and retains its source OS reference.",
+      "notes": [
+        "Generate P.O. and P.O. Ledger concern purchases from suppliers. Fulfillment concerns the customer order generated from the OS. They share a workspace, not the same stock movement.",
+        "Do not receive imported goods once here and again through GRN."
+      ],
+      "connections": {
+        "Comes from": "Saved customer OS and supplier catalog",
+        "Next module": "Shipment planning / GRN for imports, or local Verify Delivery and placement"
+      },
+      "screenshots": [
+        {
+          "id": "19-po-generate",
+          "caption": "Select the supplier and source OS, then review the incrementing PO number."
+        },
+        {
+          "id": "20-po-ledger",
+          "caption": "The ledger identifies which receiving route applies."
+        }
+      ]
+    },
+    {
+      "id": "requisition-quotation",
+      "title": "15. Use requisitions and compare supplier quotations",
+      "module": "Importation & Receiving / Requisitions",
+      "roles": "Importation or Purchasing staff with module access; authorized requisition approver",
+      "purpose": "Record a purchase request and compare supplier offers before committing to an import purchase.",
+      "before": [
+        "Alternative procurement route: skip this create-PO path if the intended supplier PO was already issued in the previous chapter. Use one procurement route for the same quantities.",
+        "Prepare product requirements, quantities, purpose, needed-by date and supplier offers.",
+        "Use the existing OS demand as the business reference where the purchase fulfills a customer request."
+      ],
+      "steps": [
+        "Open Importation & Receiving, choose Requisitions and expand Create purchase requisition. Enter Purpose and Needed by, select products and quantities, then Save requisition to create the draft.",
+        "Select the draft request and expand Add supplier quotation. Choose Supplier, Currency, PHP per 1 currency unit, lead time, payment terms and valid-until date.",
+        "Enter each quoted unit cost and minimum order quantity, add notes and select Save quotation. Repeat for the competing offers before submitting.",
+        "Once at least one quotation is saved, select Submit for approval. Confirm the request becomes Submitted.",
+        "The authorized approver compares PHP-converted cost, lead time, terms and minimum quantities in Supplier quotation comparison.",
+        "On the chosen quotation, select Approve & create PO. Alternatively Reject the submitted request with a reason. Confirm the generated PO reference before planning the shipment."
+      ],
+      "result": "The request, approval and supplier offer comparison remain available as the procurement record.",
+      "notes": [
+        "A requisition and a supplier quotation are procurement planning records, not customer invoices or payment records.",
+        "Use a single intended procurement route for a purchase. Do not issue a second PO for quantities already ordered."
+      ],
+      "connections": {
+        "Comes from": "Demand and supplier offers",
+        "Next module": "Approved supplier PO, import file and shipment"
+      },
+      "screenshots": [
+        {
+          "id": "22-import-requisition",
+          "caption": "Select requests and compare recorded supplier quotations."
+        },
+        {
+          "id": "23-requisition-form",
+          "caption": "Enter purpose, needed-by date, products and requested quantities."
+        }
+      ]
+    },
+    {
+      "id": "import-shipment",
+      "title": "16. Create the import file and shipment",
+      "module": "Importation & Receiving / Shipments",
+      "roles": "Authorized Importation staff",
+      "purpose": "Track which ordered quantities are actually shipping, including partial and consolidated supplier POs.",
+      "before": [
+        "Save the supplier PO and obtain shipping details from the supplier or forwarder."
+      ],
+      "steps": [
+        "Choose Shipments and expand Create import file. Enter Title and Notes, then select Create import file.",
+        "Expand Create shipment (partial or consolidated POs). Select the Import file that groups this import work.",
+        "Enter the shipment references, shipping mode, route and planned dates shown in the form.",
+        "Choose each Purchase order line and enter Shipped quantity. Add lines for the actual shipment; quantities may cover only part of a PO or several eligible POs.",
+        "Select Create shipment. Find the new shipment number, such as SHP-2026-000001, in Shipment tracker.",
+        "Use the shipment's Edit action as tracking information changes. Update status, dates and references, then select Save tracking."
+      ],
+      "result": "The shipment connects supplier PO quantities to customs, receipt inspection and shipment costing.",
+      "notes": [
+        "Shipped quantity is not the same as received or available stock. Customs and QC still need to be recorded.",
+        "Keep dates current so delayed-shipment alerts and performance reports reflect the latest known position."
+      ],
+      "connections": {
+        "Comes from": "Supplier PO lines",
+        "Next module": "Customs clearance, GRN & QC and landed-cost calculation"
+      },
+      "screenshots": [
+        {
+          "id": "24-import-shipments",
+          "caption": "Create import files, plan shipment quantities and maintain tracking."
+        }
+      ]
+    },
+    {
+      "id": "customs-expenses",
+      "title": "17. Record customs clearance and import expenses",
+      "module": "Importation & Receiving / Customs",
+      "roles": "Authorized Importation staff",
+      "purpose": "Record cleared quantities and the actual import charges needed for receiving and cost review.",
+      "before": [
+        "Create the shipment and collect broker/clearance information and charge documents."
+      ],
+      "steps": [
+        "Choose Customs and select the intended Shipment.",
+        "Complete Broker & clearance details, Clearance date and Clearance status.",
+        "For each item, enter Cleared quantity (cumulative). This is the total cleared so far, not another receipt quantity. Select Save clearance.",
+        "In Itemized import expenses, choose a category and enter Description, Currency, Amount, Status and Invoice reference.",
+        "Enter Paid date only when the payment really occurred, then select Add expense or Save expense when editing.",
+        "Review the expense list against supporting documents and pass the charges to Finance for landed-cost allocation and, where payable, a reviewed supplier/import-expense bill."
+      ],
+      "result": "The shipment has an auditable clearance position and an itemized operational expense list.",
+      "notes": [
+        "Recording an operational import expense is not a substitute for posting a supplier bill in Finance.",
+        "Avoid duplicate charges when linking an import expense to a bill. Landed-cost allocation and supplier liability are separate steps."
+      ],
+      "connections": {
+        "Comes from": "Shipment and broker documents",
+        "Next module": "GRN & QC, Finance bill and landed cost"
+      },
+      "screenshots": [
+        {
+          "id": "25-customs",
+          "caption": "Save cumulative clearance quantities and itemized import charges."
+        }
+      ]
+    },
+    {
+      "id": "grn-qc",
+      "title": "18. Receive cleared goods and record QC",
+      "module": "Importation & Receiving / GRN & QC",
+      "roles": "Authorized receiving and QC staff",
+      "purpose": "Separate accepted, rejected and held goods before warehouse placement or sale.",
+      "before": [
+        "Create and clear the shipment. Physically inspect quantities, packaging, batches, expiry and damage."
+      ],
+      "steps": [
+        "Choose GRN & QC, select Shipment and expand Record goods receipt & QC inspection.",
+        "Enter Received date and receipt notes. For each line, enter the quantity physically received.",
+        "Allocate every received unit to Accepted, Rejected or Hold. For example, 10 received must be fully explained by those three quantities.",
+        "Enter batch number and expiration date where applicable. Add damage/missing-item notes and inspection photographs when needed.",
+        "Select Save goods receipt. Confirm the generated GRN appears in Goods receipts & quarantine ledger.",
+        "For held goods, use the line's QC reinspection action. Record the inspected allocation and notes, then select Save QC decision. Only accepted quantities should proceed to placement."
+      ],
+      "result": "The GRN records what arrived and distinguishes usable goods from quarantine or rejected quantities.",
+      "notes": [
+        "Accepted stock must be placed through the accepted-receipt queue; do not add it again using a generic stock adjustment.",
+        "Rejected or held stock does not become available for customer reservation merely because it has arrived."
+      ],
+      "connections": {
+        "Comes from": "Cleared shipment quantities",
+        "Next module": "QC-accepted bin placement; hold/rejected goods remain under QC control"
+      },
+      "screenshots": [
+        {
+          "id": "26-grn-qc",
+          "caption": "The receipt ledger separates accepted, rejected and held quantities."
+        },
+        {
+          "id": "27-grn-form",
+          "caption": "Receive quantities and capture batch, expiry and inspection evidence."
+        }
+      ]
+    },
+    {
+      "id": "ai-docs",
+      "title": "19. Upload, organize and search company documents",
+      "module": "AI Docs Engine",
+      "roles": "User with AI Docs access",
+      "purpose": "Keep company documents organized and searchable for operational review, reminders and invoice OCR.",
+      "before": [
+        "Ask the administrator to complete the document-storage and AI-service configuration.",
+        "Prepare readable source files with clear filenames."
+      ],
+      "steps": [
+        "Open AI Docs Engine. Check the company name and wait for the directory to load; use Retry connection if configuration or network access is unavailable.",
+        "Select Folder to create a named folder, or select an existing folder in the tree. Root Dir returns to the company's top level.",
+        "Select Upload and choose the intended files. Wait for upload, processing and the expiry/reminder review to complete before leaving the page.",
+        "Use Filter files locally to narrow the directory. Select a document to inspect its preview and recorded information.",
+        "Use the document rename or replacement actions when maintaining an existing source. Review any Delete Selected action carefully because it deletes selected documents/folders.",
+        "Type a document question in Ask AI to analyze across all folders and submit it. Compare its answer with the original document preview. For invoice line extraction, continue to Executive AI & Invoice OCR."
+      ],
+      "result": "Uploaded company documents can be previewed, organized, searched and selected for other permitted document workflows.",
+      "notes": [
+        "The training screenshots show an isolated workspace without a connected Drive account; they illustrate the real controls and connection message, not a completed upload.",
+        "Document AI and Executive AI serve different contexts: this module analyzes uploaded documents; Executive AI answers from authorized management reports."
+      ],
+      "connections": {
+        "Comes from": "Company source files and storage configuration",
+        "Next module": "Expiry reminders, import-document links and invoice OCR"
+      },
+      "screenshots": [
+        {
+          "id": "50-document-workspace",
+          "caption": "The document workspace offers folders, Upload, local filtering and AI document search."
+        }
+      ]
+    },
+    {
+      "id": "document-reminders",
+      "title": "20. Review expiry reminders and replace renewed documents",
+      "module": "AI Docs Engine / Expiry Reminders",
+      "roles": "User with AI Docs access",
+      "purpose": "Check AI-read expiry information against the source and keep renewal follow-up current.",
+      "before": [
+        "Upload a readable document and wait for processing.",
+        "Know the source expiry date and the desired reminder lead time."
+      ],
+      "steps": [
+        "After upload, review Review Expiry & Reminder. Use View source document to compare the extracted information with the original.",
+        "Correct the date/reminder details shown in the review form. Use Re-analyze if the available extraction is incomplete and the action is offered.",
+        "Select Save Reminder only when the dates and schedule are correct. Select Close Without Reminder when no reminder should be created for that file.",
+        "Open the Expiry Reminders panel from the notification control and inspect due items.",
+        "Use View source document before deciding the next action. Select Mark Handled when the follow-up has been completed.",
+        "When renewed evidence replaces an existing document, select Replace Document, choose the new source and complete its review. Confirm the new expiry/reminder details rather than assuming the old schedule is still correct."
+      ],
+      "result": "The recorded reminder reflects verified source information and completed follow-up is marked handled.",
+      "notes": [
+        "AI-read dates require staff review. A reminder is a follow-up record, not proof that a permit or document has been renewed.",
+        "If storage or AI is disconnected, resolve configuration with the administrator before relying on automatic processing."
+      ],
+      "connections": {
+        "Comes from": "Uploaded documents and verified expiry dates",
+        "Next module": "Renewal follow-up, document replacement and document-related alerts"
+      },
+      "screenshots": [
+        {
+          "id": "51-document-reminders",
+          "caption": "Review the expiry reminder list and source-document actions."
+        }
+      ]
+    },
+    {
+      "id": "import-documents",
+      "title": "21. Link regulatory and shipment documents",
+      "module": "Importation & Receiving / Documents",
+      "roles": "User with the necessary importation and document access",
+      "purpose": "Keep supporting documents connected to the appropriate import file, shipment or product.",
+      "before": [
+        "Upload the source documents into the company's AI Docs Engine. Have import file, shipment and product references ready."
+      ],
+      "steps": [
+        "Choose Documents in Importation & Receiving and wait for Regulatory & import documents to load.",
+        "Find the intended document by its name and review its current type and linked records.",
+        "Open its link/edit action. Select the relevant Import file, Shipment and Product where applicable.",
+        "Set Regulatory status and Document type to reflect the reviewed source document.",
+        "Select Save document links. Confirm the displayed links and status belong to the intended company and shipment.",
+        "Maintain expiry/reminder information in AI Docs Engine when the document requires renewal or follow-up."
+      ],
+      "result": "The same company document can be found in the context of the import, shipment or product it supports.",
+      "notes": [
+        "A document status describes the recorded review position; staff still need to verify the original source and applicable requirements.",
+        "Do not create duplicate uploads simply to link a document to an import record."
+      ],
+      "connections": {
+        "Comes from": "AI Docs uploads and operational import records",
+        "Next module": "QC review, expiry follow-up and executive document alerts"
+      },
+      "screenshots": [
+        {
+          "id": "28-import-documents",
+          "caption": "Link company-owned supporting documents to operational records."
+        }
+      ]
+    },
+    {
+      "id": "stock-placement",
+      "title": "22. Place accepted goods into bins",
+      "module": "Warehouse & Cycle Counts / Warehouse",
+      "roles": "Authorized Warehouse staff",
+      "purpose": "Turn inspected accepted receipts into located stock that can be reserved and picked.",
+      "before": [
+        "Save a GRN with accepted quantities and create the required facility/bin.",
+        "Confirm product serial and expiry controls before placement."
+      ],
+      "steps": [
+        "Open Warehouse & Cycle Counts and expand Place QC-accepted goods in a bin.",
+        "Choose Accepted GRN item. Confirm product, batch and remaining accepted quantity against the physical goods.",
+        "Choose Facility and Bin, then enter Quantity to place. For a serial-controlled item, place one unit and enter its real Serial number.",
+        "Select Confirm bin placement. Repeat for each physical destination or serial as needed.",
+        "Inspect Bin / batch stock and the Available, Reserved, Quarantine, Damaged, Expired and Rejected balance summaries.",
+        "Use Search stock to find the placed SKU or batch and verify the location and available quantity. Review the resulting stock movement in Master Inventory's Stock Ledger."
+      ],
+      "result": "Accepted goods have a physical bin, tracking identity and available balance for reservation.",
+      "notes": [
+        "This step must consume the accepted receipt queue. Do not also register or manually receive the same goods as new stock.",
+        "Available is the usable, unreserved quantity. A total physical balance can include quantities that cannot be sold."
+      ],
+      "connections": {
+        "Comes from": "QC-accepted GRN quantities and six-level bins",
+        "Next module": "OS reservation, FEFO picking, transfer or cycle count"
+      },
+      "screenshots": [
+        {
+          "id": "29-warehouse-stock",
+          "caption": "Review stock conditions and the resulting bin/batch quantities."
+        },
+        {
+          "id": "64-stock-placement",
+          "caption": "Unsaved placement example: choose an accepted GRN item, destination warehouse/bin and physical quantity. Confirm only after checking the goods."
+        }
+      ]
+    },
+    {
+      "id": "landed-cost",
+      "title": "23. Calculate and approve true landed cost",
+      "module": "Landed Cost & Finance / Landed costs",
+      "roles": "Authorized Purchasing/Importation/Finance preparer; authorized Finance or Management approver",
+      "purpose": "Allocate supplier-currency costs and import charges across shipment items before approving the cost reference.",
+      "before": [
+        "Create the shipment and collect supplier invoices, agreed exchange rates, freight, insurance, customs and fees.",
+        "Initialize accounting accounts and configure the Finance approver's company limit."
+      ],
+      "steps": [
+        "Open Landed Cost & Finance and select Landed costs. Expand Calculate provisional landed cost and select Shipment.",
+        "Choose Allocate expenses by: Item value, Weight, Volume or Quantity. Use a consistent basis supported by the shipment documents.",
+        "For every shipment item, enter Unit invoice price, Currency and PHP exchange rate. Enter unit weight or unit volume when that allocation basis is selected.",
+        "Select Add expense for freight, insurance, customs duty, port, brokerage or other charges. Enter description, amount, currency and PHP exchange rate for each charge.",
+        "Select Calculate allocation. Open Review item allocation and source invoices and compare the allocation and total against the source documents.",
+        "The authorized approver selects Finance approve final cost after review. Confirm FINAL status and inspect the product's approved cost history."
+      ],
+      "result": "The final record retains the allocated shipment costs and updates the product's landed-cost reference and history.",
+      "notes": [
+        "FX means PHP per one foreign currency unit; PHP uses rate 1. Weight and volume are per unit and are multiplied by shipment quantity.",
+        "Finalization does not create a supplier bill or liability. It preserves manual Cost Price and customer tier prices. Create and post bills separately."
+      ],
+      "connections": {
+        "Comes from": "Shipment invoice values and import expense evidence",
+        "Next module": "Product cost history, reviewed supplier bills and sales-margin reference costing"
+      },
+      "screenshots": [
+        {
+          "id": "36-landed-cost-form",
+          "caption": "Enter invoice currency, FX, allocation basis and shipment charges."
+        },
+        {
+          "id": "35-landed-cost",
+          "caption": "Review saved landed-cost records and their current Finance approval status."
+        }
+      ]
+    },
+    {
+      "id": "supplier-bill",
+      "title": "24. Create and post the supplier bill",
+      "module": "Landed Cost & Finance / Invoices & bills",
+      "roles": "Authorized Finance or Management user within company approval limit",
+      "purpose": "Recognize the actual amount owed to the supplier or import-expense vendor.",
+      "before": [
+        "Create the supplier, initialize standard accounts and verify the supplier invoice.",
+        "For foreign invoices, agree the locked PHP conversion rate before posting."
+      ],
+      "steps": [
+        "Choose Invoices & bills and expand Create supplier bill / import expense bill.",
+        "Select Supplier and enter Supplier invoice reference. Enter Linked import expense ID only when intentionally linking an existing recorded import expense.",
+        "Set invoice currency, exchange rate, issue date and due date. For PHP, use an exchange rate of 1.",
+        "Enter each description, quantity, unit price, Tax rate (%) and Account code. Enter 12 for 12% VAT. Allowed bill accounts are 1200 Inventory, 5000 Import expense and 6000 Service expense; choose the approved classification and add lines as needed.",
+        "Save the draft bill. Find its BILL number in Customer invoices & supplier bills and expand Review source & lines.",
+        "After review, select Approve & post. Confirm POSTED status, the supplier payable and the balanced journal in Books."
+      ],
+      "result": "The posted bill creates the payable and accounting entry. The due date feeds payables aging.",
+      "notes": [
+        "A saved draft does not yet create the posted payable. Recheck supplier and source reference to avoid duplicate billing.",
+        "The accounting base and payment settlement are PHP. Original foreign invoice details and the locked exchange rate remain on the bill."
+      ],
+      "connections": {
+        "Comes from": "Verified supplier invoice and optional import expense",
+        "Next module": "AP aging, payment request, supplier payment and bank reconciliation"
+      },
+      "screenshots": [
+        {
+          "id": "34-invoices-bills",
+          "caption": "Create a draft supplier bill, review its source lines and approve posting."
+        }
+      ]
+    },
+    {
+      "id": "reservation",
+      "title": "25. Approve the OS and reserve customer stock",
+      "module": "Create Order Slip / O.S. Ledger and P.O. / Fulfillment",
+      "roles": "Authorized OS approver; Sales user for tracking",
+      "purpose": "Lock eligible stock for the saved customer order so the same units are not promised twice.",
+      "before": [
+        "Save the OS and make enough eligible stock available through receipt/placement or existing stock.",
+        "If the order is already approved, inspect its existing reservation before trying another action."
+      ],
+      "steps": [
+        "Open the saved OS in Create Order Slip or the O.S. Ledger. Check the customer, quantities and prices.",
+        "Select Approve & reserve. Wait for the server result rather than assuming stock has been reserved.",
+        "Open P.O. and select Fulfillment. Select the OS-derived customer order in Customer order tracker.",
+        "Review Ordered, Reserved, Incoming, Delivered and Remaining quantities. Expand Reserved bins and batches to inspect the allocated stock.",
+        "If supply is still incoming, expand Link incoming shipment quantities. Choose the customer order item and matching shipment item, enter the allocation quantity and select Save incoming allocation.",
+        "After receiving and placement, use the order's available reservation action to allocate eligible stock, then review the balances again."
+      ],
+      "result": "One customer fulfillment record links the OS to reserved stock, incoming plans and remaining delivery obligations.",
+      "notes": [
+        "Incoming allocation is a supply plan. It is not reservable physical stock until receiving/QC/placement have made it available.",
+        "Approval reserves stock; it does not deduct the physical balance. Physical stock decreases when staff confirm dispatch."
+      ],
+      "connections": {
+        "Comes from": "Saved OS and usable warehouse stock",
+        "Next module": "FO/PL generation and Delivery & Proof of Delivery"
+      },
+      "screenshots": [
+        {
+          "id": "17-os-success",
+          "caption": "Approve & reserve begins the stock lock for the saved OS."
+        },
+        {
+          "id": "21-customer-fulfillment",
+          "caption": "Track reserved, incoming, delivered and remaining quantities in the unified P.O. workspace."
+        }
+      ]
+    },
+    {
+      "id": "fo-pl",
+      "title": "26. Generate the Final Order or Packing List",
+      "module": "Create Order Slip / O.S. Ledger",
+      "roles": "Authorized Sales user",
+      "purpose": "Create downstream order documents while retaining the original OS and its fulfillment relationship.",
+      "before": [
+        "Review and approve/reserve the source OS. Check the required document number."
+      ],
+      "steps": [
+        "Open the saved OS from its success view or View in O.S. Ledger.",
+        "Review the FO number field, for example FO-1001. Select Gen Final Order when issuing the Final Order.",
+        "When a packing document is needed, select Gen Packing List from the appropriate source-document action. The PL receives its own number and does not require a number in the FO field. Review the actual saved PL number and contents.",
+        "Use Print Document or the document-specific Print action to print/save the document using the browser print dialog.",
+        "Select Fulfillment & delivery and locate the linked delivery. Confirm that quantities, customer and source documents match the intended OS.",
+        "If delivery is partial, use Create a partial delivery from reserved stock in the Delivery module rather than creating an unrelated customer order."
+      ],
+      "result": "The FO or PL is logged and creates or links the dispatch work for the same customer order.",
+      "notes": [
+        "FO and PL remain available. Creating these documents does not deduct stock again; dispatch performs the issue.",
+        "Customer invoice creation later requires an active Final Order as well as confirmed POD quantities. A packing list alone is insufficient for that invoice action.",
+        "OS, FO, PL, PO and quotation numbers are finalized when saved. Simultaneous users can see the same suggestion; the server assigns an available numeric number and the saved number remains fixed."
+      ],
+      "connections": {
+        "Comes from": "Approved source OS and reservation",
+        "Next module": "Delivery schedule, FEFO picks and dispatch"
+      },
+      "screenshots": [
+        {
+          "id": "17-os-success",
+          "caption": "The saved OS offers Gen Final Order and Gen Packing List."
+        },
+        {
+          "id": "18-os-ledger",
+          "caption": "The document ledger retains quotations, order slips, FOs and packing lists."
+        }
+      ]
+    },
+    {
+      "id": "delivery-picking",
+      "title": "27. Schedule delivery and verify FEFO picks",
+      "module": "Delivery & Proof of Delivery",
+      "roles": "Authorized Warehouse / Delivery operator",
+      "purpose": "Pick the actual reserved goods and verify identity before issuing physical stock.",
+      "before": [
+        "Create the linked delivery from FO/PL or from reserved quantities.",
+        "Make physical labels, bin locations and batch/serial details available to the picker."
+      ],
+      "steps": [
+        "Open Delivery & Proof of Delivery and select the intended DEL record under Dispatch & proof of delivery.",
+        "Enter Dispatch date and time, Carrier / driver, Tracking / vehicle reference and notes. Select Save schedule.",
+        "Select Generate FEFO picking list. For expiry-controlled goods, inspect the proposed earliest-expiry eligible lots.",
+        "Select each pick to verify. Scan product sticker and enter Verified quantity.",
+        "Physically inspect and enter the expected batch, serial and physical bin where requested. Select Confirm verified pick for each line.",
+        "Review that all planned quantities are verified. Print the picking list if needed and keep the physical goods with the matching delivery."
+      ],
+      "result": "Every planned pick is verified against product, quantity and the required lot identity.",
+      "notes": [
+        "A QR sticker confirms the SKU, so staff must still inspect batch, serial and bin.",
+        "If eligible stock or reservation is missing, correct the source allocation before dispatch. Do not substitute a different physical lot without updating the workflow."
+      ],
+      "connections": {
+        "Comes from": "FO/PL-linked delivery and reserved warehouse lots",
+        "Next module": "Confirmed dispatch and signed POD"
+      },
+      "screenshots": [
+        {
+          "id": "33-delivery-pod",
+          "caption": "Select a delivery, inspect source documents and follow the FEFO picking / POD workflow."
+        }
+      ]
+    },
+    {
+      "id": "dispatch-pod",
+      "title": "28. Confirm dispatch and save signed POD",
+      "module": "Delivery & Proof of Delivery",
+      "roles": "Authorized dispatch/POD operator",
+      "purpose": "Record the stock issue once, then record what the customer actually received.",
+      "before": [
+        "Verify all delivery picks. Have the recipient's signed evidence available after delivery."
+      ],
+      "steps": [
+        "Review the intended delivery and all verified picks. Select Dispatch verified stock and confirm only when the goods are being dispatched.",
+        "Check the delivery status and the physical stock/ledger result. This is the step that issues the verified quantities from stock.",
+        "After the customer receives goods, expand Record signed proof of delivery.",
+        "Enter Recipient / signatory and Received date and time. Upload the signed POD (PDF, JPEG or PNG, up to 10 MB), select an existing company document, or supply the signed POD HTTPS link.",
+        "Enter the quantities actually received for the outstanding delivery lines and add receipt notes. Select Save signed POD.",
+        "For a partial receipt, record only the received quantity and complete later evidence through the same delivery. When an active FO and POD exist, select Create invoice from POD to continue to Finance."
+      ],
+      "result": "The delivery records dispatch and full or partial POD quantities with signed evidence.",
+      "notes": [
+        "POD records receipt; it does not issue the stock a second time.",
+        "Create invoice from POD opens Finance. Staff still need to create the invoice draft, review it and select Approve & post."
+      ],
+      "connections": {
+        "Comes from": "Verified FEFO picks",
+        "Next module": "Customer invoice and eligible delivered-serial service registration"
+      },
+      "screenshots": [
+        {
+          "id": "33-delivery-pod",
+          "caption": "Record signed receipt and use the POD-to-invoice handoff when eligible."
+        }
+      ]
+    },
+    {
+      "id": "customer-invoice",
+      "title": "29. Create and post the customer invoice after POD",
+      "module": "Landed Cost & Finance / Invoices & bills",
+      "roles": "Authorized Finance or Management user",
+      "purpose": "Bill only the customer quantities supported by confirmed POD and an active Final Order.",
+      "before": [
+        "Dispatch the goods, record signed POD and ensure an active FO is linked.",
+        "Confirm the customer's billing details and due date."
+      ],
+      "steps": [
+        "From the delivery, select Create invoice from POD, or open Finance > Invoices & bills directly.",
+        "Expand Create invoice from confirmed POD + Final Order. Select Delivered order and enter Invoice due date.",
+        "Save to prepare the invoice draft. For partial delivery, the draft includes only newly confirmed delivered quantities that have not already been invoiced.",
+        "Find the INV number and select Review source & lines. Check customer, delivery, quantities, prices, VAT and total.",
+        "Select Approve & post only when the draft is correct and within your approval authority.",
+        "Confirm POSTED status, then open Payments & aging and Customer receivables to verify the invoice balance. Inspect the automatic journal in Books when required."
+      ],
+      "result": "The posted invoice creates the customer receivable and relevant accounting entries for the confirmed delivery.",
+      "notes": [
+        "POD and FO make the invoice eligible; they do not automatically post it. A packing list alone does not satisfy the FO requirement.",
+        "Generating and posting an invoice does not issue physical stock again. Reference costing uses the approved landed reference, falling back to the manual cost reference when applicable.",
+        "The unit-cost reference is locked when the invoice draft is prepared. Later landed-cost approval does not retroactively re-cost that existing invoice.",
+        "Posting freezes the document's actual accounting accounts. A later posting-role mapping change applies to new postings; it does not rewrite this posted source or redirect its later payment clearing and financial memos."
+      ],
+      "connections": {
+        "Comes from": "Active FO and confirmed signed POD quantities",
+        "Next module": "Customer aging, payment allocation and sales-margin reporting"
+      },
+      "screenshots": [
+        {
+          "id": "33-delivery-pod",
+          "caption": "The delivery offers the invoice handoff after POD and FO are present."
+        },
+        {
+          "id": "34-invoices-bills",
+          "caption": "Create, review and explicitly approve/post the invoice draft."
+        }
+      ]
+    },
+    {
+      "id": "memos",
+      "title": "30. Authorize a credit or debit memo",
+      "module": "Landed Cost & Finance / Invoices & bills",
+      "roles": "Authorized Finance/Management approver within company limit",
+      "purpose": "Record a reviewed financial adjustment against an already posted invoice or bill.",
+      "before": [
+        "Identify the posted original document and obtain a clear adjustment reason and amount."
+      ],
+      "steps": [
+        "Open Invoices & bills and expand Authorize credit or debit memo.",
+        "Select Original posted invoice / bill. Verify the document number and customer or supplier.",
+        "Choose Credit memo to reduce the financial amount or Debit memo to increase it.",
+        "Enter Amount (PHP) and a specific Authorization reason. Review the requested adjustment against the source evidence.",
+        "Save the authorized memo. This posts the memo immediately; there is no second draft/post step. Inspect the saved memo number in the document list and review the revised balance in Payments & aging.",
+        "If an unchanged submission fails or its response is uncertain while the form remains open, retry without changing the source, kind, amount or reason. The form retains its submission key, and the same saved memo is returned when that submission already succeeded. After closing or reloading the form, inspect the document list before creating another submission.",
+        "Open Books to inspect the corresponding journal when checking the accounting effect."
+      ],
+      "result": "The authorized memo adjusts the original document's financial balance with an audit trail.",
+      "notes": [
+        "A financial memo does not move physical stock or automatically reverse cost of goods sold. Handle any real return or inventory correction through the appropriate controlled workflow.",
+        "Posted financial history is retained; use an authorized adjustment instead of attempting to edit or delete a posted invoice.",
+        "An intentional additional memo is a new submission. Changing the form details creates a new submission key; never change details merely to retry an uncertain save. Memos use the original source's verified accounts even after posting-role mappings change."
+      ],
+      "connections": {
+        "Comes from": "Posted invoice or bill and adjustment approval",
+        "Next module": "Updated AR/AP balance, payment allocation and Books review"
+      },
+      "screenshots": [
+        {
+          "id": "34-invoices-bills",
+          "caption": "Review the posted source document before creating a financial adjustment."
+        },
+        {
+          "id": "75-memo-form",
+          "caption": "Choose the source, memo kind, amount and reason; retry unchanged content in the same open form after an uncertain response."
+        }
+      ]
+    },
+    {
+      "id": "customer-payment",
+      "title": "31. Record and allocate a customer payment",
+      "module": "Landed Cost & Finance / Payments & aging",
+      "roles": "Authorized Finance or Management user",
+      "purpose": "Apply one confirmed receipt to one or several outstanding invoices without leaving unexplained allocations.",
+      "before": [
+        "Post the customer invoice and confirm the money was actually received.",
+        "Collect the real payment date, method, bank/cash reference and amount."
+      ],
+      "steps": [
+        "Open Payments & aging and select Customer receivables. Review the customer invoices and outstanding balances.",
+        "In the payment form, choose the customer. Enter Payment amount (PHP), Payment date, Method and Payment reference.",
+        "Allocate the receipt across the intended posted invoices. Enter only amounts supported by each outstanding balance.",
+        "Check that all allocations add up exactly to the payment amount. For the training receipt, PHP 10,000 against PHP 31,360 leaves PHP 21,360 outstanding.",
+        "Select Record payment and wait for confirmation. Inspect Posted payments and the refreshed invoice balance.",
+        "Match the resulting bank entry to the actual statement later in Books > Bank reconciliation."
+      ],
+      "result": "The receipt reduces the allocated invoice balances and posts the balanced receipt journal.",
+      "notes": [
+        "Recording a payment does not initiate a bank transfer. It records money already paid or received outside the app.",
+        "If a save result is uncertain, refresh and inspect Posted payments before repeating the action. The entire payment must be allocated exactly.",
+        "Payment allocations clear the verified original invoice accounts, including invoices posted before a mapping change. An unavailable or unverifiable historical source requires Finance review; do not create a substitute receipt to force settlement."
+      ],
+      "connections": {
+        "Comes from": "Posted customer invoices and confirmed receipt evidence",
+        "Next module": "Updated aging/customer profile and bank reconciliation"
+      },
+      "screenshots": [
+        {
+          "id": "38-payment-allocation",
+          "caption": "Choose the party and allocate the confirmed payment to outstanding documents."
+        },
+        {
+          "id": "37-aging",
+          "caption": "Check the balance remaining after allocation."
+        }
+      ]
+    },
+    {
+      "id": "supplier-payment",
+      "title": "32. Request, approve and record supplier payment",
+      "module": "Landed Cost & Finance / Payments & aging",
+      "roles": "Authorized Finance/Management staff and approver",
+      "purpose": "Separate a request to pay from the confirmed payment transaction.",
+      "before": [
+        "Post the supplier bills and agree which balances should be paid.",
+        "Make sure the approving account has the appropriate company amount limit."
+      ],
+      "steps": [
+        "In Payments & aging, select Supplier payables and the supplier's outstanding bills.",
+        "Use the payment form action Submit payment request. Choose the supplier, allocate requested amounts, enter Requested payment due and Request notes, then select Submit payment request.",
+        "In Supplier payment requests, the approver reviews the submitted request and selects Approve, or Reject with a reason.",
+        "Arrange the real payment through the company's approved banking/cash process outside the app.",
+        "Once confirmed, use the supplier payment form. Enter the PHP amount, payment date, method and reference; select the Approved payment request when linking one.",
+        "Allocate the payment exactly across the intended bills and select Record payment. Confirm the request/payment status and the reduced payable balance."
+      ],
+      "result": "The request retains its decision history and the confirmed payment clears the allocated payable amounts.",
+      "notes": [
+        "Approving a payment request does not pay the supplier or create a bank transfer.",
+        "A linked payment must match the approved supplier and allocation. Record the actual payment once, then reconcile its bank entry.",
+        "The payment clears each bill's verified original payable account even when the current posting-role mapping differs. Investigate a source-account verification error with Finance before retrying."
+      ],
+      "connections": {
+        "Comes from": "Posted AP bills and approved payment plan",
+        "Next module": "Supplier balances, payment journal and bank reconciliation"
+      },
+      "screenshots": [
+        {
+          "id": "38-payment-allocation",
+          "caption": "Use the allocation workflow for a request or confirmed payment, as selected."
+        }
+      ]
+    },
+    {
+      "id": "aging",
+      "title": "33. Review receivables, payables and customer balances",
+      "module": "Landed Cost & Finance / Payments & aging",
+      "roles": "Authorized Finance/Management/Auditor reader; Sales where permitted for customer balances",
+      "purpose": "See what remains unpaid and prioritize collection or supplier settlement.",
+      "before": [
+        "Post invoices/bills and record all reviewed memos and confirmed payment allocations."
+      ],
+      "steps": [
+        "Open Payments & aging and select Customer receivables or Supplier payables as permitted.",
+        "Review Outstanding and the aging buckets, then inspect the document-level number, party, due date and balance.",
+        "Compare a disputed balance with the original posted document, posted memos and recorded payment allocations.",
+        "Open Customer Directory and the customer profile to review its finance balance panel where permitted.",
+        "Use Executive Dashboard > Receivables aging, Payables aging, Customer balances or Supplier balances for a report and CSV/Excel export.",
+        "Use Refresh after another team member posts or allocates a transaction. Follow up overdue documents using the company's normal collection/payment process."
+      ],
+      "result": "The team can trace each outstanding amount to posted documents and payment allocations.",
+      "notes": [
+        "Draft documents are not posted balances. Legacy customer/supplier balance fields are preserved separately and are not silently imported.",
+        "A manual opening journal changes Books balances but does not create invoice aging. Historical balance migration requires a separately reviewed process."
+      ],
+      "connections": {
+        "Comes from": "Posted documents, memos and allocations",
+        "Next module": "Collection, payment planning, profile review and management reporting"
+      },
+      "screenshots": [
+        {
+          "id": "37-aging",
+          "caption": "Review outstanding balances and due-date aging."
+        }
+      ]
+    },
+    {
+      "id": "warehouse-transfer-count",
+      "title": "34. Transfer stock, change condition and count bins",
+      "module": "Warehouse & Cycle Counts",
+      "roles": "Warehouse operator; authorized administrator/warehouse approver for count approval",
+      "purpose": "Keep physical locations and balances accurate after receiving and dispatch.",
+      "before": [
+        "Register the stock's existing lot/bin and confirm the physical quantity and condition."
+      ],
+      "steps": [
+        "In Bin / batch stock, search and select the intended lot. To relocate goods, choose the destination facility/bin, Transfer quantity and product scan, then select Confirm transfer.",
+        "For a condition change, choose New stock condition and select Change condition. Use the condition that reflects inspection, such as damaged or quarantine.",
+        "To count stock, select the required lots in the stock table and start the available cycle-count action. Open its ADJ record under Cycle counts & recount approvals.",
+        "For each count line, enter Physical quantity, scan the counted product and select Record count.",
+        "Submit the completed count for review. The authorized approver checks differences, then approves or selects Request recount with a reason.",
+        "For a requested recount, recheck the physical stock and complete the recount workflow. After approval, inspect the updated quantities and the adjustment in Stock Ledger."
+      ],
+      "result": "Transfers preserve stock traceability, and approved count differences become documented stock adjustments.",
+      "notes": [
+        "Count the real physical quantity; do not enter the expected number simply to eliminate a difference.",
+        "Reservations and existing movement restrictions may prevent a transfer or condition change. Resolve the underlying allocation instead of duplicating stock."
+      ],
+      "connections": {
+        "Comes from": "Located bin/batch stock",
+        "Next module": "Updated stock availability, Stock Ledger and management reports"
+      },
+      "screenshots": [
+        {
+          "id": "31-lot-transfer",
+          "caption": "Inspect a lot before transferring it or changing its condition."
+        },
+        {
+          "id": "32-cycle-count",
+          "caption": "Record counts and use approval or recount controls for differences."
+        }
+      ]
+    },
+    {
+      "id": "inventory-ledger",
+      "title": "35. Review stock movements and hub balances",
+      "module": "Master Inventory / Stock Ledger and Warehouses",
+      "roles": "User with Master Inventory access",
+      "purpose": "Trace why stock changed and confirm which facility holds the remaining goods.",
+      "before": [
+        "Complete the relevant receipt, transfer, dispatch or count action and note its reference."
+      ],
+      "steps": [
+        "Open Master Inventory and select Stock Ledger to view the Historical Ledger.",
+        "Use the available search and filters to find the SKU or transaction reference. Check movement type, quantity, source/destination, user and date.",
+        "Compare the ledger entry with its source receipt, transfer, dispatch or approved ADJ record.",
+        "Open Warehouses to inspect facility balances. Use Search hubs or items and Filter this hub to narrow the view.",
+        "For an ordinary local delivery awaiting routing, review Delivery Placement Queue and use its placement action to allocate the actual received quantities to a facility.",
+        "Use manual Receive, Return to Hub, Issue or Adjust actions only for the specific approved physical movement they describe, and verify the resulting ledger record."
+      ],
+      "result": "The stock ledger explains the movement and the hub view shows where the remaining balance is held.",
+      "notes": [
+        "For controlled customer delivery, use reservation/picking/dispatch rather than separately issuing the same goods from Master Inventory.",
+        "For imported goods, use the QC-accepted receipt placement workflow rather than duplicating receipt or placement through another route.",
+        "For a financial comparison, authorized Books and Finance readers can open Books & Reconciliation > Inventory reconciliation. It compares separate office/warehouse reference values with posted Inventory controls; it does not change these physical balances."
+      ],
+      "connections": {
+        "Comes from": "Receipts, placements, transfers, dispatches and approved counts",
+        "Next module": "Stock investigation, replenishment decisions and inventory reports"
+      },
+      "screenshots": [
+        {
+          "id": "13-stock-ledger",
+          "caption": "The Historical Ledger records operational stock changes."
+        },
+        {
+          "id": "14-warehouses",
+          "caption": "Review hub locations and stock balances."
+        }
+      ]
+    },
+    {
+      "id": "document-ledger",
+      "title": "36. Find, print and manage sales documents",
+      "module": "O.S. Ledger and Create Order Slip",
+      "roles": "User with Sales access; controlled actions require appropriate authority",
+      "purpose": "Reuse saved sales documents rather than creating a duplicate when a copy or follow-up is needed.",
+      "before": [
+        "Know the customer, document number and intended action."
+      ],
+      "steps": [
+        "Open O.S. Ledger and select the relevant document tab: Quotations, Order Slips, Final Orders or Packing Lists.",
+        "Use the available search/filter controls to locate the document. Select View and compare the customer, items, quantity, prices and status.",
+        "Use Print Document to print or save a PDF through the browser's print dialog.",
+        "To prepare a quotation, open Create Order Slip, choose its quotation document type, select the customer/products and generate the reviewed quotation. Use the available Viber/Email share action only when you intend to share that document.",
+        "For an active OS, use Approve & reserve or Gen Final Order / Gen Packing List when continuing the approved workflow.",
+        "Use Cancel or Mark Returned only when it reflects the real approved business event. Read any rejection or stock/dispatch restriction and resolve the source workflow before trying again."
+      ],
+      "result": "The same document remains traceable with its status and downstream references.",
+      "notes": [
+        "A sales quotation is an offer, while an OS starts the customer fulfillment workflow. Do not assume a quotation has reserved stock.",
+        "Cancellation or return of a document is not a substitute for a financial credit memo or a controlled physical stock correction."
+      ],
+      "connections": {
+        "Comes from": "Saved QT, OS, FO and PL documents",
+        "Next module": "Printing, approved fulfillment or documented cancellation/return review"
+      },
+      "screenshots": [
+        {
+          "id": "18-os-ledger",
+          "caption": "Find a saved sales document and inspect its available actions."
+        },
+        {
+          "id": "17-os-success",
+          "caption": "Use the source OS to continue to the final document and fulfillment."
+        }
+      ]
+    },
+    {
+      "id": "manual-journals",
+      "title": "37. Post a balanced manual journal and inspect Books",
+      "module": "Books & Reconciliation / Accounts & journals",
+      "roles": "Authorized Books writer; Auditor for read-only review",
+      "purpose": "Record reviewed manual accounting entries and inspect automatic finance journals.",
+      "before": [
+        "Initialize standard accounts and create any approved custom account.",
+        "Have an accounting-approved date, memo, unique reference and balanced debit/credit lines."
+      ],
+      "steps": [
+        "Open Accounts & journals. Review existing Balanced journal entries; expand a journal to inspect its accounts, debits and credits.",
+        "For a new adjustment, expand Post manual journal. Enter Journal date, Memo and Unique journal reference.",
+        "Choose the Account for each line and enter either its debit or credit amount in PHP. Use Add journal line for additional lines.",
+        "Check the displayed Debits, Credits and Difference. The journal must balance exactly before posting.",
+        "Select Post balanced journal and wait for confirmation. Expand the newly saved journal and compare it against the approved source.",
+        "Review the Trial balance panel for the workspace overview. For complete period totals and account history, open Financial statements, apply the Manila date range and select Trial Balance or General Ledger."
+      ],
+      "result": "The balanced journal appears in immutable posted accounting history and the trial balance updates.",
+      "notes": [
+        "Posted journals cannot be edited or deleted. Correct an accounting error with a reviewed correcting journal.",
+        "Manual journals do not automatically create operational receipts, stock movements, customer invoices or supplier-aging documents."
+      ],
+      "connections": {
+        "Comes from": "Approved accounting adjustment or automatic finance posting",
+        "Next module": "Trial balance, audit review and reconciliation"
+      },
+      "screenshots": [
+        {
+          "id": "41-manual-journal",
+          "caption": "Choose accounts and keep total debits equal to total credits."
+        }
+      ]
+    },
+    {
+      "id": "mappings",
+      "title": "38. Maintain posting roles and reference mappings",
+      "module": "Books & Reconciliation / Account mappings",
+      "roles": "Authorized Books writer",
+      "purpose": "Choose the approved accounts for new automatic Finance postings and retain separate master-record reference associations.",
+      "before": [
+        "Initialize standard accounts and create any approved custom ledger account in the correct company.",
+        "Have Finance confirm the intended posting role and compatible account type before changing automatic posting setup."
+      ],
+      "steps": [
+        "Open Books & Reconciliation and select Account mappings. Review Posting roles and reference mappings.",
+        "For an automatic posting account, expand Save accounting mapping and set Source type to POSTING_ROLE.",
+        "Under ERP source record, choose the role, such as AR_CONTROL or INVENTORY. Choose its approved compatible active Ledger account.",
+        "Review the role and account, then save. Leave a role unmapped to keep its standard default. Invalid or archived targets block posting.",
+        "For a reference association, select ITEM, CUSTOMER, SUPPLIER or ACCOUNT instead. Choose the intended ERP source record and target Ledger account, then save the reference.",
+        "Confirm the saved mapping in the list. Check Audit log to verify who saved it. Manual journals keep the accounts chosen in their own lines."
+      ],
+      "result": "The company has audited posting-role configuration and separately identified master-record reference links.",
+      "notes": [
+        "POSTING_ROLE controls new automatic Finance postings. ITEM, CUSTOMER, SUPPLIER and ACCOUNT remain references and do not silently reroute postings.",
+        "Cash, Inventory, AR, input VAT, AP, output VAT and landed-accrual controls must stay distinct; expense roles may share an appropriate expense account. A mapping does not activate an otherwise unsupported posting workflow.",
+        "New posted documents retain their actual accounts. Payments and memos verify and clear or adjust the original source accounts even after a mapping changes; existing journals are not rewritten.",
+        "Selecting BANK_CASH also designates the target for cash reporting. Previous cash designations remain until explicitly changed in Cash flow classification.",
+        "Only a global Super Admin can delete accounts. A referenced account is archived; restore it or select a valid replacement before new postings need it."
+      ],
+      "connections": {
+        "Comes from": "Chart of accounts, Finance setup and master-record reference review",
+        "Next module": "New automatic Finance postings, original-account settlement and financial reports"
+      },
+      "screenshots": [
+        {
+          "id": "42-reference-mappings",
+          "caption": "Account mappings separates automatic posting roles from item, party and account references."
+        },
+        {
+          "id": "73-posting-roles",
+          "caption": "Select POSTING_ROLE, its ERP role and a compatible active ledger account before saving."
+        }
+      ]
+    },
+    {
+      "id": "financial-statements",
+      "title": "39. Review the financial overview and complete statements",
+      "module": "Books & Reconciliation / Financial statements",
+      "roles": "Authorized Books reader; Auditor for read-only review",
+      "purpose": "Review posted-ledger financial totals for the selected company and period, with complete exports and traceable account detail.",
+      "before": [
+        "Post the reviewed source invoices, bills, payments, memos and approved manual journals.",
+        "Confirm the reporting dates, opening balances and any period-closing entries with Finance."
+      ],
+      "steps": [
+        "Open Books & Reconciliation and select Financial statements. Expand Report period (Asia/Manila), enter From and Through, then select Apply period. Both calendar dates are included.",
+        "Review Financial overview: Posted revenue (excludes VAT), Posted expenses, Posted-ledger profit / loss, Cash / bank ledger, AR ledger, AP ledger and Inventory ledger. Review the monthly posted revenue and expense trend and its source note.",
+        "Under Report detail, choose Financial report. Select Profit & Loss to inspect revenue and expense accounts, including the posted cost of goods sold within expenses, and the period profit/loss.",
+        "Select Balance Sheet to review assets, liabilities, recorded equity and accumulated unclosed ledger earnings through the selected Through date. Inspect the accounting-equation difference; the report does not create a fiscal closing entry.",
+        "Select Trial Balance to inspect opening debit/credit, period debit/credit and closing debit/credit columns. Review the complete report totals rather than relying on the limited workspace overview panel.",
+        "Select General Ledger, then choose Ledger account. Review its opening balance, dated journal lines and running balance. Use Previous page and Next page for the remaining entries; the running balance continues across pages.",
+        "Select Export complete report to download the full filtered XLSX report, including all matching rows rather than only the displayed page. Retain its Scope and totals sheet, dates, basis and notes with your review. Cash Flow exports also include Transfer exceptions when present."
+      ],
+      "result": "The reviewer has complete company-scoped posted-ledger statements and can trace balances back to source journals.",
+      "notes": [
+        "These reports use posted ledger data in PHP and inclusive Asia/Manila dates. Draft operational documents are not posted income, expense or cash. Archived accounts remain in historical financial totals.",
+        "Posted sales margin and posted-ledger profit are different: the Profit & Loss also includes the other posted expense accounts. Correct source postings and opening/closing entries are still necessary; a balanced report is not a guarantee of complete accounting accuracy.",
+        "The Balance Sheet presents accumulated unclosed earnings; it does not automatically close a fiscal year or add legacy party balances. Manual opening journals affect Books but do not create customer or supplier invoice aging.",
+        "AR/AP here are ledger controls. Finance Payments & aging remains the current subsidiary document basis, not a newly created historical aging snapshot.",
+        "Cash/bank and Inventory controls include their displayed standard, current and historical account scope. Read the source note when comparing to current stock references or a bank statement."
+      ],
+      "connections": {
+        "Comes from": "Posted Finance transactions, manual journals and reviewed opening balances",
+        "Next module": "Account investigation, cash-flow classification, inventory or bank reconciliation and retained review exports"
+      },
+      "screenshots": [
+        {
+          "id": "65-financial-overview",
+          "caption": "Apply the Manila reporting period and review the posted-ledger financial cards and trend."
+        },
+        {
+          "id": "66-profit-loss",
+          "caption": "Profit & Loss includes posted revenue and expense accounts for the selected period."
+        },
+        {
+          "id": "67-balance-sheet",
+          "caption": "Review assets, liabilities, recorded equity, unclosed earnings and the accounting-equation difference."
+        },
+        {
+          "id": "68-trial-balance",
+          "caption": "Trial Balance separates opening balances, period movements and closing debit/credit balances."
+        },
+        {
+          "id": "69-general-ledger",
+          "caption": "Choose a ledger account, follow its running balance and export the complete filtered result."
+        }
+      ]
+    },
+    {
+      "id": "cash-flow-classification",
+      "title": "40. Designate cash accounts and classify posted movements",
+      "module": "Books & Reconciliation / Cash flow classification",
+      "roles": "Authorized Books writer; Auditor for read-only review",
+      "purpose": "Identify the actual cash/bank reporting scope and classify cash movements without changing their original journals.",
+      "before": [
+        "Have Finance confirm which active asset accounts represent cash or bank balances and which cash-flow category applies to the movement.",
+        "Post the source journal and retain its actual receipt/payment evidence."
+      ],
+      "steps": [
+        "Open Books & Reconciliation and select Cash flow classification. Expand Cash entry period (Asia/Manila), enter From and Through, then select Apply period.",
+        "Review the designated cash/bank accounts. To change the scope, use Choose cash/bank designation account, select the account and expand Cash/bank account designation.",
+        "Set Include this account in cash-flow reports to Include as cash/bank or Exclude from cash/bank, as approved, and select Save designation. An archived account cannot be newly included as an active cash/bank target.",
+        "In Posted cash movements, review the journal, date, signed amount, Classified/Unclassified status and version. Use Previous entries or Next entries to find the required page.",
+        "Use Choose posted cash entry to select an entry on the current page. Expand Classify selected cash entry. Positive amounts are receipts; negative amounts are payments.",
+        "Choose Cash-flow category: operating, investing, financing or Internal transfer. For a movement covering several approved categories, choose Split across categories and enter exact signed amounts that sum to the selected entry amount.",
+        "Enter a specific Classification reason, then select Save classification version. Check the updated status and version. To correct a classification, select the entry again and save a reviewed new version.",
+        "For an internal transfer, classify the corresponding cash entries in the same journal and verify their transfer amounts net to zero. Continue to Financial statements > Cash Flow to review remaining exceptions."
+      ],
+      "result": "Cash/bank designations and signed cash-flow classifications are retained as audited versions, with the posted journal unchanged.",
+      "notes": [
+        "Existing cash entries begin Unclassified. Do not choose a category merely to remove a warning; use the underlying financial evidence.",
+        "Saving a correction appends a version. Earlier classifications and original journals are retained; this action does not change the bank balance or execute a payment.",
+        "The report uses the current cash-designation set for its chosen period. Changing that set changes opening/closing cash scope, not journal history. Previous BANK_CASH posting-role designations remain until explicitly changed.",
+        "Bank reconciliation and cash-flow classification serve different purposes: matching a bank statement does not classify its movements automatically."
+      ],
+      "connections": {
+        "Comes from": "Posted cash/bank journal entries and Finance's classification evidence",
+        "Next module": "Complete Cash Flow review, exception resolution and retained classification history"
+      },
+      "screenshots": [
+        {
+          "id": "70-cash-designation",
+          "caption": "Choose the approved asset account and save whether it belongs in cash/bank reporting."
+        },
+        {
+          "id": "71-cash-classification",
+          "caption": "Classify a posted signed cash entry, explain the reason and save a new audited version."
+        }
+      ]
+    },
+    {
+      "id": "cash-flow-report",
+      "title": "41. Review Cash Flow and resolve classification exceptions",
+      "module": "Books & Reconciliation / Financial statements / Cash Flow",
+      "roles": "Authorized Books reader; Books writer for classification corrections",
+      "purpose": "Explain the change from opening to closing cash while keeping incomplete or unmatched classifications visible.",
+      "before": [
+        "Review the designated cash/bank account scope and classify posted movements using their actual evidence.",
+        "Choose the same reporting period used for the cash review."
+      ],
+      "steps": [
+        "Open Books & Reconciliation > Financial statements, apply From and Through under Report period (Asia/Manila), then choose Cash Flow under Financial report.",
+        "Review operating, investing and financing amounts, opening/closing cash, unclassified movements and any transfer-exception amounts. Read the report basis and notes.",
+        "If Cash-flow classification is incomplete appears, check whether no cash/bank accounts are designated, entries remain Unclassified or transfer journals are unmatched. A zero-net exception can still require review; do not rely only on a total of zero.",
+        "Review Unmatched transfer journals and their references. Return to Cash flow classification to classify the correct entries or append a reviewed correction. Both transfer sides must reconcile in the same journal.",
+        "Return to Financial statements and refresh or apply the period again after the changes. Recheck completeness and the opening-to-closing cash reconciliation.",
+        "Select Export complete report. Retain the Report, Scope and totals, and Transfer exceptions sheets when present. Mark an incomplete export as unresolved review evidence rather than a final classified statement."
+      ],
+      "result": "The cash movement is reconciled and any remaining classification exceptions are explicit and traceable.",
+      "notes": [
+        "Unclassified entries and unmatched transfers make Cash Flow incomplete, even when positive and negative exceptions cancel in total.",
+        "An incomplete report can still reconcile opening and closing cash through its displayed exception buckets. That does not mean the categories are ready for final signoff.",
+        "Cash-flow categories do not change the posted journal, tax treatment, inventory quantity or bank statement matching."
+      ],
+      "connections": {
+        "Comes from": "Cash/bank designation, posted cash entries and saved classification versions",
+        "Next module": "Finance signoff, retained complete report export and further classification review if incomplete"
+      },
+      "screenshots": [
+        {
+          "id": "72-cash-flow-report",
+          "caption": "Review cash-flow totals, completeness and unmatched-transfer details before exporting the complete report."
+        }
+      ]
+    },
+    {
+      "id": "inventory-reconciliation",
+      "title": "42. Reconcile stock references with Books Inventory",
+      "module": "Books & Reconciliation / Inventory reconciliation",
+      "roles": "User with both Books and Finance read access; Auditor where permitted",
+      "purpose": "Investigate the difference between current physical stock references and posted Inventory controls without automatically changing either source.",
+      "before": [
+        "Confirm the company. Review receipts, warehouse placements, dispatches, bills, landed costs and opening balances.",
+        "Ask the administrator to grant the appropriate Books and Finance read permissions if the tab is unavailable."
+      ],
+      "steps": [
+        "Open Books & Reconciliation and select Inventory reconciliation. Select Refresh snapshot to load the current comparison.",
+        "Read Current physical snapshot, Ledger through date, Asia/Manila basis and the listed Inventory controls before comparing figures.",
+        "Review Office reference value, Warehouse reference value, Combined known reference value, Posted Inventory ledger and Reference vs ledger difference.",
+        "Search the reconciliation rows by SKU or product. Compare office/warehouse quantities, unit cost, cost basis, reference values and Issue details against the source records.",
+        "If Finance review needed appears, investigate missing/invalid costs, zero costs, orphan products or negative balances. Unknown values are excluded; Unavailable is not a zero difference.",
+        "Trace the difference through receipt/bill timing, opening balances, cost references and Inventory postings. Review the source records; do not change stock merely to make this report match.",
+        "Select Export reconciliation. Keep Stock references and Scope and totals. After source review, use Accounts & journals for any Finance-authorized correction, then refresh."
+      ],
+      "result": "Finance and warehouse staff can identify evidenced differences and retain a current stock-to-ledger reconciliation for review.",
+      "notes": [
+        "Values use current landed/manual references, not historical stock valuation or a new FIFO/weighted-average method.",
+        "Office and warehouse are separate pools. The displayed standard, current and historical Inventory controls retain older posted balances.",
+        "Timing, opening balances, missing capitalization or changed costs can cause differences. This report never changes quantities or posts corrections."
+      ],
+      "connections": {
+        "Comes from": "Master Inventory office balances, warehouse quantities, approved cost references and posted Inventory journals",
+        "Next module": "Source investigation, Finance-authorized correction when needed and retained reconciliation export"
+      },
+      "screenshots": [
+        {
+          "id": "74-inventory-reconciliation",
+          "caption": "Compare separate office/warehouse reference values with posted Inventory and investigate exception rows."
+        }
+      ]
+    },
+    {
+      "id": "bank-reconciliation",
+      "title": "43. Import and reconcile the bank statement",
+      "module": "Books & Reconciliation / Bank reconciliation",
+      "roles": "Authorized Books writer/approver",
+      "purpose": "Match bank statement transactions to the posted accounting entries and verify the closing balance.",
+      "before": [
+        "Post the confirmed bank payments/receipts and prepare the actual statement period.",
+        "Prepare CSV/Excel columns Date, Reference, Description and Amount; use YYYY-MM-DD dates, positive deposits and negative withdrawals."
+      ],
+      "steps": [
+        "Choose Bank reconciliation and expand Import bank statement and start reconciliation.",
+        "Select Bank ledger account, Statement date, Opening balance (PHP) and Closing balance (PHP).",
+        "Choose Statement CSV / Excel file. Review the imported transaction preview and correct dates, references, descriptions or signed amounts before saving. Use Add transaction or Remove row when needed.",
+        "Save the reconciliation. Open its statement lines and load the available posted bank entries.",
+        "For each statement line, choose the exact signed Matching ledger transaction and select Match entry. Investigate missing or different entries before proceeding.",
+        "Complete reconciliation only when every line is matched and the closing ledger balance reconciles to the statement."
+      ],
+      "result": "The completed reconciliation links the statement evidence to the posted ledger entries.",
+      "notes": [
+        "Supported statement uploads contain 1–1,000 transaction rows. Amounts use a sign and up to two decimal places.",
+        "Do not invent a payment to force a match. First investigate source postings, dates, bank charges and account selection, then record an approved correction if needed."
+      ],
+      "connections": {
+        "Comes from": "Confirmed payment/receipt journals and actual bank statement",
+        "Next module": "Completed financial review and audit evidence"
+      },
+      "screenshots": [
+        {
+          "id": "43-bank-reconciliation",
+          "caption": "Preview statement transactions, match posted bank entries and reconcile the closing balance."
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "title": "44. Review the audit history",
+      "module": "Books & Reconciliation / Audit log",
+      "roles": "Authorized Books/Auditor reader",
+      "purpose": "Trace who performed a controlled action, in which company and against which record.",
+      "before": [
+        "Identify the transaction number, record or time period being investigated."
+      ],
+      "steps": [
+        "Open Books & Reconciliation and select Audit log.",
+        "Load the available audit records using the tab's load/refresh action.",
+        "Review the actor, action, record type, reference and timestamp for the relevant activity.",
+        "Inspect the recorded details and compare the event with its source document, journal, service visit or account action.",
+        "Retain the relevant references in the company's review notes and escalate an unexplained action to the administrator or Finance lead."
+      ],
+      "result": "The reviewer can trace the action to its actor and saved business record.",
+      "notes": [
+        "Audit history is append-only. Deleting, archiving or restoring a ledger account does not delete its audit events.",
+        "Posted accounting history also remains protected; a correcting action produces further traceable history."
+      ],
+      "connections": {
+        "Comes from": "Controlled financial, account and service actions",
+        "Next module": "Investigation, correction approval or management review"
+      },
+      "screenshots": [
+        {
+          "id": "44-audit-log",
+          "caption": "Audit events preserve the actor, action and record context."
+        }
+      ]
+    },
+    {
+      "id": "device-service",
+      "title": "45. Register delivered devices and schedule service",
+      "module": "Medical Device Service",
+      "roles": "Authorized service operator",
+      "purpose": "Track delivered serials, warranty dates and planned maintenance or repairs after sale.",
+      "before": [
+        "Use serial-controlled stock and complete dispatch plus confirmed POD for the specific serial."
+      ],
+      "steps": [
+        "Open Medical Device Service. In Delivered medical devices & warranties, expand Register delivered serial number.",
+        "Choose the Verified delivered serial. Enter Warranty expires where applicable and Preventive maintenance interval (months), then save.",
+        "Confirm the asset's customer, product, serial, warranty and next-maintenance date.",
+        "In Preventive maintenance & repair logs, expand Schedule maintenance or repair. Select Device, Service type, Due date and Assigned technician; add Visit notes and save.",
+        "When work starts, open the visit update, change SCHEDULED to IN_PROGRESS and select Save service update. A scheduled visit cannot be completed directly.",
+        "When work is finished, update the IN_PROGRESS visit to COMPLETED; enter repair/maintenance notes, parts and total service cost, then Save service update. Confirm history and, for a completed preventive-maintenance visit, the next maintenance date."
+      ],
+      "result": "The delivered device retains warranty and service history, with the next planned maintenance date.",
+      "notes": [
+        "Registration and scheduling are staff actions; a delivered serial does not create every maintenance visit automatically.",
+        "Completed/cancelled visits are immutable. Completing a preventive-maintenance visit advances the next maintenance date by the configured calendar-month interval; completing a repair does not.",
+        "Parts and costs here are service history. They do not automatically deduct spare-parts stock, create a customer service invoice or post a ledger expense."
+      ],
+      "connections": {
+        "Comes from": "POD-delivered serial and customer",
+        "Next module": "Maintenance visits, repair history and device-service report"
+      },
+      "screenshots": [
+        {
+          "id": "45-device-service",
+          "caption": "Register verified delivered serials and review warranty/maintenance dates."
+        },
+        {
+          "id": "46-service-schedule",
+          "caption": "Schedule a visit and record its technician, notes, status and costs."
+        }
+      ]
+    },
+    {
+      "id": "executive-reports",
+      "title": "46. Use financial overview, alerts, forecasts and 11 reports",
+      "module": "Executive Dashboard",
+      "roles": "Authorized executive/report reader; available reports depend on role",
+      "purpose": "Review operational exceptions and export management information from the same saved workflows.",
+      "before": [
+        "Keep source shipments, receipts, delivery, finance and service records current."
+      ],
+      "steps": [
+        "Open Executive Dashboard and review Operational alerts. Select an alert to open its available supporting report.",
+        "When your account also has Books read access, review Financial overview. Apply the inclusive From/Through Manila period and inspect posted revenue, expenses, profit/loss, cash/bank and ledger control cards plus the monthly trend. Current Finance subsidiary balances remain separately labelled.",
+        "Review Demand forecast. Read the history/sample limitations before using the forecast for replenishment planning.",
+        "In Management reports, choose the required report and inspect its generated date, columns and results.",
+        "Use Export CSV or Export Excel to share the selected report. Retain its generated date and any completeness notice with the exported analysis.",
+        "Reopen the source module to investigate a reported exception. Correct the real record there, then refresh the dashboard/report."
+      ],
+      "result": "Management can follow alerts back to source data and export the reports permitted for the role.",
+      "notes": [
+        "The 11 reports are Inventory valuation; Stock availability; Shipment performance; Landed cost approvals; Posted sales margin; Receivables aging; Payables aging; Customer balances; Supplier balances; Delivery fulfillment; Device warranty and service.",
+        "Forecasts use confirmed delivery history over 90 days to project 30 days. Insufficient history and incomplete samples are disclosed; a forecast is not a supplier order.",
+        "Financial cards need the relevant Books read access; permission to see operational reports alone does not expose the ledger. Use Books > Financial statements for complete detail and full filtered XLSX exports.",
+        "Posted sales margin is not net profit. Posted-ledger profit also reflects other posted expense accounts, and complete source postings and reviewed opening/closing balances remain necessary."
+      ],
+      "connections": {
+        "Comes from": "Saved inventory, shipment, delivery, posted finance and service data",
+        "Next module": "Operational follow-up, exports and role-scoped AI questions"
+      },
+      "screenshots": [
+        {
+          "id": "47-executive-dashboard",
+          "caption": "Review the permitted financial overview, then continue down to operational alerts and forecasts."
+        },
+        {
+          "id": "48-management-report",
+          "caption": "Select a management report and export CSV or Excel."
+        }
+      ]
+    },
+    {
+      "id": "executive-ai-ocr",
+      "title": "47. Ask the executive assistant and review invoice OCR",
+      "module": "Executive AI & Invoice OCR",
+      "roles": "Authorized AI user with underlying report permissions; OCR also needs AI Docs access",
+      "purpose": "Ask questions about permitted company reports and extract invoice details for human review.",
+      "before": [
+        "Confirm AI service configuration is available. Upload and index the intended invoice in AI Docs Engine before OCR."
+      ],
+      "steps": [
+        "Open Executive AI & Invoice OCR. In Ask a question, enter a specific question, such as which products may need replenishment next month, and select Ask assistant.",
+        "Read the response and expand Sources. Compare any important figure with the named report before acting.",
+        "For OCR, select Load uploaded invoices & receipts. Choose the company-owned indexed document under Uploaded document.",
+        "Select Extract for review. Compare the supplier, dates, currency, quantities, unit prices, tax and totals against the original document.",
+        "Only after checking the source, tick I have reviewed the extracted information against the source.",
+        "Select Open Finance to enter verified bill when available. Enter the verified values in the bill form, then use the normal draft review and approval process."
+      ],
+      "result": "The user receives a sourced answer or provisional extracted values without bypassing Finance approval.",
+      "notes": [
+        "The assistant can use only the reports authorized for the requesting user and company. It does not execute arbitrary database changes.",
+        "OCR does not create or post a bill automatically. If AI or document indexing is unavailable, follow the displayed error and use verified manual entry."
+      ],
+      "connections": {
+        "Comes from": "Role-permitted reports and indexed company document",
+        "Next module": "Source-report review or manually entered verified Finance bill"
+      },
+      "screenshots": [
+        {
+          "id": "49-executive-ai",
+          "caption": "Ask a specific company question and review the sources before acting."
+        }
+      ]
+    },
+    {
+      "id": "payroll-start",
+      "title": "48. Start the separate payroll workflow",
+      "module": "Payroll Engine / Dashboard Overview",
+      "roles": "Authorized payroll user",
+      "purpose": "Prepare employee and attendance records before computing payroll; this workflow runs independently of sales Finance and Books.",
+      "before": [
+        "Agree the company's shift, lunch-break treatment, cutoff periods and employee pay rules.",
+        "Restrict payroll access to staff who should see personnel and salary information."
+      ],
+      "steps": [
+        "Open Payroll Engine from the company workspace and confirm the organization name.",
+        "On Dashboard Overview, review Total Employees, Total Net Processed and Shift Logs to understand the current saved records.",
+        "Review Current Default Shift. In the attendance configuration area, inspect Office In and Office Out before changing a company shift setting.",
+        "Follow the setup order: Register New employee, confirm the employee's Pay Profile, enter and Save Attendance, then Compute Payroll.",
+        "After saving payroll, use the saved payroll ledger for payslips, tax review and Summary Reports.",
+        "Use Gateway to return to the company workspace and Logout when finished."
+      ],
+      "result": "Payroll staff follow a repeatable sequence based on saved employee rules and attendance.",
+      "notes": [
+        "The employee's pay profile controls required paid days and overtime basis. Attendance date count alone does not define the payroll divisor.",
+        "Payroll figures and statutory deduction fields remain a separate workflow; they are not automatically posted into the new customer/supplier Finance ledgers."
+      ],
+      "connections": {
+        "Comes from": "Company payroll policy and authorized payroll access",
+        "Next module": "Employee registration and saved pay profile"
+      },
+      "screenshots": [
+        {
+          "id": "52-payroll-dashboard",
+          "caption": "The payroll dashboard starts a separate personnel-to-payroll workflow."
+        }
+      ]
+    },
+    {
+      "id": "employee-register",
+      "title": "49. Register and maintain employee records",
+      "module": "Payroll Engine / Register New and Directory List",
+      "roles": "Authorized payroll user",
+      "purpose": "Create the employee identity, salary reference and deduction details before attendance/payroll entry.",
+      "before": [
+        "Prepare the employee's verified personnel information and agreed salary details."
+      ],
+      "steps": [
+        "Select Register New. Enter Employee ID, First Name, optional Middle Name and Last Name.",
+        "Complete Birth Date, Civil Status and Complete Address.",
+        "Enter Base Salary per Cutoff (₱), Employment Status and optional Bank Account No. Use the employee's agreed amount rather than copying another person's rate.",
+        "Enter any actual Cash Advance Balance, Advance Deduct/Cutoff, Company Loan Balance and Loan Deduct/Cutoff.",
+        "Complete available TIN, SSS Number, PhilHealth and Pag-IBIG identifiers, then save the employee.",
+        "Open Directory List to locate the employee. Use Edit to maintain details and save the employee's separate Pay Profile before the first final payroll."
+      ],
+      "result": "The employee can be selected in attendance and payroll for the same company.",
+      "notes": [
+        "Employee identifiers, bank details and statutory numbers are sensitive personnel information; share only with authorized staff.",
+        "The salary field and the saved pay profile must describe the same agreed pay basis. A missing profile blocks final payroll saving until configured."
+      ],
+      "connections": {
+        "Comes from": "Verified employee/personnel and salary information",
+        "Next module": "One-time Pay Profile and saved attendance"
+      },
+      "screenshots": [
+        {
+          "id": "54-register-employee",
+          "caption": "Enter personnel, salary, loan and statutory details."
+        },
+        {
+          "id": "53-employee-directory",
+          "caption": "Locate the employee and maintain their saved record."
+        }
+      ]
+    },
+    {
+      "id": "pay-profile",
+      "title": "50. Save each employee's agreed pay rules once",
+      "module": "Payroll Engine / Compute Salary / Pay profile",
+      "roles": "Authorized payroll user",
+      "purpose": "Store the rule that automatically supplies rates, required paid days and overtime treatment in future cutoffs.",
+      "before": [
+        "Register the employee and confirm their agreed pay basis, divisor and working-day schedule."
+      ],
+      "steps": [
+        "Open Compute Payroll and select Compute Salary for the employee. Expand One-time pay profile setup required or Pay profile · saved rules.",
+        "Choose Overtime calculation. Excel cutoff balance (default) compares total cutoff hours with the required cutoff total. Daily overtime and separate shortfalls is an explicit alternative.",
+        "Choose Pay basis: Fixed cutoff salary or Fixed daily rate.",
+        "For fixed cutoff salary, enter Rate divisor in days. Required paid days use the same fixed divisor. For daily pay, enter Daily rate and choose working weekdays or a fixed number per cutoff.",
+        "When scheduled weekdays are used, tick the agreed working days. When fixed days are used, enter the agreed Paid days per cutoff.",
+        "Select Save Pay Profile. Wait for confirmation and Refresh Preview before reviewing payroll."
+      ],
+      "result": "Future payroll cutoffs reuse the saved rules instead of requiring the same divisor to be entered repeatedly.",
+      "notes": [
+        "Confirm the prefilled values against the employee agreement; a prefilled 14-day divisor is not proof that 14 is correct for every employee.",
+        "Excel cutoff balance uses 125% for hours above the required total and the normal hourly rate for a shortage. Calculations retain precision until currency amounts are rounded to cents."
+      ],
+      "connections": {
+        "Comes from": "Agreed employee salary and schedule",
+        "Next module": "Saved attendance and server-confirmed payroll calculation"
+      },
+      "screenshots": [
+        {
+          "id": "56-pay-profile",
+          "caption": "Confirm pay basis, fixed divisor or weekdays, and overtime method before saving the profile."
+        }
+      ]
+    },
+    {
+      "id": "attendance",
+      "title": "51. Enter the cutoff attendance and save once",
+      "module": "Payroll Engine / Log Attendance",
+      "roles": "Authorized payroll/attendance user",
+      "purpose": "Enter minute-precision work or leave records for the selected employee and cutoff.",
+      "before": [
+        "Choose the correct employee, company, cutoff period and cutoff end month.",
+        "Prepare the actual time records; no seconds are required or supported in the entry fields."
+      ],
+      "steps": [
+        "Select Log Attendance. Search and select Employee, then choose Cutoff period and Cutoff end month. For example, October with 26th–10th means September 26 through October 10.",
+        "Enter Time In and Time Out in h:mm AM/PM or HH:mm. Check AM/PM carefully; an earlier clock-out can indicate Ends next day.",
+        "Use Work, Paid leave or Unpaid leave as appropriate. Leave dates with no record blank; blank rows are not automatically leave.",
+        "Select + Add Session when another real session belongs on the same attendance date. Enter moves down the same time column; Tab moves between cells.",
+        "Review changed rows and select Save Attendance. Unsaved/Pending rows are not confirmed totals. Correct any row errors shown.",
+        "Use Check saved status / Refresh to confirm a save, or Reset Unsaved Changes to discard local edits. Inspect Total paid hours and Daily regular / Daily overtime totals after saving."
+      ],
+      "result": "Saved attendance sessions become the authoritative input for payroll preview.",
+      "notes": [
+        "Daily Regular/Overtime columns can differ from payroll's Excel cutoff-balance overtime because payroll applies the saved cutoff rule.",
+        "The configured lunch overlap is deducted from eligible work time; a short session outside the lunch period does not automatically lose one hour. Compare the same inputs and rules when reconciling Excel."
+      ],
+      "connections": {
+        "Comes from": "Verified clock-in/out and leave records",
+        "Next module": "Server-confirmed Compute Payroll preview"
+      },
+      "screenshots": [
+        {
+          "id": "55-attendance-grid",
+          "caption": "Select the cutoff, enter minute-level times and confirm Save Attendance."
+        }
+      ]
+    },
+    {
+      "id": "compute-payroll",
+      "title": "52. Review deductions and save payroll",
+      "module": "Payroll Engine / Compute Payroll",
+      "roles": "Authorized payroll user",
+      "purpose": "Calculate the selected cutoff from saved attendance and the employee's saved pay profile.",
+      "before": [
+        "Save the employee's pay profile and all attendance for the intended cutoff.",
+        "Prepare approved contribution, loan, cash-advance and other deduction amounts."
+      ],
+      "steps": [
+        "Open Compute Payroll and choose Payroll cutoff and Cutoff end month. Select Compute Salary for the intended employee.",
+        "Wait for Server confirmed. Use Refresh Preview if attendance or profile changes were just saved. Review worked dates, leave counts and saved sessions.",
+        "Check Required Paid Days, Logged Hours, OT Hours, Rate per Day, Rate per Hour and Required Hours against the agreed profile.",
+        "Enter approved Govt Adj (±) and deductions such as Cash Advance, Company Loan, SSS, Pag-IBIG, PhilHealth and the applicable loan fields.",
+        "Use Declared Salary / Apply BIR Tax according to the employee's approved treatment. Review Gross Pay, withholding tax where applied, Total Deductions and Final Net Pay.",
+        "Select Close & Save. Confirm the saved payroll in the payroll ledger before printing or processing another record for the same cutoff."
+      ],
+      "result": "The saved payroll retains its confirmed hours, earnings, deductions and net pay for reporting.",
+      "notes": [
+        "A matching Excel result requires matching cutoff, time precision, breaks, rates/divisor, overtime basis, adjustments and deductions. Matching a total alone does not verify every source entry.",
+        "If a save is uncertain, inspect the saved payroll ledger before retrying. Do not create a second payroll simply because a response was delayed."
+      ],
+      "connections": {
+        "Comes from": "Saved profile, saved attendance and approved deductions",
+        "Next module": "Payslip, payroll exports, Tax Reports and Summary Reports"
+      },
+      "screenshots": [
+        {
+          "id": "57-compute-payroll",
+          "caption": "Review the server-confirmed calculation, deductions and final net pay before saving."
+        }
+      ]
+    },
+    {
+      "id": "payslip",
+      "title": "53. Print payslips and export saved payrolls",
+      "module": "Payroll Engine / Saved payroll ledger",
+      "roles": "Authorized payroll user",
+      "purpose": "Deliver the saved calculation to the employee and prepare reviewed payroll records for sharing.",
+      "before": [
+        "Save payroll and confirm the employee and cutoff are correct."
+      ],
+      "steps": [
+        "In Compute Payroll, locate the saved payroll record for the employee and intended cutoff.",
+        "Open its payslip/view action. Check employee name, required paid days, earnings, deductions and net earnings.",
+        "Select Print Slip and choose the intended printer or Save as PDF in the browser print dialog.",
+        "For a payroll data file, use Export All Payrolls. Review the exported dates and cutoff columns before sharing.",
+        "Use Export All as ZIP when a batch of saved payslip PDFs is required. Wait for PDF processing to finish before closing the page.",
+        "If a saved payroll needs correction, have the payroll administrator review the payroll, loan/cash-advance balances and any actual payment before an authorized correction. Do not delete and recreate simply to retry a save."
+      ],
+      "result": "The employee copy and exported records reflect the saved payroll rather than an unsaved preview.",
+      "notes": [
+        "Payslips and payroll exports contain salary and personal information. Share them only through the company's approved recipients and channels.",
+        "An export is a copy of recorded data. It does not execute the employee's bank payment."
+      ],
+      "connections": {
+        "Comes from": "Saved payroll ledger",
+        "Next module": "Employee payslip delivery, tax review and payroll summaries"
+      },
+      "screenshots": [
+        {
+          "id": "63-payslip",
+          "caption": "Review the saved employee payslip, then select Print Slip."
+        }
+      ]
+    },
+    {
+      "id": "tax-reports",
+      "title": "54. Review historical withholding tax reports",
+      "module": "Payroll Engine / Tax Reports",
+      "roles": "Authorized payroll/tax reviewer",
+      "purpose": "Find recorded withholding-tax results using a consistent date basis.",
+      "before": [
+        "Save the payrolls to be reviewed and know whether the review concerns cutoff periods or payroll generation dates."
+      ],
+      "steps": [
+        "Select Tax Reports and review the Tax Computation Report.",
+        "Choose Date Basis: Payroll Date (Generated) or Payroll Cutoff Period. These can return different records when payroll was saved after the cutoff.",
+        "Enter Date From and Date To, or choose Today, This Month or Last Month for an initial range.",
+        "Search Employee to narrow the results and select Apply Filter.",
+        "Review the listed employee, payroll/cutoff information, taxable figures and recorded withholding amounts. Use the report's available export action when a copy is required.",
+        "Use Clear Filter to clear dates while keeping the employee search, or Reset All to remove the full filter. Compare exceptions with the original saved payroll."
+      ],
+      "result": "The report presents the saved withholding-tax records for the chosen employee/date basis.",
+      "notes": [
+        "This is a report of the app's saved payroll calculations; it is not an automatic BIR filing or remittance.",
+        "The payroll/tax reviewer must confirm the employee treatment, source records and current company requirements before an external filing."
+      ],
+      "connections": {
+        "Comes from": "Saved payroll and declared-salary tax calculation",
+        "Next module": "Reviewed tax records and external filing/remittance process"
+      },
+      "screenshots": [
+        {
+          "id": "58-tax-reports",
+          "caption": "Select the intended date basis, date range and employee before applying filters."
+        }
+      ]
+    },
+    {
+      "id": "payroll-summary",
+      "title": "55. Generate a payroll summary report",
+      "module": "Payroll Engine / Summary Reports",
+      "roles": "Authorized payroll user",
+      "purpose": "Summarize saved payroll records for an employee or selected reporting range.",
+      "before": [
+        "Save the relevant payrolls and agree the reporting dates."
+      ],
+      "steps": [
+        "Select Summary Reports.",
+        "Enter From Date and To Date. Choose Select Employee when reporting one employee, or the available all-employee option for a company summary.",
+        "Select the report-generation action and wait for the Payroll Summary Report preview.",
+        "Review employee names, number of payrolls, total days, total hours, overtime, gross pay, deductions and net pay.",
+        "Compare a sample employee with their saved payslips. Investigate duplicate or missing payroll records before sharing totals.",
+        "Select Print Report to print or save the reviewed summary as PDF through the browser dialog."
+      ],
+      "result": "The summary gives a traceable total of the saved payroll records included by the selected filters.",
+      "notes": [
+        "Payroll Summary Reports and the 11 ERP management reports serve different datasets. Payroll continues independently from sales/warehouse Finance.",
+        "A summary cannot correct a source payroll. Correct the approved underlying record, then regenerate the report."
+      ],
+      "connections": {
+        "Comes from": "Saved payroll records",
+        "Next module": "Management payroll review and approved employee payment process"
+      },
+      "screenshots": [
+        {
+          "id": "59-payroll-summary",
+          "caption": "Set the reporting range and employee, then review and print the summary."
+        }
+      ]
+    }
+  ],
+  "glossary": [
+    {
+      "term": "OS - Order Slip",
+      "meaning": "The starting customer request, with customer, products, quantity and agreed prices. Customer fulfillment is derived from it."
+    },
+    {
+      "term": "Supplier PO",
+      "meaning": "The purchase order issued to a supplier. It buys stock and is distinct from the customer's sales/fulfillment obligation."
+    },
+    {
+      "term": "FO - Final Order",
+      "meaning": "The final customer order document linked to the OS; an active FO is required for invoice creation from POD."
+    },
+    {
+      "term": "PL - Packing List",
+      "meaning": "The packing document that supports fulfillment and delivery. It remains available alongside FO."
+    },
+    {
+      "term": "GRN",
+      "meaning": "Goods receipt record showing received and QC-accepted, rejected or held quantities."
+    },
+    {
+      "term": "Reservation",
+      "meaning": "A lock on eligible stock for a customer order; it does not itself deduct physical stock."
+    },
+    {
+      "term": "FEFO",
+      "meaning": "First Expiry, First Out: picking eligible expiry-controlled stock in expiry order."
+    },
+    {
+      "term": "Dispatch",
+      "meaning": "The confirmed issue of verified goods from physical stock for delivery."
+    },
+    {
+      "term": "POD",
+      "meaning": "Signed Proof of Delivery recording what the recipient actually received."
+    },
+    {
+      "term": "Landed cost",
+      "meaning": "Supplier item cost plus allocated import expenses, converted to PHP using entered exchange rates."
+    },
+    {
+      "term": "AR / AP",
+      "meaning": "Accounts receivable owed by customers / accounts payable owed to suppliers, based on posted Finance documents and allocations."
+    },
+    {
+      "term": "Draft / Posted",
+      "meaning": "A draft awaits review. Posting creates the controlled accounting effect and retains the record in history."
+    },
+    {
+      "term": "Credit / Debit memo",
+      "meaning": "An authorized financial adjustment against a posted invoice or bill; it does not itself move goods."
+    },
+    {
+      "term": "Posting role",
+      "meaning": "A named automatic Finance posting purpose, such as AR_CONTROL or BANK_CASH, mapped to an approved active ledger account. Reference mappings and manual journal account selections retain their separate meanings."
+    },
+    {
+      "term": "Posted-ledger profit / loss",
+      "meaning": "Posted revenue less posted expense accounts for the selected period. It is distinct from the sales-margin report and depends on complete, correctly posted sources."
+    },
+    {
+      "term": "Unclosed ledger earnings",
+      "meaning": "Accumulated posted revenue less expenses presented within Balance Sheet equity; displaying it does not create an automatic fiscal-year closing entry."
+    },
+    {
+      "term": "Cash-flow classification",
+      "meaning": "An audited version assigning the exact signed cash-entry amount to operating, investing, financing or internal-transfer categories while preserving its original journal."
+    },
+    {
+      "term": "Inventory reference reconciliation",
+      "meaning": "A comparison of current office and warehouse quantities at the existing cost reference with posted Inventory controls. Differences require investigation and do not create automatic adjustments."
+    },
+    {
+      "term": "Cutoff end month",
+      "meaning": "The month in which the payroll cutoff ends. October with 26th–10th means September 26 through October 10."
+    },
+    {
+      "term": "Pay profile",
+      "meaning": "The saved employee rule for pay basis, required paid days/divisor and overtime method."
+    }
+  ],
+  "checklists": [
+    {
+      "title": "First-time setup order",
+      "items": [
+        "Create/select company and grant staff access.",
+        "Initialize standard accounts and add approved custom accounts.",
+        "Review optional POSTING_ROLE mappings and designate the actual cash/bank reporting accounts; retain standard defaults when no remapping is required.",
+        "Create customers/categories, products, suppliers/catalog links and facilities/bins.",
+        "Confirm product tracking controls and test QR labels.",
+        "Agree opening-balance treatment and employee pay profiles before live use."
+      ]
+    },
+    {
+      "title": "Customer order - stock already on hand",
+      "items": [
+        "Save OS and check prices/VAT.",
+        "Approve & reserve eligible stock.",
+        "Generate FO/PL and open linked delivery.",
+        "Verify FEFO picks, confirm dispatch and save signed POD.",
+        "Create invoice draft, review and approve/post.",
+        "Record actual receipt and allocate it; reconcile the bank entry."
+      ]
+    },
+    {
+      "title": "Customer order - stock must be imported",
+      "items": [
+        "Save OS demand and supplier PO using the source OS; do not duplicate a procurement route.",
+        "Create shipment, maintain customs clearance and collect import charges.",
+        "Save GRN/QC, place accepted goods into bins and reserve customer quantities.",
+        "Complete FO/PL, picking, dispatch and POD.",
+        "Approve landed-cost reference; create/post actual supplier bills separately.",
+        "Create/post customer invoice, allocate actual payments and reconcile bank statements."
+      ]
+    },
+    {
+      "title": "Every payroll cutoff",
+      "items": [
+        "Confirm company, employee and exact cutoff dates.",
+        "Save attendance and resolve Pending/unconfirmed records.",
+        "Confirm the saved pay profile and required paid days.",
+        "Review server-confirmed hours, adjustments and deduction amounts.",
+        "Save once and verify the payroll ledger.",
+        "Print payslip and review Tax/Summary Reports from the saved records."
+      ]
+    },
+    {
+      "title": "Month-end operational and finance review",
+      "items": [
+        "Investigate open shipments, QC hold/rejected goods and undelivered balances.",
+        "Review bin counts, expired stock and reservation exceptions.",
+        "Review draft invoices/bills, overdue balances and outstanding payment requests.",
+        "Match actual bank statements and complete reconciliations.",
+        "Apply the reviewed Manila period in Financial statements and retain complete report exports, including their Scope and totals.",
+        "Review cash-flow classifications and resolve unclassified movements or unmatched internal transfers, including zero-net exceptions.",
+        "Compare office/warehouse reference values with Inventory controls; investigate missing costs, timing and opening balances before an authorized correction.",
+        "Review service dates, document expiry reminders and role-permitted management reports.",
+        "Retain approved source documents, export dates and audit references."
+      ]
+    }
+  ],
+  "troubleshooting": [
+    {
+      "problem": "A company or module is missing",
+      "resolution": "Ask the Super Admin to check company membership, module clearances, ERP role and any disabled module setting. Sign in again after access changes if needed."
+    },
+    {
+      "problem": "Financial approval is denied",
+      "resolution": "Check the company's Finance approval limit and requested amount. Auditor remains read-only even with another role. Ask an authorized approver rather than splitting transactions to bypass a limit."
+    },
+    {
+      "problem": "Delete account is disabled or blocked",
+      "resolution": "Only the global Super Admin can delete or restore ledger accounts. Unused standard or custom accounts are removed; accounts referenced by journals, mappings or reconciliations are archived with their history retained. Use Show archived accounts and Restore to make an archived account available for new transactions."
+    },
+    {
+      "problem": "OS cannot reserve the requested quantity",
+      "resolution": "Inspect usable available stock, existing reservations, condition, batch/expiry and placement. Incoming shipment allocations are plans until stock is accepted and available."
+    },
+    {
+      "problem": "Goods arrived but are not available for picking",
+      "resolution": "Check customs clearance, saved GRN quantities, QC acceptance and accepted-receipt bin placement. Quarantine/rejected goods are not available stock."
+    },
+    {
+      "problem": "Dispatch cannot be confirmed",
+      "resolution": "Verify every pick quantity and inspect product, physical bin, batch and serial. Resolve missing reservation or eligibility before issuing stock."
+    },
+    {
+      "problem": "Delivery is absent from invoice creation",
+      "resolution": "Confirm signed POD quantities and an active linked FO. A PL alone is insufficient. Check whether the same delivered quantities have already been invoiced."
+    },
+    {
+      "problem": "A payment allocation is rejected",
+      "resolution": "Use posted documents for the same customer/supplier, keep each allocation within outstanding balance, and make the total equal the confirmed payment amount in PHP."
+    },
+    {
+      "problem": "Bank reconciliation will not complete",
+      "resolution": "Match every statement line to the exact signed posted bank entry and verify opening/closing balances and dates. Investigate actual bank charges or missing postings before an approved correction."
+    },
+    {
+      "problem": "A new accounting tab is missing",
+      "resolution": "New accounting screens require the matching app release. Ask the administrator to confirm the release and your module/ERP-role permissions. Inventory reconciliation requires both Books and Finance read access; financial dashboard cards need Books read access."
+    },
+    {
+      "problem": "A posting-role mapping or new posting is rejected",
+      "resolution": "Check the selected company, active target account and required account type. Keep cash, Inventory, AR, input VAT, AP, output VAT and accrued controls distinct. Restore an archived target or ask Finance to approve a valid replacement; do not repeatedly change accounts to bypass the rejection."
+    },
+    {
+      "problem": "A payment or memo requires historical source-account review",
+      "resolution": "The app must verify the original posted source accounts before clearing or adjusting them. Ask Finance to compare the source document and its journal. Do not make a substitute invoice, payment or manual correction just to bypass missing or inconsistent provenance."
+    },
+    {
+      "problem": "Cash Flow remains incomplete even when its exception total is zero",
+      "resolution": "Review designated cash/bank accounts, every Unclassified entry and Unmatched transfer journals. Positive and negative exceptions can cancel without being correctly classified. Classify the actual entries and both sides of a same-journal internal transfer, then refresh the report."
+    },
+    {
+      "problem": "Inventory reconciliation comparison is unavailable or differs from Books",
+      "resolution": "Review missing/invalid and zero cost references, negative balances, orphan references, receipt/bill timing, approved opening balances and the displayed Inventory controls. Unknown values are excluded from known totals and cannot be treated as zero. This report does not adjust stock or post a correction automatically."
+    },
+    {
+      "problem": "A memo save response was lost",
+      "resolution": "While the same form remains open, retry the unchanged source, kind, amount and reason so its retained submission key can return the original saved memo. If the form was closed/reloaded or details changed, inspect the document list first. A new intentional memo is a separate submission."
+    },
+    {
+      "problem": "A financial export contains more rows than the screen page",
+      "resolution": "Export complete report intentionally includes the complete filtered financial result, not just the current General Ledger page. Check its date/company basis and Scope and totals sheet; keep any Transfer exceptions sheet with a Cash Flow review."
+    },
+    {
+      "problem": "AI Docs or OCR is unavailable",
+      "resolution": "Check the displayed connection/provider error with the administrator. Upload/index the document in the correct company and confirm AI Docs/OCR permissions. Use verified manual entry while processing is unavailable."
+    },
+    {
+      "problem": "Attendance and payroll show different overtime",
+      "resolution": "Attendance shows daily regular/overtime; payroll may use Excel cutoff balance. Compare total paid hours, selected cutoff and saved employee overtime basis before assuming a discrepancy."
+    },
+    {
+      "problem": "Payroll differs from Excel",
+      "resolution": "Compare the same minute-level times, cutoff dates, lunch/shift settings, pay basis, divisor/paid days, overtime method, adjustments and deductions. Do not compare one month or input set with another."
+    },
+    {
+      "problem": "Save result is uncertain or network failed",
+      "resolution": "Restore the connection, refresh/check saved status and inspect the relevant ledger before saving again. A delayed response does not prove that the first save failed."
+    }
+  ],
+  "connections": {
+    "setup": [
+      "Company → Staff access/roles → Initialize chart of accounts → Review optional posting roles and cash/bank designations → Customers/categories → Product catalog → Suppliers/catalog links → Facilities/bins/tracking → Daily operations"
+    ],
+    "orderToCash": [
+      "Customer + catalog → OS → Approve/reserve → FO/PL → Delivery/FEFO verification → Confirm dispatch → Signed POD + active FO → Create invoice draft → Approve/post → Allocate confirmed customer payment → Bank reconciliation",
+      "When stock is missing: OS demand → Supplier PO → Shipment → Customs → GRN/QC → Accepted bin placement → Customer reservation",
+      "Shipment invoice/expenses → Provisional landed cost → Finance final approval → Product reference cost/history",
+      "Actual supplier invoice → Draft BILL → Approve/post → AP aging → Payment request/approval → Confirmed supplier payment → Bank reconciliation",
+      "POD-delivered serial → Device registration → Service schedule → Visit history → Management report"
+    ],
+    "accountingReview": [
+      "Posted invoices/bills/memos/payments and approved journals → Financial statements period → Full report exports → Cash-flow classification and transfer exceptions → Bank reconciliation → Audit review",
+      "Office/warehouse quantities + existing cost references + posted Inventory controls → Inventory reconciliation → Source investigation → Finance-authorized correction only when evidenced"
+    ],
+    "payroll": [
+      "Employee → Saved Pay Profile → Saved attendance for cutoff → Server-confirmed payroll preview → Review adjustments/deductions → Save payroll → Payslip / Tax Report / Summary Report"
+    ]
+  }
+}

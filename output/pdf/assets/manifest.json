@@ -1,0 +1,380 @@
+{
+  "edition": "26 October 2026",
+  "screenshots": [
+    {
+      "id": "01-login",
+      "caption": "Enter your own credentials and select Access Systems.",
+      "path": "01-login.jpg"
+    },
+    {
+      "id": "02-company-selector",
+      "caption": "Select the organization that owns the records you will enter.",
+      "path": "02-company-selector.jpg"
+    },
+    {
+      "id": "60-add-company",
+      "caption": "Create the company, then grant access before staff enter records.",
+      "path": "60-add-company.jpg"
+    },
+    {
+      "id": "61-approval-limits",
+      "caption": "Each company's Finance approval authority must be configured explicitly.",
+      "path": "61-approval-limits.jpg"
+    },
+    {
+      "id": "03-users",
+      "caption": "Access & Governance lists registered accounts.",
+      "path": "03-users.jpg"
+    },
+    {
+      "id": "04-permissions",
+      "caption": "Assign module access and company permissions.",
+      "path": "04-permissions.jpg"
+    },
+    {
+      "id": "05-erp-roles",
+      "caption": "Choose ERP responsibilities and company approval limits.",
+      "path": "05-erp-roles.jpg"
+    },
+    {
+      "id": "39-chart-accounts",
+      "caption": "Initialize and review the standard chart of accounts.",
+      "path": "39-chart-accounts.jpg"
+    },
+    {
+      "id": "40-add-account",
+      "caption": "Add a custom account with the correct account type.",
+      "path": "40-add-account.jpg"
+    },
+    {
+      "id": "62-delete-custom-account",
+      "caption": "Show archived accounts to review retained accounts; only the global Super Admin can select Restore.",
+      "path": "62-delete-custom-account.jpg"
+    },
+    {
+      "id": "06-workspace",
+      "caption": "Use the company workspace, side navigation and search to reach each connected module.",
+      "path": "06-workspace.jpg"
+    },
+    {
+      "id": "07-customers",
+      "caption": "Search the directory before registering a new customer.",
+      "path": "07-customers.jpg"
+    },
+    {
+      "id": "08-customer-form",
+      "caption": "Complete the customer identity and category fields.",
+      "path": "08-customer-form.jpg"
+    },
+    {
+      "id": "11-inventory-catalog",
+      "caption": "Catalog search, category filters, tier prices and stock.",
+      "path": "11-inventory-catalog.jpg"
+    },
+    {
+      "id": "12-product-form",
+      "caption": "Product identity, manual costs and category-price overrides.",
+      "path": "12-product-form.jpg"
+    },
+    {
+      "id": "09-suppliers",
+      "caption": "Supplier directory, terms and assigned products.",
+      "path": "09-suppliers.jpg"
+    },
+    {
+      "id": "10-supplier-form",
+      "caption": "Register the vendor's legal and contact details.",
+      "path": "10-supplier-form.jpg"
+    },
+    {
+      "id": "14-warehouses",
+      "caption": "Maintain warehouse facilities in Master Inventory.",
+      "path": "14-warehouses.jpg"
+    },
+    {
+      "id": "30-bin-form",
+      "caption": "Create a bin using the six physical location levels.",
+      "path": "30-bin-form.jpg"
+    },
+    {
+      "id": "15-product-qr",
+      "caption": "Search products, generate missing QR records and print the required label.",
+      "path": "15-product-qr.jpg"
+    },
+    {
+      "id": "16-create-os",
+      "caption": "Separate entry example: ten Sterile Syringe 5 mL units. The main fulfillment example uses one monitor on OS-1001.",
+      "path": "16-create-os.jpg"
+    },
+    {
+      "id": "17-os-success",
+      "caption": "Separate generated example OS-1002 for ten syringes (PHP 257.60). The same approval and document controls apply to the main OS-1001 example.",
+      "path": "17-os-success.jpg"
+    },
+    {
+      "id": "19-po-generate",
+      "caption": "Select the supplier and source OS, then review the incrementing PO number.",
+      "path": "19-po-generate.jpg"
+    },
+    {
+      "id": "20-po-ledger",
+      "caption": "The ledger identifies which receiving route applies.",
+      "path": "20-po-ledger.jpg"
+    },
+    {
+      "id": "22-import-requisition",
+      "caption": "Select requests and compare recorded supplier quotations.",
+      "path": "22-import-requisition.jpg"
+    },
+    {
+      "id": "23-requisition-form",
+      "caption": "Enter purpose, needed-by date, products and requested quantities.",
+      "path": "23-requisition-form.jpg"
+    },
+    {
+      "id": "24-import-shipments",
+      "caption": "Create import files, plan shipment quantities and maintain tracking.",
+      "path": "24-import-shipments.jpg"
+    },
+    {
+      "id": "25-customs",
+      "caption": "Save cumulative clearance quantities and itemized import charges.",
+      "path": "25-customs.jpg"
+    },
+    {
+      "id": "26-grn-qc",
+      "caption": "The receipt ledger separates accepted, rejected and held quantities.",
+      "path": "26-grn-qc.jpg"
+    },
+    {
+      "id": "27-grn-form",
+      "caption": "Receive quantities and capture batch, expiry and inspection evidence.",
+      "path": "27-grn-form.jpg"
+    },
+    {
+      "id": "50-document-workspace",
+      "caption": "The document workspace offers folders, Upload, local filtering and AI document search.",
+      "path": "50-document-workspace.jpg"
+    },
+    {
+      "id": "51-document-reminders",
+      "caption": "Review the expiry reminder list and source-document actions.",
+      "path": "51-document-reminders.jpg"
+    },
+    {
+      "id": "28-import-documents",
+      "caption": "Link company-owned supporting documents to operational records.",
+      "path": "28-import-documents.jpg"
+    },
+    {
+      "id": "29-warehouse-stock",
+      "caption": "Review stock conditions and the resulting bin/batch quantities.",
+      "path": "29-warehouse-stock.jpg"
+    },
+    {
+      "id": "64-stock-placement",
+      "caption": "Unsaved placement example: choose an accepted GRN item, destination warehouse/bin and physical quantity. Confirm only after checking the goods.",
+      "path": "64-stock-placement.jpg"
+    },
+    {
+      "id": "36-landed-cost-form",
+      "caption": "Enter invoice currency, FX, allocation basis and shipment charges.",
+      "path": "36-landed-cost-form.jpg"
+    },
+    {
+      "id": "35-landed-cost",
+      "caption": "Review saved landed-cost records and their current Finance approval status.",
+      "path": "35-landed-cost.jpg"
+    },
+    {
+      "id": "34-invoices-bills",
+      "caption": "Create a draft supplier bill, review its source lines and approve posting.",
+      "path": "34-invoices-bills.jpg"
+    },
+    {
+      "id": "21-customer-fulfillment",
+      "caption": "Track reserved, incoming, delivered and remaining quantities in the unified P.O. workspace.",
+      "path": "21-customer-fulfillment.jpg"
+    },
+    {
+      "id": "18-os-ledger",
+      "caption": "The document ledger retains quotations, order slips, FOs and packing lists.",
+      "path": "18-os-ledger.jpg"
+    },
+    {
+      "id": "33-delivery-pod",
+      "caption": "Select a delivery, inspect source documents and follow the FEFO picking / POD workflow.",
+      "path": "33-delivery-pod.jpg"
+    },
+    {
+      "id": "75-memo-form",
+      "caption": "Choose the source, memo kind, amount and reason; retry unchanged content in the same open form after an uncertain response.",
+      "path": "75-memo-form.jpg"
+    },
+    {
+      "id": "38-payment-allocation",
+      "caption": "Choose the party and allocate the confirmed payment to outstanding documents.",
+      "path": "38-payment-allocation.jpg"
+    },
+    {
+      "id": "37-aging",
+      "caption": "Check the balance remaining after allocation.",
+      "path": "37-aging.jpg"
+    },
+    {
+      "id": "31-lot-transfer",
+      "caption": "Inspect a lot before transferring it or changing its condition.",
+      "path": "31-lot-transfer.jpg"
+    },
+    {
+      "id": "32-cycle-count",
+      "caption": "Record counts and use approval or recount controls for differences.",
+      "path": "32-cycle-count.jpg"
+    },
+    {
+      "id": "13-stock-ledger",
+      "caption": "The Historical Ledger records operational stock changes.",
+      "path": "13-stock-ledger.jpg"
+    },
+    {
+      "id": "41-manual-journal",
+      "caption": "Choose accounts and keep total debits equal to total credits.",
+      "path": "41-manual-journal.jpg"
+    },
+    {
+      "id": "42-reference-mappings",
+      "caption": "Account mappings separates automatic posting roles from item, party and account references.",
+      "path": "42-reference-mappings.jpg"
+    },
+    {
+      "id": "73-posting-roles",
+      "caption": "Select POSTING_ROLE, its ERP role and a compatible active ledger account before saving.",
+      "path": "73-posting-roles.jpg"
+    },
+    {
+      "id": "65-financial-overview",
+      "caption": "Apply the Manila reporting period and review the posted-ledger financial cards and trend.",
+      "path": "65-financial-overview.jpg"
+    },
+    {
+      "id": "66-profit-loss",
+      "caption": "Profit & Loss includes posted revenue and expense accounts for the selected period.",
+      "path": "66-profit-loss.jpg"
+    },
+    {
+      "id": "67-balance-sheet",
+      "caption": "Review assets, liabilities, recorded equity, unclosed earnings and the accounting-equation difference.",
+      "path": "67-balance-sheet.jpg"
+    },
+    {
+      "id": "68-trial-balance",
+      "caption": "Trial Balance separates opening balances, period movements and closing debit/credit balances.",
+      "path": "68-trial-balance.jpg"
+    },
+    {
+      "id": "69-general-ledger",
+      "caption": "Choose a ledger account, follow its running balance and export the complete filtered result.",
+      "path": "69-general-ledger.jpg"
+    },
+    {
+      "id": "70-cash-designation",
+      "caption": "Choose the approved asset account and save whether it belongs in cash/bank reporting.",
+      "path": "70-cash-designation.jpg"
+    },
+    {
+      "id": "71-cash-classification",
+      "caption": "Classify a posted signed cash entry, explain the reason and save a new audited version.",
+      "path": "71-cash-classification.jpg"
+    },
+    {
+      "id": "72-cash-flow-report",
+      "caption": "Review cash-flow totals, completeness and unmatched-transfer details before exporting the complete report.",
+      "path": "72-cash-flow-report.jpg"
+    },
+    {
+      "id": "74-inventory-reconciliation",
+      "caption": "Compare separate office/warehouse reference values with posted Inventory and investigate exception rows.",
+      "path": "74-inventory-reconciliation.jpg"
+    },
+    {
+      "id": "43-bank-reconciliation",
+      "caption": "Preview statement transactions, match posted bank entries and reconcile the closing balance.",
+      "path": "43-bank-reconciliation.jpg"
+    },
+    {
+      "id": "44-audit-log",
+      "caption": "Audit events preserve the actor, action and record context.",
+      "path": "44-audit-log.jpg"
+    },
+    {
+      "id": "45-device-service",
+      "caption": "Register verified delivered serials and review warranty/maintenance dates.",
+      "path": "45-device-service.jpg"
+    },
+    {
+      "id": "46-service-schedule",
+      "caption": "Schedule a visit and record its technician, notes, status and costs.",
+      "path": "46-service-schedule.jpg"
+    },
+    {
+      "id": "47-executive-dashboard",
+      "caption": "Review the permitted financial overview, then continue down to operational alerts and forecasts.",
+      "path": "47-executive-dashboard.jpg"
+    },
+    {
+      "id": "48-management-report",
+      "caption": "Select a management report and export CSV or Excel.",
+      "path": "48-management-report.jpg"
+    },
+    {
+      "id": "49-executive-ai",
+      "caption": "Ask a specific company question and review the sources before acting.",
+      "path": "49-executive-ai.jpg"
+    },
+    {
+      "id": "52-payroll-dashboard",
+      "caption": "The payroll dashboard starts a separate personnel-to-payroll workflow.",
+      "path": "52-payroll-dashboard.jpg"
+    },
+    {
+      "id": "54-register-employee",
+      "caption": "Enter personnel, salary, loan and statutory details.",
+      "path": "54-register-employee.jpg"
+    },
+    {
+      "id": "53-employee-directory",
+      "caption": "Locate the employee and maintain their saved record.",
+      "path": "53-employee-directory.jpg"
+    },
+    {
+      "id": "56-pay-profile",
+      "caption": "Confirm pay basis, fixed divisor or weekdays, and overtime method before saving the profile.",
+      "path": "56-pay-profile.jpg"
+    },
+    {
+      "id": "55-attendance-grid",
+      "caption": "Select the cutoff, enter minute-level times and confirm Save Attendance.",
+      "path": "55-attendance-grid.jpg"
+    },
+    {
+      "id": "57-compute-payroll",
+      "caption": "Review the server-confirmed calculation, deductions and final net pay before saving.",
+      "path": "57-compute-payroll.jpg"
+    },
+    {
+      "id": "63-payslip",
+      "caption": "Review the saved employee payslip, then select Print Slip.",
+      "path": "63-payslip.jpg"
+    },
+    {
+      "id": "58-tax-reports",
+      "caption": "Select the intended date basis, date range and employee before applying filters.",
+      "path": "58-tax-reports.jpg"
+    },
+    {
+      "id": "59-payroll-summary",
+      "caption": "Set the reporting range and employee, then review and print the summary.",
+      "path": "59-payroll-summary.jpg"
+    }
+  ]
+}
