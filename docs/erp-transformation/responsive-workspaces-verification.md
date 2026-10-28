@@ -1,5 +1,7 @@
 # Responsive workspaces and shared company menus — 27 October 2026
 
+**Production status update, 28 October 2026:** the user authorized the coordinated release and confirmed GitHub-push deployment. The four migrations and matching application release are now live. See [production-release-20261028.md](production-release-20261028.md) for backup verification, preservation checks and deployment evidence. The release-pending statements below describe the original pre-release verification.
+
 ## Delivered behavior
 
 - Master Catalog and Customers use compact horizontal module tabs inside the existing ERP shell. Filters and actions wrap; long tables scroll within their own regions. The old catalog mobile translation classes were removed so the tab row remains on screen at phone widths.
