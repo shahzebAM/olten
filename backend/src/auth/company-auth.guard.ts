@@ -1,14 +1,26 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import type { Request } from 'express';
-import { AuthSessionService } from './auth-session.service';
+import { AuthSessionService, type SessionAdmin } from './auth-session.service';
+
+export type CompanyRequest = Request & {
+  companyUser?: Omit<SessionAdmin, 'password'>;
+};
 
 @Injectable()
 export class CompanyAuthGuard implements CanActivate {
   constructor(private readonly sessions: AuthSessionService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request>();
-    const user = await this.sessions.authenticate(request.headers.authorization);
+    const request = context.switchToHttp().getRequest<CompanyRequest>();
+    const user = await this.sessions.authenticate(
+      request.headers.authorization,
+    );
+    request.companyUser = user;
     if (request.method === 'GET' || user.role === 'Super Admin') return true;
     throw new ForbiddenException('Only a Super Admin can manage workspaces.');
   }

@@ -7,6 +7,10 @@ import AiDocsModule from './modules/AiDocsModule';
 import MasterInventory from './modules/MasterInventory';
 import OrderSlipsModule from './modules/OrderSlipsModule';
 import ProductQRModule from './modules/ProductQRModule';
+import ErpShell from './components/ErpShell';
+import { normalizeWorkspaceMenuGroups, workspaceTitle } from './lib/workspaceNavigation';
+import type { WorkspaceMenuGroup } from './lib/workspaceNavigation';
+import './erp.css';
 
 // NEW SPLIT & UNIFIED MODULES
 import CustomerModule from './modules/CustomerModule';
@@ -75,6 +79,58 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
 
   // --- ONLINE STATUS TRACKER (LOGIN & BROWSER CLOSE) ---
   const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
+
+  const [navigation, setNavigation] = useState<{
+    company: string | null; groups: WorkspaceMenuGroup[] | null; version: number; revision: number; error: string;
+  }>({ company: null, groups: null, version: 0, revision: -1, error: '' });
+  const [navigationRevision, setNavigationRevision] = useState(0);
+  useEffect(() => {
+    if (!isAuthenticated || !selectedCompany || !currentUser?.id) return;
+    const controller = new AbortController();
+    const company = selectedCompany;
+    const headers = getApiAuthHeaders();
+    const username = authRef.current.loginUsername;
+    const isCurrent = () => !controller.signal.aborted && mountedRef.current && selectedCompanyRef.current === company
+      && authRef.current.isAuthenticated && authRef.current.loginUsername === username
+      && getApiAuthHeaders().Authorization === headers.Authorization;
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/companies/navigation?company=${encodeURIComponent(company)}`, { headers, signal: controller.signal });
+        if (response.status === 401 && getApiAuthHeaders().Authorization === headers.Authorization) expireApiSession();
+        const result = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(response.status === 404
+          ? 'Menu settings are unavailable on this backend version. Deploy the matching backend before customizing the menu.'
+          : result?.message || 'Could not load the company menu.');
+        if (!Number.isSafeInteger(result?.version) || result.version < 0) throw new Error('The server returned invalid menu settings.');
+        if (isCurrent()) setNavigation({ company, groups: normalizeWorkspaceMenuGroups(result.groups), version: result.version, revision: navigationRevision, error: '' });
+      } catch (reason) {
+        if (isCurrent()) setNavigation({ company, groups: null, version: 0, revision: navigationRevision, error: reason instanceof Error ? reason.message : 'Could not load the company menu.' });
+      }
+    })();
+    return () => controller.abort();
+  }, [isAuthenticated, selectedCompany, currentUser?.id, navigationRevision]);
+
+  const saveNavigation = async (groups: WorkspaceMenuGroup[], version = 0) => {
+    if (!selectedCompany || currentUser?.role !== 'Super Admin') throw new Error('Only a Super Admin can customize the menu.');
+    const company = selectedCompany;
+    const headers = getApiAuthHeaders();
+    const username = authRef.current.loginUsername;
+    const isCurrent = () => mountedRef.current && selectedCompanyRef.current === company && authRef.current.isAuthenticated
+      && authRef.current.loginUsername === username && getApiAuthHeaders().Authorization === headers.Authorization;
+    const response = await fetch(`${API_BASE_URL}/companies/navigation?company=${encodeURIComponent(company)}`, {
+      method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ groups, version }),
+    });
+    if (response.status === 401 && getApiAuthHeaders().Authorization === headers.Authorization) expireApiSession();
+    const result = await response.json().catch(() => null);
+    if (response.status === 409 && isCurrent()) setNavigationRevision(value => value + 1);
+    if (!response.ok) throw new Error(response.status === 409
+      ? 'Another Super Admin changed this menu. Close and reopen the editor to load the latest version. Your draft has not been saved.'
+      : result?.message || 'Could not save the company menu.');
+    if (!Number.isSafeInteger(result?.version) || result.version < 1) throw new Error('The server returned invalid menu settings. Reload to check the saved menu.');
+    if (isCurrent()) {
+      setNavigation({ company, groups: normalizeWorkspaceMenuGroups(result.groups), version: result.version, revision: navigationRevision, error: '' });
+    }
+  };
 
   useEffect(() => {
     if (isAuthenticated && currentUser?.id) {
@@ -336,20 +392,18 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
 
   const isPrivacyRoute = window.location.pathname === '/privacy';
 
-  const renderModule = () => {
-  if (!isAuthenticated) return <AuthModule onLoginSuccess={(user: string) => { setLoginNotice(''); setIsAuthenticated(true); setLoginUsername(user); }} sessionMessage={loginNotice} isPrivacyRoute={isPrivacyRoute} API_BASE_URL={API_BASE_URL} />;
-  
-  if (!selectedCompany && activeModule !== 'users') return (
-    <CompanyModule 
-      isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers} 
-      companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany} 
-      onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout} 
-      loginUsername={loginUsername} currentUser={currentUser} API_BASE_URL={API_BASE_URL}
-      adminUsers={adminUsers} // <-- FED DIRECTLY FROM THE LIVE POLLING
-    />
-  );
+  const openWorkspaceModule = (module: typeof activeModule) => {
+    setTargetCustomerId(null);
+    setInvoiceDeliveryId(undefined);
+    setActiveModule(module);
+  };
+  const returnToWorkspace = () => openWorkspaceModule('none');
+  const changeWorkspaceCompany = () => {
+    returnToWorkspace();
+    setSelectedCompany(null);
+  };
 
-  if (activeModule === 'none') {
+  const renderGateway = (navigationOnly = false) => {
     const userHasPayroll = isCurrentUserSuperAdmin || currentUser?.modules?.payroll === true;
     const userHasAiDocs = isCurrentUserSuperAdmin || currentUser?.modules?.ai_docs === true;
     const userHasProducts = isCurrentUserSuperAdmin || currentUser?.modules?.products === true;
@@ -358,11 +412,16 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
     const userHasPurchasing = isCurrentUserSuperAdmin || currentUser?.modules?.purchasing === true;
     const userHasImportation = isCurrentUserSuperAdmin || currentUser?.modules?.importation === true;
     const userHasSales = isCurrentUserSuperAdmin || currentUser?.modules?.sales === true;
-    
-    return <CompanyModule 
-      isGateway={true} selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser} 
-      hasPayroll={userHasPayroll && globalModules.payroll} hasAiDocs={userHasAiDocs && globalModules.ai_docs} 
-      hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory} 
+    return <CompanyModule
+      isGateway navigationOnly={navigationOnly} activeModule={activeModule} onWorkspace={returnToWorkspace}
+      selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser}
+      navigationGroups={navigation.company === selectedCompany ? navigation.groups : null}
+      navigationVersion={navigation.company === selectedCompany ? navigation.version : 0}
+      navigationLoading={navigation.company !== selectedCompany || navigation.revision !== navigationRevision}
+      navigationError={navigation.company === selectedCompany ? navigation.error : ''}
+      onSaveNavigation={saveNavigation}
+      hasPayroll={userHasPayroll && globalModules.payroll} hasAiDocs={userHasAiDocs && globalModules.ai_docs}
+      hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory}
       hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}
       hasSales={userHasSales && globalModules.sales}
       hasImportation={userHasImportation && globalModules.importation !== false}
@@ -371,10 +430,25 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
       hasService={globalModules.service !== false && hasPhase3Access(currentUser, selectedCompany, 'service')}
       hasExecutive={globalModules.executive !== false && hasPhase3Access(currentUser, selectedCompany, 'executive')}
       hasAiAssistant={globalModules.ai_assistant !== false && hasPhase3Access(currentUser, selectedCompany, 'ai')}
-      onChangeCompany={() => setSelectedCompany(null)} onSelectModule={setActiveModule} onLogout={handleLogout} API_BASE_URL={API_BASE_URL}
+      onChangeCompany={changeWorkspaceCompany} onSelectModule={openWorkspaceModule} onLogout={handleLogout} API_BASE_URL={API_BASE_URL}
+      adminUsers={adminUsers}
+    />;
+  };
+
+  const renderModule = () => {
+  if (!isAuthenticated) return <AuthModule onLoginSuccess={(user: string) => { setLoginNotice(''); setIsAuthenticated(true); setLoginUsername(user); }} sessionMessage={loginNotice} isPrivacyRoute={isPrivacyRoute} API_BASE_URL={API_BASE_URL} />;
+
+  if (!selectedCompany && activeModule !== 'users') return (
+    <CompanyModule
+      isGateway={false} allowedCompanies={allowedCompanies} hasUsers={hasUsers}
+      companiesList={companiesList} onAddCompany={handleAddCompany} onRemoveCompany={handleRemoveCompany}
+      onSelectCompany={setSelectedCompany} onManageUsers={() => setActiveModule('users')} onLogout={handleLogout}
+      loginUsername={loginUsername} currentUser={currentUser} API_BASE_URL={API_BASE_URL}
       adminUsers={adminUsers} // <-- FED DIRECTLY FROM THE LIVE POLLING
     />
-  }
+  );
+
+  if (activeModule === 'none') return renderGateway();
 
   // ALL MODULE ROUTES
   if (['finance', 'books', 'service', 'executive', 'ai_assistant'].includes(activeModule)) return <Suspense fallback={<p role="status" className="p-8 text-slate-600">Loading workspace…</p>}><Phase3Module key={`${selectedCompany}-${activeModule}-${currentUser?.role}-${JSON.stringify(currentUser?.modules)}`} selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} currentUser={currentUser} view={activeModule as Phase3View} initialDeliveryId={invoiceDeliveryId} onOpenFinance={globalModules.finance !== false && hasPhase3Access(currentUser, selectedCompany, 'finance') ? () => setActiveModule('finance') : undefined} onBack={() => { setInvoiceDeliveryId(undefined); setActiveModule('none'); }} /></Suspense>;
@@ -387,7 +461,7 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
   if (activeModule === 'purchase_orders' || activeModule === 'customer_pos') return <PurchaseOrdersModule key={`${selectedCompany}-${activeModule}`} selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} canPurchase={globalModules.purchasing !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.purchasing === true)} initialTab={activeModule === 'customer_pos' ? 'fulfillment' : undefined} fulfillmentContent={globalModules.sales !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.sales === true) ? <FulfillmentModule embedded selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} initialView="orders" canApprove={canApproveFulfillment} canWarehouse={globalModules.master_inventory !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.master_inventory === true || currentUser?.modules?.inventory === true || currentUser?.modules?.warehouses === true)} canSales onCreateOrderSlip={() => { setTargetCustomerId(null); setActiveModule('create_os'); }} onBack={() => setActiveModule('none')} /> : undefined} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'suppliers') return <SupplierModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
   if (activeModule === 'importation') return <ImportationModule selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} canApprove={['Super Admin', 'Admin'].includes(currentUser?.role) || currentUser?.modules?.importation_approve === true} onBack={() => setActiveModule('none')} />;
-  if (activeModule === 'warehouse_ops' || activeModule === 'deliveries') return <FulfillmentModule key={selectedCompany} selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} initialView={activeModule === 'warehouse_ops' ? 'warehouse' : 'delivery'} canApprove={canApproveFulfillment} canWarehouse={globalModules.master_inventory !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.master_inventory === true || currentUser?.modules?.inventory === true || currentUser?.modules?.warehouses === true)} canSales={globalModules.sales !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.sales === true)} onOpenFinance={globalModules.finance !== false && hasPhase3Access(currentUser, selectedCompany, 'finance', true) ? (id: string) => { setInvoiceDeliveryId(id); setActiveModule('finance'); } : undefined} onCreateOrderSlip={() => { setTargetCustomerId(null); setActiveModule('create_os'); }} onBack={() => setActiveModule('none')} />;
+  if (activeModule === 'warehouse_ops' || activeModule === 'deliveries') return <FulfillmentModule key={[selectedCompany, activeModule].join('-')} selectedCompany={selectedCompany!} API_BASE_URL={API_BASE_URL} initialView={activeModule === 'warehouse_ops' ? 'warehouse' : 'delivery'} canApprove={canApproveFulfillment} canWarehouse={globalModules.master_inventory !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.master_inventory === true || currentUser?.modules?.inventory === true || currentUser?.modules?.warehouses === true)} canSales={globalModules.sales !== false && (isCurrentUserSuperAdmin || currentUser?.modules?.sales === true)} onOpenFinance={globalModules.finance !== false && hasPhase3Access(currentUser, selectedCompany, 'finance', true) ? (id: string) => { setInvoiceDeliveryId(id); setActiveModule('finance'); } : undefined} onCreateOrderSlip={() => { setTargetCustomerId(null); setActiveModule('create_os'); }} onBack={() => setActiveModule('none')} />;
 
   // ADD THIS LINE:
 if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selectedCompany!} loginUsername={loginUsername} API_BASE_URL={API_BASE_URL} onBack={() => setActiveModule('none')} />;
@@ -408,6 +482,12 @@ if (activeModule === 'qr_system') return <ProductQRModule selectedCompany={selec
       <span>{apiConfig.error || syncError}</span>
       {isAuthenticated && <button type="button" onClick={() => retrySyncRef.current()} className="shrink-0 rounded-lg bg-amber-100 px-3 py-2 font-bold hover:bg-amber-200">Retry connection</button>}
     </div>}
-    {renderModule()}
+    {isAuthenticated && selectedCompany && activeModule !== 'payroll' ? (
+      <ErpShell company={selectedCompany} title={workspaceTitle(activeModule)} username={loginUsername} standalone={activeModule === 'ai_docs'}
+        navigation={renderGateway(true)} onWorkspace={returnToWorkspace}
+        onChangeCompany={changeWorkspaceCompany} onLogout={handleLogout}>
+        {renderModule()}
+      </ErpShell>
+    ) : renderModule()}
   </>;
 }

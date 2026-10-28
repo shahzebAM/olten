@@ -1,0 +1,41 @@
+[
+  {
+    "File": "frontend/src\\modules\\AttendanceEntryGrid.tsx",
+    "SHA256": "2931EF11F397463046917F7EC1F7F34848D23E162BC43C42A82BD90A935E81F4"
+  },
+  {
+    "File": "frontend/src\\modules\\PayrollProfileEditor.tsx",
+    "SHA256": "5928FCB006E7232D0EE9979EFDD8DE4B652BEFC79AE115BA91F5982923974EAF"
+  },
+  {
+    "File": "frontend/src\\lib\\attendanceEntry.ts",
+    "SHA256": "9C30EDA86B80762BC327818F7C31FA2DDD8C15DAD135ECAB930CA84238AB0F65"
+  },
+  {
+    "File": "frontend/src\\lib\\savedPayslip.ts",
+    "SHA256": "29275411B374342CDE79884D725EA0CFF4A7BBDAD84C8045DACE19275AD4662F"
+  },
+  {
+    "File": "backend/prisma\\schema.prisma",
+    "SHA256": "65734E15F6D8C35E955052A5DED60BFF429B1E81BF365ECC149E301711037055",
+    "ApprovedAllocationModels": [
+      "FinanceDocument",
+      "FinancePayment",
+      "FinanceAllocation",
+      "LedgerAccount",
+      "LedgerEntry",
+      "CashAccountSetting",
+      "CashFlowClassification"
+    ],
+    "ApprovedPresentationModels": ["CompanyNavigation"],
+    "ProtectedSchemaSHA256": "45A87D1662A2D0B6D849BFAA9AB72CACCB65CE580ACC5318B33B0D12C7B5395F"
+  },
+  {
+    "File": "backend/src/employees\\payroll-profile.ts",
+    "SHA256": "4730562F05019E8910B94C826E2587862223A7B5F05041AE81DA7B17DD5A4260"
+  },
+  {
+    "File": "backend/src/employees\\attendance-calculator.ts",
+    "SHA256": "732D30ED4A077E437BF91D9A62300ACDFDE7BFB43A9C9E93275EB43C4419D28B"
+  }
+]

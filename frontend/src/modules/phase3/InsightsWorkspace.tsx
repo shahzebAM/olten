@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import FinancialReports from "./FinancialReports";
 import * as XLSX from "xlsx";
 import type { ErpUser } from "../../lib/phase3Access";
 import { hasPhase3Access } from "../../lib/phase3Access";
@@ -46,8 +47,9 @@ type Executive = {
     status: string;
     reason?: string;
     rows: JsonRow[];
-  };
+  } | null;
   reports: { id: string; title: string; scope: string }[];
+  generatedAt?: string;
 };
 
 function ReportViewer({
@@ -146,19 +148,82 @@ function ReportViewer({
   );
 }
 
+function ReportDialog({ api, company, reportId, onClose }: {
+  api: string; company: string; reportId: string; onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog?.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
+  return (
+    <dialog ref={dialogRef} className="phase3-report-dialog" aria-labelledby="management-report-title"
+      onCancel={onClose} onClose={(event) => { if (!event.currentTarget.open) onClose(); }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+      }}>
+      <div className="phase3-report-dialog-heading">
+        <h2 id="management-report-title">Report details</h2>
+        <button type="button" autoFocus className={secondary} onClick={onClose}>Close report</button>
+      </div>
+      <div className="phase3-report-dialog-body">
+        <ReportViewer api={api} company={company} reportId={reportId} />
+      </div>
+    </dialog>
+  );
+}
+
+function DemandChart({ rows }: { rows: JsonRow[] }) {
+  const displayed = rows.slice(0, 6);
+  const maximum = Math.max(1, ...displayed.map((row) => Number(row.projectedQuantity) || 0));
+  return (
+    <figure className="phase3-demand-chart" aria-label="Projected demand for the next 30 days">
+      <figcaption className="text-xs font-medium text-slate-500">Next 30 days · projected units</figcaption>
+      {displayed.map((row, index) => (
+        <div key={`${String(row.sku)}-${index}`} className="phase3-demand-row">
+          <span title={textValue(row.productName)}>{textValue(row.sku)}</span>
+          <div className="flex items-center gap-3">
+            <div className="phase3-demand-track flex-1" role="img" aria-label={`${textValue(row.sku)}: ${textValue(row.projectedQuantity)} projected units`} title={`${textValue(row.productName)} · ${textValue(row.projectedQuantity)} units`}>
+              <span style={{ width: `${Math.max(0, Number(row.projectedQuantity) || 0) / maximum * 100}%` }} />
+            </div>
+            <span className="min-w-8 text-right text-xs font-semibold text-slate-700">{textValue(row.projectedQuantity)}</span>
+          </div>
+        </div>
+      ))}
+    </figure>
+  );
+}
+
 export function ExecutiveWorkspace({
   api,
   company,
+  canReadBooks = false,
 }: {
   api: string;
   company: string;
+  canReadBooks?: boolean;
 }) {
   const state = usePhase3Data<Executive>(api, company, "/executive");
   const [reportId, setReportId] = useState("");
   const data = state.data;
   return (
     <div className="space-y-5">
-      <div className="flex justify-end">
+      {canReadBooks && <FinancialReports api={api} company={company} overviewOnly />}
+      <div className="phase3-dashboard-heading">
+        <div>
+          <h2>Business at a glance</h2>
+          <p>{data?.generatedAt ? `Updated ${new Date(data.generatedAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}` : "Company overview and operational priorities"}</p>
+        </div>
         <button
           className={secondary}
           disabled={state.loading}
@@ -174,10 +239,10 @@ export function ExecutiveWorkspace({
             {data.summary.map((card) => (
               <div
                 key={card.id}
-                className="rounded-xl border bg-white p-4 shadow-sm"
+                className="phase3-metric rounded-xl border bg-white p-4 shadow-sm"
               >
-                <p className="text-sm text-slate-500">{card.title}</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
+                <p className="phase3-metric-label text-sm text-slate-500">{card.title}</p>
+                <p className="phase3-metric-value mt-2 text-2xl font-bold text-slate-900">
                   {card.unit === "PHP"
                     ? money(card.value)
                     : `${card.value}${card.unit ? ` ${card.unit}` : ""}`}
@@ -192,7 +257,7 @@ export function ExecutiveWorkspace({
                   key={alert.id}
                   disabled={!alert.reportId}
                   onClick={() => setReportId(alert.reportId || "")}
-                  className={`rounded-xl border p-4 text-left disabled:cursor-default ${alert.severity === "critical" || alert.severity === "HIGH" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}
+                  className={`phase3-alert rounded-xl border p-4 text-left disabled:cursor-default ${alert.severity === "critical" || alert.severity === "HIGH" ? "border-rose-200 bg-rose-50" : alert.severity === "info" ? "border-slate-200 bg-slate-50" : "border-amber-200 bg-amber-50"}`}
                 >
                   <strong className="text-2xl text-slate-900">
                     {alert.count}
@@ -205,6 +270,7 @@ export function ExecutiveWorkspace({
             </div>
           </Panel>
           <Panel title="Demand forecast">
+            {data.forecast ? <>
             <p className="mb-3 text-sm text-slate-600">
               {data.forecast.method}
             </p>
@@ -213,6 +279,7 @@ export function ExecutiveWorkspace({
                 {data.forecast.reason}
               </p>
             )}
+            {!!data.forecast.rows.length && <DemandChart rows={data.forecast.rows} />}
             <DataTable
               rows={data.forecast.rows}
               columns={[
@@ -227,13 +294,15 @@ export function ExecutiveWorkspace({
               Projection uses trailing 90 days of delivered quantities to
               estimate the next 30 days. It is a planning estimate.
             </p>
+            </> : <p className="text-sm text-slate-500">Demand planning is not available for your current reporting access.</p>}
           </Panel>
           <Panel title="Management reports">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="phase3-report-links grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {data.reports.map((report) => (
                 <button
                   key={report.id}
                   className={`${reportId === report.id ? primary : secondary} text-left`}
+                  aria-pressed={reportId === report.id}
                   onClick={() => setReportId(report.id)}
                 >
                   {report.title}
@@ -249,11 +318,12 @@ export function ExecutiveWorkspace({
         </>
       )}
       {reportId && (
-        <ReportViewer
+        <ReportDialog
           key={reportId}
           api={api}
           company={company}
           reportId={reportId}
+          onClose={() => setReportId("")}
         />
       )}
     </div>
@@ -528,6 +598,7 @@ export function ServiceWorkspace({
                   "nextMaintenance",
                   "status",
                 ]}
+                searchLabel="Search devices and serial numbers"
               />
             </div>
           </Panel>
@@ -704,6 +775,11 @@ export function AiWorkspace({
             aria-live="polite"
             className="mb-4 max-h-[32rem] space-y-4 overflow-auto"
           >
+            {!history.length && <div className="phase3-assistant-empty">
+              <span aria-hidden="true">✧</span>
+              <h3>Your company, in context</h3>
+              <p>Ask a question to explore the records and reports available to your role.</p>
+            </div>}
             {history.map((message, index) => (
               <article key={index} className="space-y-3">
                 <p className="rounded-xl bg-cyan-50 p-4 font-semibold">

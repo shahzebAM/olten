@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { getApiAuthHeaders } from '../lib/apiSession';
+import { roundSalesLine, salesTotals } from '../lib/salesAmounts';
 import { useInvisibleScanner } from '../lib/useInvisibleScanner';
+import './order-entry-workspace.css';
 
 // --- INTERFACES ---
 interface Customer { id: string; company: string; name: string; contact: string | null; phone: string | null; email: string | null; address: string | null; category?: string; }
@@ -77,7 +79,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     const request = ++osNumberRequestRef.current;
     try {
       const endpoint = docType === 'QT' ? 'quotations' : 'order-slips';
-      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/next-number?company=${encodeURIComponent(selectedCompany)}&type=${docType}`, { signal });
+      const res = await fetch(`${API_BASE_URL}/sales/${endpoint}/next-number?company=${encodeURIComponent(selectedCompany)}&type=${docType}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal });
       if (!res.ok) throw new Error('Could not load the next document number.');
       const data = await res.json();
       if (!signal?.aborted && request === osNumberRequestRef.current) setOsNumber(docType === 'QT' ? data.qtNumber : data.osNumber);
@@ -89,7 +91,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   const fetchNextFoNumber = useCallback(async (signal?: AbortSignal) => {
     const request = ++foNumberRequestRef.current;
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { signal });
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips/next-number?company=${encodeURIComponent(selectedCompany)}&type=FO`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal });
       if (!res.ok) throw new Error('Could not load the next Final Order number.');
       const data = await res.json();
       if (!signal?.aborted && request === foNumberRequestRef.current) setFinalOrderNumber(data.osNumber);
@@ -100,7 +102,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   const fetchSlipHistory = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`);
+      const res = await fetch(`${API_BASE_URL}/sales/order-slips?company=${encodeURIComponent(selectedCompany)}&limit=500`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) {
         const data = await res.json();
         setAllSlips(data.data || []);
@@ -119,7 +121,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
   }, [fetchNextOsNumber, fetchNextFoNumber, fetchSlipHistory]);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`)
+    fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}&limit=100`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       .then(res => res.json())
       .then(data => {
         const list = Array.isArray(data) ? data : (data.data || []);
@@ -138,7 +140,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
   // --- FETCH CATALOG FOR INSTANT SCANNING ---
   useEffect(() => {
-    fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`)
+    fetch(`${API_BASE_URL}/sales/order-slips/all-products?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       .then(res => res.json())
       .then(data => setAllProducts(data || []))
       .catch(() => {});
@@ -149,7 +151,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     const handler = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(productSearch)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/order-slips/search-products?company=${selectedCompany}&q=${encodeURIComponent(productSearch)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
         if (res.ok) { setProductSearchResults(await res.json()); setHighlightedIndex(-1); }
       } catch (e) {} finally { setIsSearchingProducts(false); }
     }, 50);
@@ -177,7 +179,7 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
 
     if (customer.category && customer.category !== 'General') {
       try {
-        const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`);
+        const res = await fetch(`${API_BASE_URL}/sales/category-prices?company=${selectedCompany}&categoryName=${encodeURIComponent(customer.category)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
         if (res.ok) {
           const data = await res.json();
           const priceMap: Record<number, number> = {};
@@ -337,9 +339,10 @@ export default function CreateOSModule({ selectedCompany, loginUsername, API_BAS
     } catch (e) { console.warn("Failed to refresh stock.", e); } finally { setIsRefreshingStock(false); }
   };
 
-  const subtotal = Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
-  const vatAmount = isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
-  const grandTotal = Math.round((subtotal + vatAmount) * 100) / 100;
+  const decimalTotals = salesTotals(draftItems.map(item => roundSalesLine(item.requestedQty, item.unitPrice)), isVatApplied, vatRate);
+  const subtotal = docType === 'OS' ? decimalTotals.subtotal : Math.round(draftItems.reduce((acc, item) => acc + (item.lineTotal || 0), 0) * 100) / 100;
+  const vatAmount = docType === 'OS' ? decimalTotals.vatAmount : isVatApplied ? Math.round((subtotal * vatRate) * 100) / 100 : 0;
+  const grandTotal = docType === 'OS' ? decimalTotals.grandTotal : Math.round((subtotal + vatAmount) * 100) / 100;
   
   const isFormValid = selectedCustomer && osNumber.trim() !== '' && draftItems.length > 0 && draftItems.every(i => {
     const q = Number(i.requestedQty);
@@ -533,14 +536,14 @@ const handleSubmit = async () => {
   const handlePrint = () => window.print();
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
+    <div className="order-entry-workspace order-os-workspace flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[300] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'} print:hidden`}>
           {toast.message}
         </div>
       )}
 
-      <header className="h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
+      <header className="order-entry-header h-16 sm:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 sm:px-8 shrink-0 shadow-sm z-20 print:hidden">
         <div><h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">{selectedCompany} <span className="text-slate-400 font-medium">| Create Order Slip</span></h2></div>
         <div className="flex gap-3">
           <button onClick={() => { if (onViewLedger) onViewLedger(); else if (setActiveTab) setActiveTab('os-ledger'); }} className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer z-50 relative">
@@ -552,29 +555,31 @@ const handleSubmit = async () => {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden print:hidden">
-        <div className="flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
+      <main className="order-os-main flex-1 flex flex-col p-4 sm:p-6 lg:p-8 overflow-hidden print:hidden">
+        <div className="order-os-editor flex-1 flex flex-col w-full mx-auto bg-white border border-slate-300 rounded-xl shadow-lg overflow-hidden">
           
-          <div className="border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
+          <div className="order-os-metadata border-b border-slate-300 bg-white relative shrink-0 z-30 flex items-stretch min-h-[56px]">
             {/* NEW: DOCUMENT TYPE TOGGLE */}
-          <div className="flex bg-slate-100 p-1 mx-4 sm:mx-6 mt-4 rounded-xl shadow-inner w-full sm:w-80">
+          <div className="order-document-toggle flex bg-slate-100 p-1 mx-4 sm:mx-6 mt-4 rounded-xl shadow-inner w-full sm:w-80" role="group" aria-label="Document type">
             <button 
+              aria-pressed={docType === 'OS'}
               onClick={() => setDocType('OS')} 
               className={`flex-1 px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${docType === 'OS' ? 'bg-white text-indigo-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Order Slip
             </button>
             <button 
+              aria-pressed={docType === 'QT'}
               onClick={() => setDocType('QT')} 
               className={`flex-1 px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${docType === 'QT' ? 'bg-white text-amber-700 shadow border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Quotation
             </button>
           </div>
-            <div className="w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
+            <div className="order-entry-field order-template-field w-48 sm:w-64 border-r border-slate-300 relative flex flex-col justify-center px-4 sm:px-6 bg-slate-50">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Load Template</span>
               <input 
-                type="text" placeholder="Search OS/FO..." value={loadSlipSearch}
+                type="text" aria-label="Load template" placeholder="Search OS/FO..." value={loadSlipSearch}
                 onChange={e => { setLoadSlipSearch(e.target.value); setShowLoadSlipDropdown(true); }}
                 onFocus={() => setShowLoadSlipDropdown(true)}
                 onBlur={() => setTimeout(() => setShowLoadSlipDropdown(false), 200)}
@@ -600,11 +605,12 @@ const handleSubmit = async () => {
               )}
             </div>
 
-            <div className="flex-1 relative flex items-center border-r border-slate-300">
+            <div className="order-entry-field order-customer-field flex-1 relative flex items-center border-r border-slate-300">
+              <span className="order-entry-label">Customer</span>
               {!selectedCustomer ? (
                 <div className="w-full relative">
                   <input 
-                    type="text" placeholder="Search customer..." value={customerSearch}
+                    type="text" aria-label="Search customer" placeholder="Search customer..." value={customerSearch}
                     onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); setCustomerHighlightedIndex(-1); }}
                     onFocus={() => setShowCustomerDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
@@ -641,7 +647,7 @@ const handleSubmit = async () => {
               )}
             </div>
 
-            <div className="w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
+            <div className="order-entry-field order-document-number w-48 sm:w-64 bg-slate-50 flex flex-col justify-center px-4 sm:px-6 shrink-0 shadow-inner">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{osNumber.startsWith('FO') ? 'F.O. Number' : docType === 'QT' ? 'Quotation Number' : 'O.S. Number'}</span>
               <input 
                 type="text" value={osNumber} readOnly={loadedOsId !== null} 
@@ -654,7 +660,7 @@ const handleSubmit = async () => {
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto bg-slate-50/30 relative flex flex-col">
+          <div className="order-os-lines flex-1 overflow-auto bg-slate-50/30 relative flex flex-col" role="region" aria-label="Order items" tabIndex={0}>
             <table className="w-full text-left border-collapse whitespace-nowrap text-sm min-w-[900px] flex-1">
               <thead className="sticky top-0 bg-slate-50 shadow-sm z-20">
                 <tr>
@@ -691,7 +697,7 @@ const handleSubmit = async () => {
                         <input type="text" inputMode="decimal" value={item.unitPrice} onChange={e => handleUpdateUnitPrice(idx, e.target.value)} className="w-full h-[48px] pl-6 pr-4 py-3 text-right font-medium text-slate-700 font-mono bg-transparent outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 transition-all" />
                       </td>
 
-                      <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                      <td className="border border-slate-300 py-2.5 px-4 text-right font-black text-slate-900 font-mono">₱{(docType === 'OS' ? roundSalesLine(item.requestedQty, item.unitPrice) : item.lineTotal || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
 
                       <td className={`border border-slate-300 py-1.5 px-2 text-center relative group`}>
                         <div className="inline-flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 p-1 rounded transition-colors w-full">
@@ -760,7 +766,7 @@ const handleSubmit = async () => {
             </table>
           </div>
 
-          <div className="bg-[#E2E8F0] border-t border-slate-300 p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-center shrink-0 z-30">
+          <div className="order-os-footer bg-[#E2E8F0] border-t border-slate-300 p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-center shrink-0 z-30">
             <div className="flex items-center gap-6 w-full sm:w-auto">
               <label className="flex items-center gap-2 cursor-pointer group">
                 <input type="checkbox" checked={isVatApplied} onChange={e => setIsVatApplied(e.target.checked)} className="w-4 h-4 rounded text-indigo-600 border-slate-400 focus:ring-indigo-500 cursor-pointer" />

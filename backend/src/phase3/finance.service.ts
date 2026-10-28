@@ -10,6 +10,11 @@ import { FinanceDocument, Prisma, PrismaClient } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import * as v from '../importation/importation.validation';
 import {
+  mappedLines,
+  postingAccounts,
+  sourcePostingAccounts,
+} from './posting-accounts';
+import {
   Actor,
   Tx,
   assertApproval,
@@ -113,7 +118,9 @@ export class FinanceService implements OnModuleDestroy {
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        ['P2002', 'P2034'].includes(error.code)
+        (['P2002', 'P2034'].includes(error.code) ||
+          (error.code === 'P2010' &&
+            ['40001', '40P01'].includes(String(error.meta?.code))))
       )
         throw new ConflictException(
           'This record changed or was already submitted. Refresh and retry.',
@@ -826,6 +833,29 @@ export class FinanceService implements OnModuleDestroy {
     return lines;
   }
 
+  private postingLines(document: FinanceDocument) {
+    const lines = this.documentLines(document);
+    if (document.kind === 'INVOICE') {
+      const cost = sum(
+        v
+          .rows(v.object(document.data).items)
+          .map((line) =>
+            roundMoney(
+              decimal(line.unitCost, 'Stored cost').mul(
+                v.integer(line.quantity, 'Stored quantity', 1),
+              ),
+            ),
+          ),
+      );
+      if (cost.gt(0))
+        lines.push(
+          { code: '5100', debit: cost.toFixed(2), credit: '0.00' },
+          { code: '1200', debit: '0.00', credit: cost.toFixed(2) },
+        );
+    }
+    return lines;
+  }
+
   async postDocument(company: string, actor: Actor, documentId: string) {
     this.require(actor, 'finance', true);
     return this.transaction(company, async (tx) => {
@@ -839,26 +869,8 @@ export class FinanceService implements OnModuleDestroy {
         throw new ConflictException(
           'Only draft invoices and bills can be posted.',
         );
-      const lines = this.documentLines(document);
-      if (document.kind === 'INVOICE') {
-        const cost = sum(
-          v
-            .rows(v.object(document.data).items)
-            .map((line) =>
-              roundMoney(
-                decimal(line.unitCost, 'Stored cost').mul(
-                  v.integer(line.quantity, 'Stored quantity', 1),
-                ),
-              ),
-            ),
-        );
-        if (cost.gt(0)) {
-          lines.push(
-            { code: '5100', debit: cost.toFixed(2), credit: '0.00' },
-            { code: '1200', debit: '0.00', credit: cost.toFixed(2) },
-          );
-        }
-      }
+      const accounts = await postingAccounts(tx, company);
+      const lines = mappedLines(this.postingLines(document), accounts);
       await postJournal(tx, company, actor, {
         sourceKey: `DOC:${document.id}`,
         sourceType: document.kind,
@@ -874,6 +886,7 @@ export class FinanceService implements OnModuleDestroy {
           status: 'POSTED',
           postedAt: new Date(),
           postedBy: actor.username,
+          data: json({ ...v.object(document.data), postingAccounts: accounts }),
         },
       });
       await audit(tx, company, actor, 'POST', 'FinanceDocument', document.id, {
@@ -895,156 +908,201 @@ export class FinanceService implements OnModuleDestroy {
     );
     const amount = money(input.amount, 'Memo amount');
     const reason = v.text(input.reason, 'Memo reason')!;
+    const submissionKey = id(input.submissionKey, 'Memo submission key');
+    const sourceKey = `MEMO:${submissionKey}`;
+    const lookup = { company_sourceKey: { company, sourceKey } };
+    const replay = (existing: FinanceDocument) => {
+      if (
+        existing.status !== 'POSTED' ||
+        existing.kind !== kind ||
+        existing.relatedDocumentId !== documentId ||
+        !existing.total.eq(amount) ||
+        v.object(existing.data).reason !== reason
+      )
+        throw new ConflictException(
+          'This submission key was already used for different memo details.',
+        );
+      return existing;
+    };
     if (amount.lte(0))
       throw new BadRequestException('Memo amount must be positive.');
     assertApproval(actor, company, amount);
-    return this.transaction(company, async (tx) => {
-      const original = await this.lockDocument(tx, company, documentId);
-      if (
-        original.status !== 'POSTED' ||
-        !['INVOICE', 'BILL'].includes(original.kind)
-      )
-        throw new BadRequestException(
-          'Memos require a posted invoice or bill.',
-        );
-      const credits = sum(
-        original.memos
-          .filter(
-            (memo) => memo.status === 'POSTED' && memo.kind === 'CREDIT_MEMO',
-          )
-          .map((memo) => memo.total),
-      );
-      const debits = sum(
-        original.memos
-          .filter(
-            (memo) => memo.status === 'POSTED' && memo.kind === 'DEBIT_MEMO',
-          )
-          .map((memo) => memo.total),
-      );
-      if (
-        kind === 'CREDIT_MEMO' &&
-        credits.add(amount).gt(original.total.add(debits))
-      )
-        throw new BadRequestException(
-          'Credit memos cannot exceed the document and its posted debit memos.',
-        );
-      const earlier = original.memos.filter(
-        (memo) => memo.status === 'POSTED' && memo.kind === kind,
-      );
-      const priorAmount = sum(earlier.map((memo) => memo.total));
-      const priorTax = sum(earlier.map((memo) => memo.taxAmount));
-      const taxAmount = roundMoney(
-        priorAmount.add(amount).mul(original.taxAmount).div(original.total),
-      ).minus(priorTax);
-      const subtotal = amount.minus(taxAmount);
-      let accountAllocations: { code: string; amount: string }[] = [];
-      if (original.direction === 'AP') {
-        const base = this.documentLines(original).filter(
-          (line) => !['2100', '1400'].includes(line.code),
-        );
-        const cumulative = allocateMemoAccounts(
-          sum(earlier.map((memo) => memo.subtotal)).add(subtotal),
-          base,
-        );
-        const previousAccounts = new Map<string, Prisma.Decimal>();
-        for (const memo of earlier) {
-          const stored = v.object(memo.data).accountAllocations;
-          const shares = Array.isArray(stored)
-            ? stored.map((line) => {
-                const row = v.object(line);
-                return {
-                  code: id(row.code),
-                  amount: money(row.amount, 'Stored allocation', true).toFixed(
-                    2,
-                  ),
-                };
-              })
-            : allocateMemoAccounts(memo.subtotal, base);
-          for (const share of shares)
-            previousAccounts.set(
-              share.code,
-              (previousAccounts.get(share.code) ?? new Prisma.Decimal(0)).add(
-                share.amount,
-              ),
-            );
-        }
-        accountAllocations = base
-          .map((line) => ({
-            code: line.code,
-            amount: new Prisma.Decimal(
-              cumulative.find((share) => share.code === line.code)?.amount ?? 0,
-            )
-              .minus(previousAccounts.get(line.code) ?? 0)
-              .toFixed(2),
-          }))
-          .filter((line) => !new Prisma.Decimal(line.amount).isZero());
-      }
-      const record = await tx.financeDocument.create({
-        data: {
+    try {
+      return await this.transaction(company, async (tx) => {
+        const existing = await tx.financeDocument.findUnique({ where: lookup });
+        if (existing) return replay(existing);
+        const original = await this.lockDocument(tx, company, documentId);
+        if (
+          original.status !== 'POSTED' ||
+          !['INVOICE', 'BILL'].includes(original.kind)
+        )
+          throw new BadRequestException(
+            'Memos require a posted invoice or bill.',
+          );
+        const accounts = await sourcePostingAccounts(
+          tx,
           company,
-          number: await nextNumber(
-            tx,
-            company,
-            kind === 'CREDIT_MEMO' ? 'CM' : 'DM',
-          ),
-          kind,
-          direction: original.direction,
-          partyId: original.partyId,
-          status: 'POSTED',
-          relatedDocumentId: original.id,
-          currency: 'PHP',
-          exchangeRate: '1',
-          issueDate: new Date(v.manilaDay(new Date())),
-          dueDate: original.dueDate,
-          subtotal,
-          taxAmount,
-          total: amount,
-          data: json({
-            reason,
-            originalNumber: original.number,
-            accountAllocations,
-          }),
-          createdBy: actor.username,
-          postedBy: actor.username,
-          postedAt: new Date(),
-        },
-      });
-      // AP memos reverse the original expense/capitalization account proportions.
-      let lines = this.documentLines(record, kind === 'CREDIT_MEMO');
-      if (original.direction === 'AP') {
-        lines = lines.filter((line) => line.code !== '5000');
-        lines.push(
-          ...accountAllocations.map((share) => {
-            const amount = new Prisma.Decimal(share.amount);
-            const debit = (kind !== 'CREDIT_MEMO') !== amount.isNegative();
-            return {
-              code: share.code,
-              debit: debit ? amount.abs().toFixed(2) : '0.00',
-              credit: debit ? '0.00' : amount.abs().toFixed(2),
-            };
-          }),
+          original,
+          this.postingLines(original),
         );
-      }
-      await postJournal(tx, company, actor, {
-        sourceKey: `DOC:${record.id}`,
-        sourceType: kind,
-        sourceId: record.id,
-        date: record.issueDate,
-        memo: `${record.number}: ${reason}`,
-        approvalAmount: amount.toFixed(2),
-        lines,
+        const credits = sum(
+          original.memos
+            .filter(
+              (memo) => memo.status === 'POSTED' && memo.kind === 'CREDIT_MEMO',
+            )
+            .map((memo) => memo.total),
+        );
+        const debits = sum(
+          original.memos
+            .filter(
+              (memo) => memo.status === 'POSTED' && memo.kind === 'DEBIT_MEMO',
+            )
+            .map((memo) => memo.total),
+        );
+        if (
+          kind === 'CREDIT_MEMO' &&
+          credits.add(amount).gt(original.total.add(debits))
+        )
+          throw new BadRequestException(
+            'Credit memos cannot exceed the document and its posted debit memos.',
+          );
+        const earlier = original.memos.filter(
+          (memo) => memo.status === 'POSTED' && memo.kind === kind,
+        );
+        const priorAmount = sum(earlier.map((memo) => memo.total));
+        const priorTax = sum(earlier.map((memo) => memo.taxAmount));
+        const taxAmount = roundMoney(
+          priorAmount.add(amount).mul(original.taxAmount).div(original.total),
+        ).minus(priorTax);
+        const subtotal = amount.minus(taxAmount);
+        let accountAllocations: { code: string; amount: string }[] = [];
+        if (original.direction === 'AP') {
+          const base = this.documentLines(original).filter(
+            (line) => !['2100', '1400'].includes(line.code),
+          );
+          const cumulative = allocateMemoAccounts(
+            sum(earlier.map((memo) => memo.subtotal)).add(subtotal),
+            base,
+          );
+          const previousAccounts = new Map<string, Prisma.Decimal>();
+          for (const memo of earlier) {
+            const stored = v.object(memo.data).accountAllocations;
+            const shares = Array.isArray(stored)
+              ? stored.map((line) => {
+                  const row = v.object(line);
+                  return {
+                    code: id(row.code),
+                    amount: money(
+                      row.amount,
+                      'Stored allocation',
+                      true,
+                    ).toFixed(2),
+                  };
+                })
+              : allocateMemoAccounts(memo.subtotal, base);
+            for (const share of shares)
+              previousAccounts.set(
+                share.code,
+                (previousAccounts.get(share.code) ?? new Prisma.Decimal(0)).add(
+                  share.amount,
+                ),
+              );
+          }
+          accountAllocations = base
+            .map((line) => ({
+              code: line.code,
+              amount: new Prisma.Decimal(
+                cumulative.find((share) => share.code === line.code)?.amount ??
+                  0,
+              )
+                .minus(previousAccounts.get(line.code) ?? 0)
+                .toFixed(2),
+            }))
+            .filter((line) => !new Prisma.Decimal(line.amount).isZero());
+        }
+        const record = await tx.financeDocument.create({
+          data: {
+            company,
+            number: await nextNumber(
+              tx,
+              company,
+              kind === 'CREDIT_MEMO' ? 'CM' : 'DM',
+            ),
+            kind,
+            direction: original.direction,
+            partyId: original.partyId,
+            status: 'POSTED',
+            relatedDocumentId: original.id,
+            sourceKey,
+            currency: 'PHP',
+            exchangeRate: '1',
+            issueDate: new Date(v.manilaDay(new Date())),
+            dueDate: original.dueDate,
+            subtotal,
+            taxAmount,
+            total: amount,
+            data: json({
+              reason,
+              originalNumber: original.number,
+              accountAllocations,
+              postingAccounts: accounts,
+            }),
+            createdBy: actor.username,
+            postedBy: actor.username,
+            postedAt: new Date(),
+          },
+        });
+        // AP memos reverse the original expense/capitalization account proportions.
+        let lines = this.documentLines(record, kind === 'CREDIT_MEMO');
+        if (original.direction === 'AP') {
+          lines = lines.filter((line) => line.code !== '5000');
+          lines.push(
+            ...accountAllocations.map((share) => {
+              const amount = new Prisma.Decimal(share.amount);
+              const debit = (kind !== 'CREDIT_MEMO') !== amount.isNegative();
+              return {
+                code: share.code,
+                debit: debit ? amount.abs().toFixed(2) : '0.00',
+                credit: debit ? '0.00' : amount.abs().toFixed(2),
+              };
+            }),
+          );
+        }
+        await postJournal(tx, company, actor, {
+          sourceKey: `DOC:${record.id}`,
+          sourceType: kind,
+          sourceId: record.id,
+          date: record.issueDate,
+          memo: `${record.number}: ${reason}`,
+          approvalAmount: amount.toFixed(2),
+          lines: mappedLines(lines, accounts),
+        });
+        await audit(
+          tx,
+          company,
+          actor,
+          'POST_MEMO',
+          'FinanceDocument',
+          record.id,
+          {
+            documentId,
+            kind,
+            amount: amount.toFixed(2),
+            reason,
+            submissionKey,
+          },
+        );
+        return record;
       });
-      await audit(
-        tx,
-        company,
-        actor,
-        'POST_MEMO',
-        'FinanceDocument',
-        record.id,
-        { documentId, kind, amount: amount.toFixed(2), reason },
-      );
-      return record;
-    });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        const existing = await this.prisma.financeDocument.findUnique({
+          where: lookup,
+        });
+        if (existing) return replay(existing);
+      }
+      throw error;
+    }
   }
 
   private allocations(body: unknown) {
@@ -1067,6 +1125,7 @@ export class FinanceService implements OnModuleDestroy {
     partyId: string,
     allocations: { documentId: string; amount: Prisma.Decimal }[],
   ) {
+    const documents: FinanceDocument[] = [];
     for (const line of allocations) {
       const document = await this.lockDocument(tx, company, line.documentId);
       if (
@@ -1082,7 +1141,9 @@ export class FinanceService implements OnModuleDestroy {
         throw new BadRequestException(
           `${document.number}: allocation exceeds the outstanding balance.`,
         );
+      documents.push(document);
     }
+    return documents;
   }
 
   async createPayment(company: string, actor: Actor, body: unknown) {
@@ -1155,13 +1216,29 @@ export class FinanceService implements OnModuleDestroy {
         throw new NotFoundException(
           'Payment party not found in this workspace.',
         );
-      await this.validateAllocations(
+      const documents = await this.validateAllocations(
         tx,
         company,
         direction,
         partyId,
         allocations,
       );
+      const accounts = await postingAccounts(tx, company);
+      const controls = new Map<string, Prisma.Decimal>();
+      for (const line of allocations) {
+        const document = documents.find((row) => row.id === line.documentId)!;
+        const original = await sourcePostingAccounts(
+          tx,
+          company,
+          document,
+          this.postingLines(document),
+        );
+        const code = original[direction === 'AR' ? '1300' : '2100'];
+        controls.set(
+          code,
+          (controls.get(code) ?? new Prisma.Decimal(0)).add(line.amount),
+        );
+      }
       if (paymentRequestId) {
         await tx.$queryRaw`SELECT id FROM "PaymentRequest" WHERE id = ${paymentRequestId} AND company = ${company} FOR UPDATE`;
         const request = await tx.paymentRequest.findFirst({
@@ -1218,6 +1295,16 @@ export class FinanceService implements OnModuleDestroy {
         },
         include: { allocations: true },
       });
+      const bankLine = {
+        code: accounts['1000'],
+        debit: direction === 'AR' ? amount.toFixed(2) : '0.00',
+        credit: direction === 'AP' ? amount.toFixed(2) : '0.00',
+      };
+      const controlLines = [...controls].map(([code, value]) => ({
+        code,
+        debit: direction === 'AP' ? value.toFixed(2) : '0.00',
+        credit: direction === 'AR' ? value.toFixed(2) : '0.00',
+      }));
       await postJournal(tx, company, actor, {
         sourceKey: `PAY:${payment.id}`,
         sourceType:
@@ -1227,14 +1314,8 @@ export class FinanceService implements OnModuleDestroy {
         memo: `${payment.number}: ${reference}`,
         lines:
           direction === 'AR'
-            ? [
-                { code: '1000', debit: amount.toFixed(2), credit: '0.00' },
-                { code: '1300', debit: '0.00', credit: amount.toFixed(2) },
-              ]
-            : [
-                { code: '2100', debit: amount.toFixed(2), credit: '0.00' },
-                { code: '1000', debit: '0.00', credit: amount.toFixed(2) },
-              ],
+            ? [bankLine, ...controlLines]
+            : [...controlLines, bankLine],
       });
       if (paymentRequestId)
         await tx.paymentRequest.update({

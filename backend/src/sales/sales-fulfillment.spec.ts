@@ -228,6 +228,44 @@ describe('sales Phase 2 fulfillment integration', () => {
     });
   });
 
+  it.each([
+    [1, 1.005, 1.01, 0.12, 1.13],
+    [3, 2.675, 8.03, 0.96, 8.99],
+    [1, 0.375, 0.38, 0.05, 0.43],
+    [2, 0.335, 0.67, 0.08, 0.75],
+  ])(
+    'rounds approved decimal price boundaries for %s × %s',
+    async (quantity, price, subtotal, vatAmount, grandTotal) => {
+      const saved = await controller.createOrderSlip(
+        {
+          ...payload,
+          items: [{ ...item, requestedQty: quantity, unitPrice: price }],
+        },
+        request,
+      );
+      expect(saved).toMatchObject({ subtotal, vatAmount, grandTotal });
+      expect(db.product.update).not.toHaveBeenCalled();
+      expect(fulfillment.ensureDocumentDelivery).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rounds VAT half cents after summing rounded lines', async () => {
+    await expect(
+      controller.createOrderSlip(
+        {
+          ...payload,
+          vatRate: 0.1,
+          items: [{ ...item, requestedQty: 1, unitPrice: 0.25 }],
+        },
+        request,
+      ),
+    ).resolves.toMatchObject({
+      subtotal: 0.25,
+      vatAmount: 0.03,
+      grandTotal: 0.28,
+    });
+  });
+
   it.each([0, -1, 1.5, Infinity])(
     'rejects invalid new document quantity %s',
     async (requestedQty) => {

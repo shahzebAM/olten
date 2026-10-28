@@ -9,11 +9,15 @@ import {
   Delete,
   ConflictException,
   NotFoundException,
+  UseGuards,
 } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard, LegacyReadModules, LegacyWriteModules } from '../auth/legacy-erp-auth.guard';
 
 const prisma = new PrismaClient();
 @Controller('sales')
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('sales')
 export class SalesController {
 
   onModuleDestroy() {
@@ -79,6 +83,7 @@ export class SalesController {
   // ==========================================
 
   @Get('customer-categories')
+  @LegacyReadModules('products', 'inventory', 'master_inventory', 'warehouses')
   async getCategories(@Query('company') company: string) {
     return prisma.customerCategory.findMany({ where: { company } });
   }
@@ -89,11 +94,13 @@ export class SalesController {
   }
 
   @Delete('customer-categories/:id')
+  @LegacyCompanyRecord('customerCategory')
   async deleteCategory(@Param('id') id: string) {
     return prisma.customerCategory.delete({ where: { id } });
   }
 
   @Get('category-prices')
+  @LegacyReadModules('products', 'inventory', 'master_inventory', 'warehouses')
   async getCategoryPrices(
     @Query('company') company: string, 
     @Query('categoryName') categoryName: string
@@ -104,6 +111,7 @@ export class SalesController {
   }
 
   @Post('category-prices/bulk')
+  @LegacyWriteModules('products', 'inventory', 'master_inventory', 'warehouse', 'warehouses')
   async updateCategoryPrices(@Body() data: { company: string; categoryName: string; prices: { productId: number; price: number }[] }) {
     const { company, categoryName, prices } = data;
     
@@ -149,6 +157,7 @@ export class SalesController {
   }
 
   @Patch('customers/:id')
+  @LegacyCompanyRecord('customer')
   async updateCustomer(@Param('id') id: string, @Body() data: any) {
     try {
       return await prisma.$transaction(
@@ -196,6 +205,7 @@ export class SalesController {
   }
 
   @Delete('customers/:id')
+  @LegacyCompanyRecord('customer')
   async deleteCustomer(@Param('id') id: string) {
     try {
       return await prisma.$transaction(
@@ -243,6 +253,7 @@ export class SalesController {
   }
 
   @Patch('customers/:id/balance')
+  @LegacyCompanyRecord('customer')
   async updateCustomerBalance(@Param('id') id: string, @Body('amount') amount: number) {
     return prisma.customer.update({
       where: { id },

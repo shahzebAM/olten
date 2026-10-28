@@ -14,6 +14,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { LegacyCompanyRecord, LegacyErpAccess, LegacyErpAuthGuard } from '../auth/legacy-erp-auth.guard';
 import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import {
   createNumberedDocument,
@@ -30,6 +31,8 @@ import {
 } from '../fulfillment/fulfillment.stock';
 
 @Controller('sales/order-slips')
+@UseGuards(LegacyErpAuthGuard)
+@LegacyErpAccess('sales')
 @FulfillmentAccess('sales')
 export class OrderSlipsController {
   private readonly prisma = new PrismaClient();
@@ -75,6 +78,7 @@ export class OrderSlipsController {
   }
 
   @Post('save-qrs')
+  @LegacyErpAccess('qr')
   async saveProductQRs(@Body() data: { company: string }) {
     if (!data.company) throw new BadRequestException('Company is required');
 
@@ -99,6 +103,7 @@ export class OrderSlipsController {
   }
 
   @Get('all-products')
+  @LegacyErpAccess('qr')
   async getAllProducts(@Query('company') company: string) {
     if (!company) return [];
     return await this.prisma.product.findMany({
@@ -172,6 +177,7 @@ export class OrderSlipsController {
   }
 
   @Patch('shortages/:id/status')
+  @LegacyCompanyRecord('shortage')
   async updateShortageStatus(@Param('id') id: string, @Body() body: any) {
      return await this.prisma.shortage.update({ where: { id }, data: { status: body.status } });
   }
@@ -249,7 +255,7 @@ export class OrderSlipsController {
         where: { id: { in: productIds }, company },
       });
 
-      let calculatedSubtotal = 0;
+      let calculatedSubtotal = new Prisma.Decimal(0);
       const cleanItems: Prisma.OrderSlipItemUncheckedCreateWithoutOrderSlipInput[] =
         [];
 
@@ -270,9 +276,12 @@ export class OrderSlipsController {
 
         const unitPrice =
           Number(item.unitPrice) || Number(product.sellingPrice);
-        const lineTotal = Math.round(requestedQty * unitPrice * 100) / 100;
+        const lineTotal = new Prisma.Decimal(requestedQty)
+          .mul(unitPrice)
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+          .toNumber();
 
-        calculatedSubtotal += lineTotal;
+        calculatedSubtotal = calculatedSubtotal.add(lineTotal);
         cleanItems.push({
           productId: product.id,
           sku: product.sku,
@@ -283,12 +292,17 @@ export class OrderSlipsController {
         });
       }
 
-      calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
       const calculatedVat = isVatApplied
-        ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+        ? calculatedSubtotal
+            .mul(Number(vatRate))
+            .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+            .toNumber()
         : 0;
       const calculatedGrandTotal =
-        Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+        calculatedSubtotal
+          .add(calculatedVat)
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+          .toNumber();
 
       const newOs = await tx.orderSlip.create({
         data: {
@@ -297,7 +311,7 @@ export class OrderSlipsController {
           company,
           customerId,
           status: 'Generated',
-          subtotal: calculatedSubtotal,
+          subtotal: calculatedSubtotal.toNumber(),
           vatApplied: isVatApplied,
           vatRate: Number(vatRate),
           vatAmount: calculatedVat,
@@ -376,6 +390,7 @@ export class OrderSlipsController {
   }
 
   @Get(':id')
+  @LegacyCompanyRecord('orderSlip')
   async getOrderSlip(@Param('id') id: string) {
     const os = await this.prisma.orderSlip.findUnique({ where: { id }, include: { items: { include: { product: { select: { currentStock: true } } } }, customer: true } });
     if (!os) throw new NotFoundException('Order Slip not found.');
@@ -383,6 +398,7 @@ export class OrderSlipsController {
   }
 
   @Patch(':id/process')
+  @LegacyCompanyRecord('orderSlip')
   @UseGuards(FulfillmentAuthGuard)
   async processOrderSlip(
     @Param('id') id: string,
@@ -447,6 +463,7 @@ export class OrderSlipsController {
   }
 
   @Patch(':id')
+  @LegacyCompanyRecord('orderSlip')
   @UseGuards(FulfillmentAuthGuard)
   async updateOrderSlip(
     @Param('id') id: string,
@@ -573,7 +590,7 @@ export class OrderSlipsController {
           where: { id: { in: productIds }, company: existing.company },
         });
 
-        let calculatedSubtotal = 0;
+        let calculatedSubtotal = new Prisma.Decimal(0);
         const cleanItems: Prisma.OrderSlipItemUncheckedCreateWithoutOrderSlipInput[] =
           [];
 
@@ -587,8 +604,11 @@ export class OrderSlipsController {
 
           const unitPrice =
             Number(item.unitPrice) || Number(product.sellingPrice);
-          const lineTotal = Math.round(requestedQty * unitPrice * 100) / 100;
-          calculatedSubtotal += lineTotal;
+          const lineTotal = new Prisma.Decimal(requestedQty)
+            .mul(unitPrice)
+            .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+            .toNumber();
+          calculatedSubtotal = calculatedSubtotal.add(lineTotal);
           cleanItems.push({
             productId: product.id,
             sku: product.sku,
@@ -622,14 +642,19 @@ export class OrderSlipsController {
           }
         }
 
-        calculatedSubtotal = Math.round(calculatedSubtotal * 100) / 100;
         const applyVat =
           isVatApplied !== undefined ? isVatApplied : existing.vatApplied;
         const calculatedVat = applyVat
-          ? Math.round(calculatedSubtotal * Number(vatRate) * 100) / 100
+          ? calculatedSubtotal
+              .mul(Number(vatRate))
+              .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+              .toNumber()
           : 0;
         const calculatedGrandTotal =
-          Math.round((calculatedSubtotal + calculatedVat) * 100) / 100;
+          calculatedSubtotal
+            .add(calculatedVat)
+            .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+            .toNumber();
 
         const updatedOs = await tx.orderSlip.update({
           where: { id },
@@ -639,7 +664,7 @@ export class OrderSlipsController {
               referenceOs !== undefined ? referenceOs : existing.referenceOs,
             customerId: customerId || existing.customerId,
             updatedBy: user,
-            subtotal: calculatedSubtotal,
+            subtotal: calculatedSubtotal.toNumber(),
             vatApplied: applyVat,
             vatAmount: calculatedVat,
             grandTotal: calculatedGrandTotal,
@@ -685,6 +710,7 @@ export class OrderSlipsController {
   }
 
   @Delete(':id/cancel')
+  @LegacyCompanyRecord('orderSlip')
   @UseGuards(FulfillmentAuthGuard)
   async cancelOrderSlip(
     @Param('id') id: string,
@@ -746,6 +772,7 @@ export class OrderSlipsController {
   }
 
   @Delete(':id')
+  @LegacyCompanyRecord('orderSlip')
   @UseGuards(FulfillmentAuthGuard)
   async hardDeleteOrderSlip(
     @Param('id') id: string,

@@ -755,6 +755,7 @@ export default function FinanceWorkspace({
       ? "documents"
       : requestedTab;
   const [direction, setDirection] = useState("AR");
+  const memoSubmission = useRef<{ signature: string; key: string } | null>(null);
   const state = usePhase3Data<Overview>(api, company, "/finance/overview");
   const balances = usePhase3Data<Balances>(
     api,
@@ -785,7 +786,11 @@ export default function FinanceWorkspace({
     roles.includes("Finance");
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-2">
+      <div
+        className="phase3-tabs flex flex-wrap gap-2"
+        role="group"
+        aria-label="Finance sections"
+      >
         {[
           [landed, "landed", "Landed costs"],
           [finance, "documents", "Invoices & bills"],
@@ -796,6 +801,7 @@ export default function FinanceWorkspace({
             <button
               key={String(id)}
               className={tab === id ? primary : secondary}
+              aria-pressed={tab === id}
               onClick={() => setTab(String(id))}
             >
               {title}
@@ -946,16 +952,24 @@ export default function FinanceWorkspace({
                   title="Authorize credit or debit memo"
                   disabled={state.busy}
                   onSubmit={async (form) => {
-                    await run(
+                    const details = {
+                      documentId: formValue(form, "documentId"),
+                      kind: formValue(form, "kind"),
+                      amount: formValue(form, "amount"),
+                      reason: formValue(form, "reason").trim(),
+                    };
+                    const signature = JSON.stringify(details);
+                    if (memoSubmission.current?.signature !== signature)
+                      memoSubmission.current = { signature, key: crypto.randomUUID() };
+                    const ok = await run(
                       "/memos",
                       {
-                        documentId: formValue(form, "documentId"),
-                        kind: formValue(form, "kind"),
-                        amount: formValue(form, "amount"),
-                        reason: formValue(form, "reason"),
+                        ...details,
+                        submissionKey: memoSubmission.current.key,
                       },
                       "Authorized memo posted and balances adjusted.",
                     );
+                    if (ok) memoSubmission.current = null;
                   }}
                 >
                   <div className={grid}>
@@ -1015,6 +1029,7 @@ export default function FinanceWorkspace({
                   "due",
                   "amount",
                 ]}
+                searchLabel="Search invoices and bills"
                 actions={(row) => (
                   <div className="space-y-2">
                     <details className="text-sm">
@@ -1065,9 +1080,14 @@ export default function FinanceWorkspace({
               </select>
             }
           >
-            <p className="mb-4 text-xl font-bold">
-              Outstanding: {money(balances.data?.totalOutstanding)}
-            </p>
+            <div className="phase3-balance-total">
+              <small>
+                {direction === "AR" ? "Customer receivables outstanding" : "Supplier payables outstanding"}
+              </small>
+              <strong>
+                {balances.data ? money(balances.data.totalOutstanding) : balances.loading ? "Loading…" : "Unavailable"}
+              </strong>
+            </div>
             <DataTable
               rows={
                 asRows(balances.data?.aging).length
@@ -1097,6 +1117,7 @@ export default function FinanceWorkspace({
                   balance: money(record.outstanding),
                 }))}
                 columns={["number", "party", "due", "balance"]}
+                searchLabel="Search outstanding documents"
               />
             </div>
             {write && (
@@ -1179,6 +1200,7 @@ export default function FinanceWorkspace({
                 "method",
                 "reference",
               ]}
+              searchLabel="Search payment history"
             />
           </Panel>
         </>

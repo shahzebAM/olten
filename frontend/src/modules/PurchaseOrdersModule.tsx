@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
+import { roundSalesLine, salesTotals } from '../lib/salesAmounts';
 import type { ReactNode } from 'react';
+import './order-entry-workspace.css';
 
 // --- INTERFACES ---
 interface Supplier { 
@@ -48,7 +51,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const fetchPurchaseOrders = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) setPurchaseOrders(await res.json());
     } catch (e) {
       showToast("Error loading POs.", "error");
@@ -59,7 +62,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/suppliers?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (res.ok) setSuppliers(await res.json());
     } catch (e) {
       console.error("Failed to load suppliers");
@@ -70,7 +73,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     setNumberLoading(true);
     setNextPoNumber('');
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/next-po-number?company=${encodeURIComponent(selectedCompany)}`);
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/next-po-number?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!res.ok) throw new Error('Could not load the next P.O. number.');
       const data = await res.json();
       setNextPoNumber(data.poNumber);
@@ -129,9 +132,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const removePoItem = (index: number) => setPoItems(poItems.filter((_, i) => i !== index));
 
   const calculateTotals = () => {
-    let subtotal = poItems.reduce((sum, item) => sum + (Number(item.requestedQty) * Number(item.unitCost)), 0);
-    let vatAmount = poForm.isVatApplied ? subtotal * 0.12 : 0;
-    return { subtotal, vatAmount, grandTotal: subtotal + vatAmount };
+    return salesTotals(poItems.map(item => roundSalesLine(item.requestedQty, item.unitCost)), poForm.isVatApplied);
   };
 
   const handleGeneratePO = async () => {
@@ -164,7 +165,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       };
 
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       
       if (!res.ok) {
@@ -211,7 +212,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     try {
       const payload = { user: loginUsername, verifications: receiveItems.map(i => ({ itemId: i.id, confirmedQty: Number(i.confirmedQty) })) };
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${receivePo.id}/receive`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error();
       showToast("Purchase Order received successfully.", "success");
@@ -224,7 +225,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     if (!window.confirm("Void this Purchase Order? It will remain in history as Cancelled.")) return;
     try {
       const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}/cancel`, {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername })
+        method: 'DELETE', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany, 'Content-Type': 'application/json' }, body: JSON.stringify({ user: loginUsername })
       });
       if (!res.ok) throw new Error();
       showToast("Purchase Order cancelled.", "success");
@@ -237,7 +238,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
     if (!isAuthorizedAdmin) return showToast("Unauthorized action.", "error");
     if (!window.confirm("CRITICAL WARNING: This will permanently wipe this P.O. Are you sure?")) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/procurement/purchase-orders/${id}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast("Purchase Order permanently deleted.", "success");
       fetchPurchaseOrders();
@@ -247,7 +248,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
   const totals = calculateTotals();
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
+    <div className="order-entry-workspace order-po-workspace flex flex-col h-screen w-full bg-[#F8FAFC] font-sans text-slate-900 overflow-hidden print:h-auto print:overflow-visible">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[200] px-5 py-3.5 rounded-xl shadow-xl font-bold text-sm ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
           {toast.message}
@@ -255,7 +256,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
       )}
 
       {/* HEADER & TABS */}
-      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10 print:hidden">
+      <header className="order-entry-header h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 shadow-sm z-10 print:hidden">
         <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">P.O.</h2>
           <div className="text-xs font-semibold text-slate-400 mt-0.5 flex items-center gap-2">
@@ -267,7 +268,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         </button>
       </header>
 
-      <div className="bg-white border-b border-slate-200 px-8 py-3 flex flex-wrap gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
+      <div className="order-po-tabs bg-white border-b border-slate-200 px-8 py-3 flex flex-wrap gap-4 shrink-0 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.02)] z-10 print:hidden">
         {canPurchase && <><button onClick={() => setActiveTab('generate')} className={`px-5 py-2 rounded-lg text-sm font-black uppercase tracking-wider transition-colors ${visibleTab === 'generate' ? 'bg-sky-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
           Generate P.O.
         </button>
@@ -279,7 +280,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
         </button>}
       </div>
 
-      <main className={`flex-1 overflow-y-auto p-8 flex flex-col ${visibleTab === 'fulfillment' ? 'print:overflow-visible' : 'print:hidden'}`}>
+      <main className={`order-po-main flex-1 overflow-y-auto p-8 flex flex-col ${visibleTab === 'fulfillment' ? 'print:overflow-visible' : 'print:hidden'}`}>
         <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col relative">
 
           {/* =========================================
@@ -349,13 +350,13 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
               TAB 2: GENERATE P.O.
           ========================================= */}
           {visibleTab === 'generate' && (
-            <div className="bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
+            <div className="order-po-editor bg-white border border-slate-300 rounded-2xl shadow-sm flex flex-col p-8 space-y-8">
               
-              <div className="flex flex-col sm:flex-row justify-between items-start border-b border-slate-200 pb-6 gap-6">
+              <div className="order-po-details flex flex-col sm:flex-row justify-between items-start border-b border-slate-200 pb-6 gap-6">
                 <div className="space-y-4 max-w-xl w-full">
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Select Supplier *</label>
-                    <select value={poForm.supplierId} onChange={e => handleSupplierChange(e.target.value)} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-sky-600 bg-white">
+                    <label htmlFor="purchase-order-supplier" className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">Select Supplier *</label>
+                    <select id="purchase-order-supplier" value={poForm.supplierId} onChange={e => handleSupplierChange(e.target.value)} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-sky-600 bg-white">
                       <option value="">-- Choose Vendor --</option>
                       {suppliers.map(sup => <option key={sup.id} value={sup.id}>{sup.legalName}</option>)}
                     </select>
@@ -386,7 +387,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
               </div>
 
               {/* Items Table */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="order-po-lines border border-slate-200 rounded-xl overflow-hidden" role="region" aria-label="Purchase order items" tabIndex={0}>
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
@@ -401,11 +402,11 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
                   <tbody className="divide-y divide-slate-100">
                     {poItems.map((item, idx) => (
                       <tr key={idx} className={item.productId ? 'bg-sky-50/20' : ''}>
-                        <td className="p-2"><input type="text" value={item.sku} onChange={e => handleItemChange(idx, 'sku', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md font-mono text-xs outline-none focus:border-slate-400 bg-white" placeholder="SKU-001"/></td>
-                        <td className="p-2"><input type="text" value={item.productName} onChange={e => handleItemChange(idx, 'productName', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-bold outline-none focus:border-slate-400 bg-white" placeholder="Product Description"/></td>
-                        <td className="p-2"><input type="number" min="1" value={item.requestedQty} onChange={e => handleItemChange(idx, 'requestedQty', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-black text-center outline-none focus:border-slate-400 bg-white"/></td>
-                        <td className="p-2"><input type="number" min="0" step="0.01" value={item.unitCost} onChange={e => handleItemChange(idx, 'unitCost', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-mono text-right outline-none focus:border-slate-400 bg-white"/></td>
-                        <td className="p-2 text-right font-black font-mono text-slate-700 pr-4">₱{(item.requestedQty * item.unitCost).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                        <td className="p-2"><input type="text" aria-label={`SKU line ${idx + 1}`} value={item.sku} onChange={e => handleItemChange(idx, 'sku', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md font-mono text-xs outline-none focus:border-slate-400 bg-white" placeholder="SKU-001"/></td>
+                        <td className="p-2"><input type="text" aria-label={`Product name line ${idx + 1}`} value={item.productName} onChange={e => handleItemChange(idx, 'productName', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-bold outline-none focus:border-slate-400 bg-white" placeholder="Product Description"/></td>
+                        <td className="p-2"><input type="number" aria-label={`Quantity line ${idx + 1}`} min="1" value={item.requestedQty} onChange={e => handleItemChange(idx, 'requestedQty', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-black text-center outline-none focus:border-slate-400 bg-white"/></td>
+                        <td className="p-2"><input type="number" aria-label={`Unit cost line ${idx + 1}`} min="0" step="0.01" value={item.unitCost} onChange={e => handleItemChange(idx, 'unitCost', Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm font-mono text-right outline-none focus:border-slate-400 bg-white"/></td>
+                        <td className="p-2 text-right font-black font-mono text-slate-700 pr-4">₱{roundSalesLine(item.requestedQty, item.unitCost).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                         <td className="p-2 text-center">
                           {poItems.length > 1 && (
                             <button onClick={() => removePoItem(idx)} className="text-rose-400 hover:text-rose-600 font-bold p-1">✕</button>
@@ -424,7 +425,7 @@ export default function PurchaseOrdersModule({ selectedCompany, loginUsername, A
               </div>
 
               {/* Totals & Submit */}
-              <div className="flex justify-between items-end pt-6 border-t border-slate-200">
+              <div className="order-po-totals flex justify-between items-end pt-6 border-t border-slate-200">
                 <button onClick={handleGeneratePO} disabled={isLoading || numberLoading} className="px-8 py-4 bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest shadow-lg transition-colors">
                   {isLoading ? 'Processing...' : 'Issue Purchase Order'}
                 </button>

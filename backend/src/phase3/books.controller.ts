@@ -13,6 +13,7 @@ import {
 import { BooksService } from './books.service';
 import { Phase3Access, Phase3AuthGuard } from './phase3-auth.guard';
 import type { Phase3Request } from './phase3-auth.guard';
+import type { ReportQuery } from './books.reports';
 
 @Controller('phase3')
 @UseGuards(Phase3AuthGuard)
@@ -25,12 +26,55 @@ export class BooksController {
     return this.books.overview(company);
   }
 
+  @Get('books/reports/:kind')
+  report(
+    @Headers('x-company') company: string,
+    @Param('kind') kind: string,
+    @Query() query: ReportQuery,
+  ) {
+    return this.books.report(company, kind, query);
+  }
+
   @Post('books/initialize')
   initialize(
     @Headers('x-company') company: string,
     @Req() request: Phase3Request,
   ) {
     return this.books.initialize(company, request.user);
+  }
+
+  @Get('books/cash-flow/entries')
+  cashEntries(
+    @Headers('x-company') company: string,
+    @Query() query: ReportQuery,
+  ) {
+    return this.books.cashFlowEntries(company, query);
+  }
+
+  @Get('books/inventory-reconciliation')
+  inventoryReconciliation(
+    @Headers('x-company') company: string,
+    @Req() request: Phase3Request,
+  ) {
+    return this.books.inventoryReconciliation(company, request.user);
+  }
+
+  @Post('books/cash-flow/accounts')
+  cashAccount(
+    @Headers('x-company') company: string,
+    @Req() request: Phase3Request,
+    @Body() body: unknown,
+  ) {
+    return this.books.setCashAccount(company, request.user, body);
+  }
+
+  @Post('books/cash-flow/classifications')
+  classifyCash(
+    @Headers('x-company') company: string,
+    @Req() request: Phase3Request,
+    @Body() body: unknown,
+  ) {
+    return this.books.classifyCash(company, request.user, body);
   }
 
   @Get('books/ledger-entries')

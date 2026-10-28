@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiAuthHeaders } from '../lib/apiSession';
 
 interface Customer { id: string; name: string; contact: string; phone: string; email: string; address: string; creditLimit: number; balance: number; }
 interface SOItem { id?: string; productId: number; sku: string; productName: string; quantity: number; unitPrice: number; total: number; }
@@ -32,10 +33,10 @@ export default function SalesOrderModule({ selectedCompany, loginUsername, API_B
   const fetchData = async () => {
     try {
       const [custRes, soRes, prodRes, whRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`),
-        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`)
+        fetch(`${API_BASE_URL}/sales/customers?company=${selectedCompany}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/sales/orders?company=${selectedCompany}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/products?company=${selectedCompany}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } }),
+        fetch(`${API_BASE_URL}/warehouses?company=${selectedCompany}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } })
       ]);
       if (custRes.ok) setCustomers(await custRes.json());
       if (soRes.ok) setSos(await soRes.json());
@@ -79,7 +80,7 @@ export default function SalesOrderModule({ selectedCompany, loginUsername, API_B
 
     setIsProcessing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/orders`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ company: selectedCompany, ...soForm, totalAmount, items: soItems, user: loginUsername, status: 'PENDING' }) });
+      const res = await fetch(`${API_BASE_URL}/sales/orders`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ company: selectedCompany, ...soForm, totalAmount, items: soItems, user: loginUsername, status: 'PENDING' }) });
       if(!res.ok) throw new Error();
       fetchData(); showToast("Sales Order draft generated.", "success");
       setSoItems([]); setSoForm({ customerId: '', soNumber: `SO-${Date.now().toString().slice(-6)}` });
@@ -94,7 +95,7 @@ export default function SalesOrderModule({ selectedCompany, loginUsername, API_B
     }
     setIsProcessing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/orders/${so.id}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status }) });
+      const res = await fetch(`${API_BASE_URL}/sales/orders/${so.id}/status`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ status }) });
       if(!res.ok) throw new Error();
       fetchData(); showToast(`Order marked as ${status}.`, "success");
     } catch (e) { showToast("Failed to update status.", "error"); } finally { setIsProcessing(false); }
@@ -105,12 +106,12 @@ export default function SalesOrderModule({ selectedCompany, loginUsername, API_B
     setIsProcessing(true);
     try {
       const so = fulfillModal.so;
-      await fetch(`${API_BASE_URL}/sales/orders/${so.id}/status`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ status: 'FULFILLED' }) });
-      await fetch(`${API_BASE_URL}/sales/customers/${so.customerId}/balance`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ amount: so.totalAmount }) }); 
+      await fetch(`${API_BASE_URL}/sales/orders/${so.id}/status`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ status: 'FULFILLED' }) });
+      await fetch(`${API_BASE_URL}/sales/customers/${so.customerId}/balance`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ amount: so.totalAmount }) });
       for (const item of so.items) {
-        await fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ company: selectedCompany, warehouseId: fulfillWarehouseId, productId: item.productId, sku: item.sku, quantity: -item.quantity }) });
+        await fetch(`${API_BASE_URL}/warehouse-stock`, { method: 'POST', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ company: selectedCompany, warehouseId: fulfillWarehouseId, productId: item.productId, sku: item.sku, quantity: -item.quantity }) });
         const prod = products.find(p => p.id === item.productId);
-        if (prod) await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: Math.max(0, (prod.currentStock || 0) - item.quantity) }) });
+        if (prod) await fetch(`${API_BASE_URL}/products/${item.productId}`, { method: 'PATCH', headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany,'Content-Type': 'application/json'}, body: JSON.stringify({ currentStock: Math.max(0, (prod.currentStock || 0) - item.quantity) }) });
       }
       fetchData(); showToast("Order Fulfilled!", "success");
       setFulfillModal({ isOpen: false, so: null }); setFulfillWarehouseId('');
