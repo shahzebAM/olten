@@ -6,6 +6,17 @@ import { createCorsOptions } from './cors.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Temporary coordinated release gate; removed by the matching application release.
+  app.use((request: Request, response: Response) => {
+    response.setHeader('X-Olten-Release', 'erp-20261028-maintenance');
+    response.setHeader('Cache-Control', 'no-store');
+    if ((request.method === 'GET' || request.method === 'HEAD') && request.path === '/') {
+      return response.status(200).json({ status: 'maintenance', release: 'erp-20261028-maintenance' });
+    }
+    response.setHeader('Retry-After', '120');
+    return response.status(503).json({ statusCode: 503, message: 'The ERP is being updated. Please retry shortly. No changes were saved.' });
+  });
   
   // Allow large high-resolution Base64 image payloads (up to 50MB)
   app.use(json({ limit: '50mb' }));
