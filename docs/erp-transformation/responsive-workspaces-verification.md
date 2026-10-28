@@ -29,6 +29,10 @@ All four already exist in the checked-out backend source and returned **200** ag
 
 Vercel CLI inspection identified production project **olten**, team **shahzebams-projects**, with `olten.vercel.app`, `surgicomwarehouse.com` and `www.surgicomwarehouse.com` aliases. No Vercel release or Railway release was manually performed in this task. A Git push is not evidence that the backend was updated.
 
+The configured remote database was also inspected using a connection with `default_transaction_read_only=on` (confirmed by `SHOW transaction_read_only`). Its existing Prisma history is present and ends at `20261021000000_phase3_finance_books_service`. Exactly four repository migrations are pending: allocation ownership, cash-flow classification, posting-role mapping and company navigation. The allocation ownership mismatch query returned **zero**; the existing history-protection function is present. No SQL mutation or backup/restore was performed against that database. This preflight must be rechecked after writers are stopped for release.
+
+Implementation commit **1648a7302399996ec57e3e30907facf1cfa49b92** was pushed and verified against `origin/codex/erp-ui-accounting-audit`. Subsequent live read-only probes still return 404 for the new routes. The local and remote `main` branch were not changed.
+
 ### Required production release work
 
 The prior accounting approvals explicitly covered implementation/test databases; production migration remains a separate release action. This task applied the new menu migration only to the verified local test database.
