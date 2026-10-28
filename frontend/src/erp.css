@@ -94,6 +94,25 @@
   .erp-workspace-home > div.grid .w-12 { width: 38px; height: 42px; border-radius: 9px; }
   .erp-workspace-home > div.grid .gap-4 { gap: 12px; }
   .erp-module-empty { width: 100%; padding: 45px; border: 1px dashed var(--erp-line); text-align: center; color: #6b6c72; background: white; border-radius: 9px; }
+  .erp-menu-editor-backdrop { color: #393a3d; }
+  dialog.erp-menu-editor { position: fixed; inset: 0; margin: auto; width: min(900px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid #d4d7dc; border-radius: 12px; background: #fff; color: #393a3d; }
+  dialog.erp-menu-editor:not([open]) { display: none; }
+  dialog.erp-menu-editor::backdrop { background: #17241cb3; }
+  .erp-menu-editor-header h2 { color: #393a3d; font-size: 19px; font-weight: 650; }
+  .erp-menu-editor-header p { max-width: 650px; font-size: 12px; line-height: 1.6; color: #6b6c72; }
+  .erp-menu-editor-body { min-height: 0; overscroll-behavior: contain; background: #f7f8fa; }
+  .erp-menu-group { position: relative; overflow: hidden; }
+  .erp-menu-group > .erp-menu-drag-handle { position: absolute; top: 24px; left: 9px; }
+  .erp-menu-group-header { padding-left: 38px; }
+  .erp-menu-editor .erp-menu-drag-handle { color: #6b6c72; min-width: 30px; min-height: 36px; }
+  .erp-menu-editor .erp-menu-item { background: #fff; }
+  .erp-menu-editor input, .erp-menu-editor select { border-color: #babec5; border-radius: 6px; }
+  .erp-menu-editor input { min-height: 38px; }
+  .erp-menu-editor button { cursor: pointer; }
+  .erp-menu-editor button:disabled { cursor: not-allowed; }
+  .erp-menu-editor-footer { background: #fff; }
+  .erp-menu-editor-footer button.bg-emerald-700 { background: #218409; color: #fff; }
+  .erp-menu-editor-footer button.bg-emerald-700:hover:not(:disabled) { background: #176a05; }
   .erp-shell-collapsed { --erp-nav-width: 76px; }
   .erp-shell-collapsed .erp-sidebar .erp-nav-label { display: none; }
   .erp-shell-collapsed .erp-brand-row { height: 83px; padding: 0 10px; gap: 3px; }
@@ -111,6 +130,9 @@
     .erp-workspace-intro { align-items: flex-start; flex-direction: column; gap: 15px; }
   }
   @media (max-width: 760px) {
+    dialog.erp-menu-editor { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+    .erp-menu-item .erp-menu-move-controls { width: 100%; padding-left: 30px; }
+    .erp-menu-group-header .erp-menu-move-controls { width: 100%; }
     .erp-shell { --erp-nav-width: 0px; --erp-topbar-height: 55px; }
     .erp-sidebar { width: 244px; visibility: hidden; transform: translateX(-100%); transition: transform .18s ease; }
     .erp-nav-open .erp-sidebar { visibility: visible; transform: translateX(0); z-index: 180; }

@@ -8,7 +8,8 @@ import MasterInventory from './modules/MasterInventory';
 import OrderSlipsModule from './modules/OrderSlipsModule';
 import ProductQRModule from './modules/ProductQRModule';
 import ErpShell from './components/ErpShell';
-import { workspaceTitle } from './lib/workspaceNavigation';
+import { normalizeWorkspaceMenuGroups, workspaceTitle } from './lib/workspaceNavigation';
+import type { WorkspaceMenuGroup } from './lib/workspaceNavigation';
 import './erp.css';
 
 // NEW SPLIT & UNIFIED MODULES
@@ -78,6 +79,58 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
 
   // --- ONLINE STATUS TRACKER (LOGIN & BROWSER CLOSE) ---
   const currentUser = adminUsers.find(u => u.username.toLowerCase() === loginUsername.trim().toLowerCase());
+
+  const [navigation, setNavigation] = useState<{
+    company: string | null; groups: WorkspaceMenuGroup[] | null; version: number; revision: number; error: string;
+  }>({ company: null, groups: null, version: 0, revision: -1, error: '' });
+  const [navigationRevision, setNavigationRevision] = useState(0);
+  useEffect(() => {
+    if (!isAuthenticated || !selectedCompany || !currentUser?.id) return;
+    const controller = new AbortController();
+    const company = selectedCompany;
+    const headers = getApiAuthHeaders();
+    const username = authRef.current.loginUsername;
+    const isCurrent = () => !controller.signal.aborted && mountedRef.current && selectedCompanyRef.current === company
+      && authRef.current.isAuthenticated && authRef.current.loginUsername === username
+      && getApiAuthHeaders().Authorization === headers.Authorization;
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/companies/navigation?company=${encodeURIComponent(company)}`, { headers, signal: controller.signal });
+        if (response.status === 401 && getApiAuthHeaders().Authorization === headers.Authorization) expireApiSession();
+        const result = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(response.status === 404
+          ? 'Menu settings are unavailable on this backend version. Deploy the matching backend before customizing the menu.'
+          : result?.message || 'Could not load the company menu.');
+        if (!Number.isSafeInteger(result?.version) || result.version < 0) throw new Error('The server returned invalid menu settings.');
+        if (isCurrent()) setNavigation({ company, groups: normalizeWorkspaceMenuGroups(result.groups), version: result.version, revision: navigationRevision, error: '' });
+      } catch (reason) {
+        if (isCurrent()) setNavigation({ company, groups: null, version: 0, revision: navigationRevision, error: reason instanceof Error ? reason.message : 'Could not load the company menu.' });
+      }
+    })();
+    return () => controller.abort();
+  }, [isAuthenticated, selectedCompany, currentUser?.id, navigationRevision]);
+
+  const saveNavigation = async (groups: WorkspaceMenuGroup[], version = 0) => {
+    if (!selectedCompany || currentUser?.role !== 'Super Admin') throw new Error('Only a Super Admin can customize the menu.');
+    const company = selectedCompany;
+    const headers = getApiAuthHeaders();
+    const username = authRef.current.loginUsername;
+    const isCurrent = () => mountedRef.current && selectedCompanyRef.current === company && authRef.current.isAuthenticated
+      && authRef.current.loginUsername === username && getApiAuthHeaders().Authorization === headers.Authorization;
+    const response = await fetch(`${API_BASE_URL}/companies/navigation?company=${encodeURIComponent(company)}`, {
+      method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ groups, version }),
+    });
+    if (response.status === 401 && getApiAuthHeaders().Authorization === headers.Authorization) expireApiSession();
+    const result = await response.json().catch(() => null);
+    if (response.status === 409 && isCurrent()) setNavigationRevision(value => value + 1);
+    if (!response.ok) throw new Error(response.status === 409
+      ? 'Another Super Admin changed this menu. Close and reopen the editor to load the latest version. Your draft has not been saved.'
+      : result?.message || 'Could not save the company menu.');
+    if (!Number.isSafeInteger(result?.version) || result.version < 1) throw new Error('The server returned invalid menu settings. Reload to check the saved menu.');
+    if (isCurrent()) {
+      setNavigation({ company, groups: normalizeWorkspaceMenuGroups(result.groups), version: result.version, revision: navigationRevision, error: '' });
+    }
+  };
 
   useEffect(() => {
     if (isAuthenticated && currentUser?.id) {
@@ -362,6 +415,11 @@ const [activeModule, setActiveModule] = useState<'none' | 'payroll' | 'ai_docs' 
     return <CompanyModule
       isGateway navigationOnly={navigationOnly} activeModule={activeModule} onWorkspace={returnToWorkspace}
       selectedCompany={selectedCompany!} loginUsername={loginUsername} currentUser={currentUser}
+      navigationGroups={navigation.company === selectedCompany ? navigation.groups : null}
+      navigationVersion={navigation.company === selectedCompany ? navigation.version : 0}
+      navigationLoading={navigation.company !== selectedCompany || navigation.revision !== navigationRevision}
+      navigationError={navigation.company === selectedCompany ? navigation.error : ''}
+      onSaveNavigation={saveNavigation}
       hasPayroll={userHasPayroll && globalModules.payroll} hasAiDocs={userHasAiDocs && globalModules.ai_docs}
       hasProducts={userHasProducts && globalModules.products} hasInventory={userHasInventory && globalModules.inventory}
       hasWarehouses={userHasWarehouses && globalModules.warehouses} hasPurchasing={userHasPurchasing && globalModules.purchasing}

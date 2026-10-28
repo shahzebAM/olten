@@ -53,3 +53,95 @@ export function workspaceTitle(module: string): string {
   if (module === 'users') return 'User management';
   return workspaceNavigation.find(item => item.module === module)?.title ?? 'Workspace';
 }
+
+export type WorkspaceMenuGroup = { id: string; title: string; items: string[] };
+export type WorkspaceNavigationItem = (typeof workspaceNavigation)[number];
+export type WorkspaceNavigationGroup = Omit<WorkspaceMenuGroup, 'items'> & { items: WorkspaceNavigationItem[] };
+
+export function defaultWorkspaceMenuGroups(): WorkspaceMenuGroup[] {
+  const groups: WorkspaceMenuGroup[] = [];
+  for (const item of workspaceNavigation) {
+    let group = groups.find(group => group.title === item.group);
+    if (!group) {
+      group = { id: item.group.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: item.group, items: [] };
+      groups.push(group);
+    }
+    group.items.push(item.id);
+  }
+  return groups;
+}
+
+/** Validate presentation data only; permissions always come from the available module IDs. */
+export function parseWorkspaceMenuGroups(value: unknown): WorkspaceMenuGroup[] | null {
+  if (!Array.isArray(value) || !value.length || value.length > 30) return null;
+  const knownIds = new Set<string>(workspaceNavigation.map(item => item.id));
+  const groupIds = new Set<string>();
+  const itemIds = new Set<string>();
+  const groups: WorkspaceMenuGroup[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const group = candidate as Record<string, unknown>;
+    if (typeof group.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(group.id)
+      || groupIds.has(group.id) || typeof group.title !== 'string' || !group.title.trim()
+      || group.title.trim().length > 60 || Array.from(group.title).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+      || !Array.isArray(group.items) || group.items.some(id => typeof id !== 'string' || !knownIds.has(id) || itemIds.has(id))) return null;
+    for (const id of group.items as string[]) {
+      if (itemIds.has(id)) return null;
+      itemIds.add(id);
+    }
+    groupIds.add(group.id);
+    groups.push({ id: group.id, title: group.title.trim(), items: [...group.items] as string[] });
+  }
+  return groups;
+}
+
+/** New modules remain discoverable even if a previously saved layout predates them. */
+export function normalizeWorkspaceMenuGroups(value: unknown): WorkspaceMenuGroup[] {
+  const groups = parseWorkspaceMenuGroups(value);
+  if (!groups) return defaultWorkspaceMenuGroups();
+  const assigned = new Set(groups.flatMap(group => group.items));
+  for (const fallback of defaultWorkspaceMenuGroups()) {
+    const missing = fallback.items.filter(id => !assigned.has(id));
+    if (!missing.length) continue;
+    const existing = groups.find(group => group.id === fallback.id);
+    if (existing) existing.items.push(...missing);
+    else if (groups.length < 30) groups.push({ ...fallback, items: missing });
+    else groups[groups.length - 1].items.push(...missing);
+    missing.forEach(id => assigned.add(id));
+  }
+  return groups;
+}
+
+export function getWorkspaceNavigationGroups(value: unknown, availableIds: readonly string[]): WorkspaceNavigationGroup[] {
+  const available = new Set(availableIds);
+  return normalizeWorkspaceMenuGroups(value).map(group => ({
+    ...group,
+    items: group.items.flatMap(id => {
+      const item = available.has(id) ? workspaceNavigation.find(item => item.id === id) : undefined;
+      return item ? [item] : [];
+    }),
+  })).filter(group => group.items.length > 0);
+}
+
+export function canEditWorkspaceMenu(user: { role?: string } | null | undefined): boolean {
+  return user?.role === 'Super Admin';
+}
+
+export function moveWorkspaceMenuGroup(groups: readonly WorkspaceMenuGroup[], groupId: string, targetIndex: number): WorkspaceMenuGroup[] {
+  const next = groups.map(group => ({ ...group, items: [...group.items] }));
+  const index = next.findIndex(group => group.id === groupId);
+  if (index < 0 || !Number.isInteger(targetIndex)) return next;
+  const [group] = next.splice(index, 1);
+  next.splice(Math.max(0, Math.min(targetIndex, next.length)), 0, group);
+  return next;
+}
+
+export function moveWorkspaceMenuItem(groups: readonly WorkspaceMenuGroup[], itemId: string, targetGroupId: string, targetIndex: number): WorkspaceMenuGroup[] {
+  const next = groups.map(group => ({ ...group, items: [...group.items] }));
+  const source = next.find(group => group.items.includes(itemId));
+  const target = next.find(group => group.id === targetGroupId);
+  if (!source || !target || !Number.isInteger(targetIndex)) return next;
+  source.items.splice(source.items.indexOf(itemId), 1);
+  target.items.splice(Math.max(0, Math.min(targetIndex, target.items.length)), 0, itemId);
+  return next;
+}

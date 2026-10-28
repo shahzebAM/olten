@@ -90,6 +90,9 @@ export async function phase3Request<T>(
   )
     expireApiSession();
   const result = await response.json().catch(() => null);
+  if (response.status === 404 && typeof result?.message === 'string' && /^Cannot (GET|POST|DELETE) /.test(result.message)) {
+    throw new Error('This feature is unavailable on the connected backend version. Deploy the matching backend and database updates, then refresh.');
+  }
   if (!response.ok)
     throw new Error(
       Array.isArray(result?.message)

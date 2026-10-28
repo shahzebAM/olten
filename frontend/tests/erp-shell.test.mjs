@@ -56,8 +56,12 @@ test('approved transport and UI work preserves payroll calculators, attendance U
     const content = readFileSync(new URL(`../../${entry.File.replaceAll('\\', '/')}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
     if (entry.ApprovedAllocationModels) {
       assert.deepEqual(entry.ApprovedAllocationModels, ['FinanceDocument', 'FinancePayment', 'FinanceAllocation', 'LedgerAccount', 'LedgerEntry', 'CashAccountSetting', 'CashFlowClassification']);
-      const protectedSchema = entry.ApprovedAllocationModels.reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/\n{3,}/g, '\n\n');
-      assert.equal(createHash('sha256').update(protectedSchema).digest('hex').toUpperCase(), entry.ProtectedSchemaSHA256, 'All schema models outside the approved financial metadata changes remain unchanged');
+      // Shared menu settings add only one model and this exact optional Company relation.
+      // Removing those additions retains the original 8eb736a protected schema hash.
+      assert.deepEqual(entry.ApprovedPresentationModels, ['CompanyNavigation']);
+      assert.match(content, /^  navigation CompanyNavigation\?$/m);
+      const protectedSchema = [...entry.ApprovedAllocationModels, ...entry.ApprovedPresentationModels].reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/^  navigation CompanyNavigation\?\n/m, '').replace(/\n{3,}/g, '\n\n');
+      assert.equal(createHash('sha256').update(protectedSchema).digest('hex').toUpperCase(), entry.ProtectedSchemaSHA256, 'All schema models outside approved finance metadata and shared menu settings remain unchanged');
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });

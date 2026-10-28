@@ -6,6 +6,18 @@
   background: #f4f5f8;
   color: var(--phase3-ink);
 }
+.phase3-workspace .phase3-report-dialog { position: fixed; inset: 0; margin: auto; width: min(1180px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; overflow: hidden; border: 1px solid #d4d7dc; border-radius: 12px; background: #fff; color: #393a3d; box-shadow: 0 20px 70px #0003; }
+.phase3-workspace .phase3-report-dialog[open] { display: flex; flex-direction: column; }
+.phase3-workspace .phase3-report-dialog::backdrop { background: #17241cb3; }
+.phase3-workspace .phase3-report-dialog-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 22px; border-bottom: 1px solid #e3e5e8; }
+.phase3-workspace .phase3-report-dialog-heading h2 { font-size: 16px; font-weight: 650; }
+.phase3-workspace .phase3-report-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px; }
+.phase3-workspace .phase3-report-dialog-body .phase3-panel { box-shadow: none; }
+@media (max-width: 640px) {
+  .phase3-workspace .phase3-report-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .phase3-workspace .phase3-report-dialog-body { padding: 10px; }
+  .phase3-workspace .phase3-report-dialog .phase3-panel-body { padding: 14px; }
+}
 .phase3-workspace .phase3-header { padding-top: 24px; padding-bottom: 25px; }
 .phase3-workspace .phase3-header h1 { font-size: clamp(1.45rem, 2vw, 1.9rem); letter-spacing: -.035em; line-height: 1.2; }
 .phase3-workspace .phase3-back { color: #526877; font-size: 12px; }

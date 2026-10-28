@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FinancialReports from "./FinancialReports";
 import * as XLSX from "xlsx";
 import type { ErpUser } from "../../lib/phase3Access";
@@ -148,6 +148,41 @@ function ReportViewer({
   );
 }
 
+function ReportDialog({ api, company, reportId, onClose }: {
+  api: string; company: string; reportId: string; onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog?.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
+  return (
+    <dialog ref={dialogRef} className="phase3-report-dialog" aria-labelledby="management-report-title"
+      onCancel={onClose} onClose={(event) => { if (!event.currentTarget.open) onClose(); }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+      }}>
+      <div className="phase3-report-dialog-heading">
+        <h2 id="management-report-title">Report details</h2>
+        <button type="button" autoFocus className={secondary} onClick={onClose}>Close report</button>
+      </div>
+      <div className="phase3-report-dialog-body">
+        <ReportViewer api={api} company={company} reportId={reportId} />
+      </div>
+    </dialog>
+  );
+}
+
 function DemandChart({ rows }: { rows: JsonRow[] }) {
   const displayed = rows.slice(0, 6);
   const maximum = Math.max(1, ...displayed.map((row) => Number(row.projectedQuantity) || 0));
@@ -283,11 +318,12 @@ export function ExecutiveWorkspace({
         </>
       )}
       {reportId && (
-        <ReportViewer
+        <ReportDialog
           key={reportId}
           api={api}
           company={company}
           reportId={reportId}
+          onClose={() => setReportId("")}
         />
       )}
     </div>

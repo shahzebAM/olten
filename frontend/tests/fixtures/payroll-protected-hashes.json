@@ -27,6 +27,7 @@
       "CashAccountSetting",
       "CashFlowClassification"
     ],
+    "ApprovedPresentationModels": ["CompanyNavigation"],
     "ProtectedSchemaSHA256": "45A87D1662A2D0B6D849BFAA9AB72CACCB65CE580ACC5318B33B0D12C7B5395F"
   },
   {

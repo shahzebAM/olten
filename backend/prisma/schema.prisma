@@ -373,6 +373,16 @@ model Company {
   id        String   @id @default(uuid())
   name      String   @unique
   createdAt DateTime @default(now())
+  navigation CompanyNavigation?
+}
+
+model CompanyNavigation {
+  company   String   @id
+  groups    Json
+  version   Int      @default(1)
+  updatedBy Int
+  updatedAt DateTime @default(now()) @updatedAt
+  workspace Company  @relation(fields: [company], references: [name], onDelete: Cascade, onUpdate: Cascade)
 }
 
 model Customer {

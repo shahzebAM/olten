@@ -1,0 +1,226 @@
+/* Presentation only: existing catalog/customer actions and export data stay unchanged. */
+@media screen {
+  .directory-workspace {
+    --directory-line: #d4d7dc;
+    --directory-muted: #6b6c72;
+    --directory-green: #218409;
+    min-width: 0;
+    flex-direction: column;
+    background: #f4f5f8;
+    color: #393a3d;
+    container-type: inline-size;
+  }
+
+  .directory-workspace .directory-body { display: contents; }
+  .directory-workspace .directory-heading {
+    order: -2;
+    height: auto;
+    min-height: 64px;
+    padding: 14px 24px;
+    gap: 12px;
+    border-color: var(--directory-line);
+    box-shadow: none;
+    z-index: 5;
+  }
+  .directory-workspace .directory-title { display: block; }
+  .directory-workspace .directory-heading > div { min-width: 0; }
+  .directory-workspace .directory-heading h2 {
+    color: #282828;
+    font-size: 21px;
+    font-weight: 650;
+    line-height: 1.3;
+    letter-spacing: -.4px;
+    text-transform: none;
+    overflow-wrap: anywhere;
+  }
+  .directory-workspace .catalog-menu-toggle { display: none; }
+  .erp-shell .directory-workspace .directory-heading-actions { display: none; }
+
+  /* These are module views within the single shared workspace navigation. */
+  .directory-workspace .directory-tabs {
+    order: -1;
+    position: static;
+    inset: auto;
+    display: flex;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    transform: none;
+    translate: none;
+    background: #fff;
+    color: #505257;
+    border-bottom: 1px solid var(--directory-line);
+    box-shadow: none;
+    z-index: 4;
+  }
+  .directory-workspace :is(.directory-tabs-brand, .directory-tabs-label, .customer-mobile-tabs) { display: none; }
+  .directory-workspace .directory-tab-links {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    padding: 0 24px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .directory-workspace .directory-tab-links > button {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 44px;
+    margin: 0;
+    padding: 10px 14px;
+    gap: 8px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: #6b6c72;
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 550;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+  }
+  .directory-workspace .directory-tab-links > button:hover { background: #f4f8f1; color: #176b06; }
+  .directory-workspace .directory-tab-links > button:is(.bg-white, .bg-indigo-600) {
+    border-bottom-color: var(--directory-green);
+    background: #f5f9f2;
+    color: #1b6f08;
+    font-weight: 650;
+  }
+
+  .directory-workspace .directory-main {
+    min-width: 0;
+    min-height: 0;
+    background: #f4f5f8;
+  }
+  .directory-workspace .directory-main > div { min-width: 0; }
+  .directory-workspace :is(.catalog-products, .catalog-ledger, .catalog-warehouses, .catalog-receiving) { padding: 20px 24px; }
+  .directory-workspace .catalog-receiving { width: 100%; overflow: auto; }
+  .directory-workspace .catalog-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border-color: var(--directory-line);
+    border-radius: 8px;
+    box-shadow: none;
+  }
+  .directory-workspace .catalog-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    min-width: 0;
+  }
+  .directory-workspace .catalog-filters > select { width: 100%; min-width: 0; max-width: 100%; }
+  .directory-workspace .catalog-actions { justify-content: flex-end; min-width: 0; }
+  .directory-workspace .catalog-actions > button {
+    flex: 0 1 auto;
+    width: auto;
+    min-height: 34px;
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .directory-workspace .directory-table-card { min-width: 0; border-color: var(--directory-line); border-radius: 8px; box-shadow: none; }
+  .directory-workspace .directory-table-scroll { min-width: 0; max-width: 100%; overflow: auto; scrollbar-width: thin; }
+  .directory-workspace .catalog-table { min-width: 1040px; }
+  .directory-workspace .catalog-table th:first-child { width: 40px; }
+  .directory-workspace .catalog-table th:nth-child(2) { width: 31%; }
+  .directory-workspace .catalog-table th:nth-child(3) { width: 11%; }
+  .directory-workspace .catalog-table th:nth-child(4) { width: 15%; }
+  .directory-workspace .catalog-table th:nth-child(5) { width: 9%; }
+  .directory-workspace .catalog-table th:nth-child(6) { width: 10%; }
+  .directory-workspace .catalog-table th:last-child { width: 180px; }
+  .directory-workspace .directory-main table { font-variant-numeric: tabular-nums; }
+  .directory-workspace .directory-main table th {
+    padding: 10px 12px;
+    background: #f4f5f8;
+    color: #6b6c72;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .directory-workspace .directory-main table td { padding: 10px 12px; border-color: #e3e5e8; }
+  .directory-workspace .directory-main table tbody tr:hover { background: #f5f9f2; }
+  .directory-workspace .directory-main table td button[title] { min-width: 28px; min-height: 28px; }
+  .directory-workspace .directory-pagination {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+    background: #fff;
+    border-color: var(--directory-line);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .directory-workspace .directory-pagination button { min-height: 32px; font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+  .directory-workspace .catalog-ledger-filters { gap: 12px; border-radius: 8px; }
+  .directory-workspace .catalog-ledger-filters > div { min-width: 140px; }
+  .directory-workspace .catalog-warehouse-toolbar { flex-wrap: wrap; gap: 12px; border-radius: 8px; }
+
+  .directory-workspace :is(button, input, select, textarea) { border-radius: 6px; }
+  .directory-workspace :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not([type="file"]) {
+    min-width: 0;
+    max-width: 100%;
+    border-color: var(--directory-line);
+    font-size: 13px;
+    box-shadow: none;
+  }
+  .directory-workspace .directory-main :is(input, select):not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: 36px; padding-top: 8px; padding-bottom: 8px; font-weight: 500; text-transform: none; }
+  .directory-workspace :is(button, input, select, textarea, a, [tabindex]):focus-visible { outline: 2px solid #218409; outline-offset: 2px; }
+  .directory-workspace button:disabled { cursor: not-allowed; }
+  .directory-workspace :is(.directory-main, .fixed) button:is(.bg-blue-600, .bg-indigo-600, .bg-slate-900) { background: #218409; color: #fff; box-shadow: none; }
+  .directory-workspace :is(.directory-main, .fixed) button:is(.bg-blue-600, .bg-indigo-600, .bg-slate-900):hover:not(:disabled) { background: #176b06; }
+  .directory-workspace .directory-tab-links > button.bg-indigo-600 { background: #f5f9f2; color: #1b6f08; }
+  .directory-workspace > .fixed > div.bg-white { max-height: calc(100dvh - 32px); min-width: 0; border-radius: 10px; }
+  .directory-workspace > .fixed :is(h2, h3) { font-size: 19px; font-weight: 650; letter-spacing: -.3px; text-transform: none; }
+
+  .customer-workspace .directory-main { padding: 20px 24px; }
+  .customer-workspace .customer-toolbar { flex-wrap: wrap; align-items: center; gap: 12px; }
+  .customer-workspace .customer-filters { flex: 1 1 430px; min-width: 0; }
+  .customer-workspace .customer-search { flex: 1 1 260px; min-width: 0; width: auto; }
+  .customer-workspace .customer-filters > select { flex: 0 1 190px; min-width: 130px; }
+  .customer-workspace .customer-search > svg { width: 16px; height: 16px; top: 11px; }
+  .customer-workspace .customer-register { display: flex; }
+  .customer-workspace .customer-register > button { min-height: 36px; padding: 8px 14px; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+  .customer-workspace .directory-main table :is(th, td) { border-left: 0; border-right: 0; }
+
+  @container (max-width: 700px) {
+    .directory-workspace .directory-heading { padding: 13px 16px; }
+    .directory-workspace .directory-heading h2 { font-size: 19px; }
+    .directory-workspace .directory-tab-links { padding: 0 12px; }
+    .directory-workspace :is(.catalog-products, .catalog-ledger, .catalog-warehouses, .catalog-receiving) { padding: 14px; }
+    .directory-workspace .catalog-actions { justify-content: flex-start; }
+    .directory-workspace .catalog-ledger-filters > div { flex: 1 1 180px; width: auto; }
+    .customer-workspace .directory-main { padding: 16px; }
+    .customer-workspace .customer-filters { flex-basis: 100%; }
+    .customer-workspace .directory-main table th:first-child,
+    .customer-workspace .directory-main table td:first-child { display: none; }
+    .customer-workspace .directory-main table th:nth-child(4),
+    .customer-workspace .directory-main table td:nth-child(4),
+    .customer-workspace .directory-main table th:nth-child(5),
+    .customer-workspace .directory-main table td:nth-child(5) { display: none; }
+  }
+  @container (max-width: 450px) {
+    .directory-workspace .catalog-filters { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .directory-workspace .catalog-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .directory-workspace .catalog-actions > button { width: 100%; padding: 8px; }
+    .directory-workspace .catalog-products { overflow-y: auto; }
+    .directory-workspace .catalog-products > .directory-table-card { flex: 1 0 280px; }
+    .directory-workspace .directory-pagination { font-size: 10px; }
+    .customer-workspace .customer-filters { flex-direction: column; }
+    .customer-workspace .customer-search { flex: 0 0 auto; width: 100%; }
+    .customer-workspace .customer-filters > select { flex: 0 0 auto; width: 100%; }
+    .customer-workspace .directory-main table th:nth-child(3),
+    .customer-workspace .directory-main table td:nth-child(3) { display: none; }
+    .customer-workspace .directory-main table td:nth-child(2) .md\:hidden { display: inline; }
+    .customer-workspace .directory-main table :is(th, td) { padding: 10px 8px; }
+    .customer-workspace .directory-main table th:nth-child(6) { width: 92px; }
+    .customer-workspace .directory-main table th:last-child { width: 76px; }
+  }
+}
