@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
-import { aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
+import { APP_ATTENDANCE_POLICY, aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
 import { resolvePayrollBasis } from '../../../backend/src/employees/payroll-profile';
+import { multiplyPayrollCents, toPayrollMoneyCents } from '../../../backend/src/employees/payroll-money';
 import AttendanceEntryGrid from './AttendanceEntryGrid';
 import PayrollProfileEditor from './PayrollProfileEditor';
 import type { PayrollProfileEmployee } from './PayrollProfileEditor';
@@ -268,6 +269,11 @@ interface PayrollRecord {
     cutoffStart: string;
     cutoffEnd: string;
     totalMinutes: number;
+    grossMinutes?: number;
+    lunchDeductionMinutes?: number;
+    lunchPolicy?: 'FIXED_DAILY' | 'SCHEDULED_OVERLAP';
+    calculationVersion?: string;
+    roundingAdjustment?: number;
     regularMinutes: number;
     overtimeMinutes: number;
     lateMinutes: number;
@@ -523,11 +529,11 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   };
 
   const getAttendanceSummary = (employeeId?: number, startDate?: string, endDate?: string) =>
-    aggregateAttendanceRecords(attendances, { employeeId, startDate, endDate, shiftStart, shiftEnd, lunchStart, lunchEnd });
+    aggregateAttendanceRecords(attendances, { ...APP_ATTENDANCE_POLICY, employeeId, startDate, endDate, shiftStart, shiftEnd, lunchStart, lunchEnd });
 
 const toCents = (val: any): number => {
     const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
-    return Number.isFinite(num) ? Math.round(num * 100) : 0;
+    return Number.isFinite(num) ? toPayrollMoneyCents(num) : 0;
   };
 
   const fromCents = (cents: number): number => {
@@ -592,7 +598,7 @@ const toCents = (val: any): number => {
     const applicable = sorted.find(b => taxableCents >= toCents(b.min)) || sorted[sorted.length - 1];
     const excessCents = Math.max(0, taxableCents - toCents(applicable.excessOver));
     const baseTaxCents = toCents(applicable.baseTax);
-    const computedTaxCents = baseTaxCents + Math.round(excessCents * Number(applicable.rate));
+    const computedTaxCents = baseTaxCents + multiplyPayrollCents(excessCents, Number(applicable.rate));
     return {
       tax: fromCents(computedTaxCents),
       bracketMin: applicable.min,
@@ -1017,7 +1023,7 @@ const toCents = (val: any): number => {
     timeOut: string,
     appliedShiftStart: string = shiftStart,
     appliedShiftEnd: string = shiftEnd,
-  ) => calculateAttendanceMetrics({ timeIn, timeOut, shiftStart: appliedShiftStart, shiftEnd: appliedShiftEnd, lunchStart, lunchEnd });
+  ) => calculateAttendanceMetrics({ ...APP_ATTENDANCE_POLICY, timeIn, timeOut, shiftStart: appliedShiftStart, shiftEnd: appliedShiftEnd, lunchStart, lunchEnd });
 
   // --- EXCEL AGGREGATE PAYROLL ENGINE ---
   const openPayrollModal = (emp: Employee) => {
@@ -1312,6 +1318,7 @@ const toCents = (val: any): number => {
                            <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">{legacy ? 'BALANCING ADJ' : 'HOLIDAY'}</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipMoney(manualAdjustment)}</td></tr>
                         )}
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SUNDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
+                        {!!rec.attendanceSummary?.roundingAdjustment && <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">ROUNDING ADJUSTMENT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(rec.attendanceSummary.roundingAdjustment)}</td></tr>}
                         <tr><td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Earnings:</td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalEarnings)}</td></tr>
                       {(() => {
                           const activeDeductions = [
@@ -1437,6 +1444,10 @@ const toCents = (val: any): number => {
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Day:</span> <span className="font-mono">₱{computed.ratePerDay.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Rate per Hour:</span> <span className="font-mono">₱{computed.ratePerHour.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Required Hours:</span> <span className="font-mono">{formatDecToHM(computed.requiredHrs)}</span></div>
+                  {summary?.grossMinutes !== undefined && <div className="flex justify-between"><span className="text-slate-500">Before Unpaid Breaks:</span> <span className="font-mono">{formatDecToHM(summary.grossMinutes / 60)}</span></div>}
+                  {summary?.lunchDeductionMinutes !== undefined && <div className="flex justify-between"><span className="text-slate-500">Unpaid Breaks:</span> <span className="font-mono">{formatDecToHM(summary.lunchDeductionMinutes / 60)}</span></div>}
+                  {summary?.lunchPolicy === 'FIXED_DAILY' && <p className="text-[10px] text-slate-500">One unpaid hour per workday, including recorded lunch gaps. Recorded break overrides take precedence. Workdays of one hour or less have no automatic break.</p>}
+                  {!!summary?.roundingAdjustment && <div className="flex justify-between"><span className="text-slate-500">Rounding Adjustment:</span> <span className="font-mono">₱{summary.roundingAdjustment.toFixed(2)}</span></div>}
                   <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Regular Hours:</span> <span className="font-mono">{formatDecToHM(computed.regularHours)}</span></div>
                   
@@ -1818,10 +1829,12 @@ const toCents = (val: any): number => {
                             try {
                               const basis = emp.payrollProfile ? resolvePayrollBasis(emp.payrollProfile, emp.baseRate, payrollStartDate, payrollEndDate) : null;
                               tableOtLogged = calculateAttendancePayroll(attendances, {
+                                ...APP_ATTENDANCE_POLICY,
                                 employeeId: emp.id, startDate: payrollStartDate, endDate: payrollEndDate,
                                 shiftStart, shiftEnd, lunchStart, lunchEnd,
                                 daysWorked: basis?.paidDays ?? 14, basicSalary: basis?.basicSalary ?? emp.baseRate,
                                 ratePerDay: basis?.ratePerDay, overtimeBasis: emp.payrollProfile?.overtimeBasis ?? 'CUTOFF_NET',
+                                ...(emp.payrollProfile?.basis === 'CUTOFF' ? { payRateSource: { amount: emp.baseRate, days: emp.payrollProfile.referenceDays } } : {}),
                               }).overtimeMinutes / 60;
                             } catch { /* Invalid saved profiles require review in Compute Salary. */ }
 

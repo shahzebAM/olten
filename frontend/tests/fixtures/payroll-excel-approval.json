@@ -1,0 +1,18 @@
+{
+  "parentCommit": "fdaf9a1fc5afa97df034647c8ec3d0102294834b",
+  "approvedOn": "2026-10-29",
+  "scope": [
+    "fixed-daily-break",
+    "decimal-money",
+    "payroll-breakdown"
+  ],
+  "authorization": "User approved the reviewed Excel break and rounding corrections with do it then. Original baselines remain retained.",
+  "previousNonClassCodeSHA256": "0a92c04117263139ef943be4f7277b7cbfcfdd72cfb1629d79b6ef76bcfb02bf",
+  "nonClassCodeSHA256": "787bee6614bc56855382cab239b65e8d35816832fdea376f549890e522b32120",
+  "previousCalculatorSHA256": "732D30ED4A077E437BF91D9A62300ACDFDE7BFB43A9C9E93275EB43C4419D28B",
+  "calculatorSHA256": "5B982D7A69A1171B6F5B6D81FE5E32584E0E8C3BE0024948481437B23ABBDADB",
+  "printTemplatesSHA256": {
+    "payslip-print-area": "9faefb827cc8215c3472d18d3ff0c1ad4f6d780baa199a63c686455d4b9e3375",
+    "report-print-area": "df036fb72dbe68cdaa579a1886b558a687789ea339593686592e6188476742a3"
+  }
+}

@@ -49,8 +49,9 @@ test('direct warehouse and delivery navigation remounts the requested initial vi
   assert.match(source, /standalone=\{activeModule === 'ai_docs'\}/);
 });
 
-test('approved transport and UI work preserves payroll calculators, attendance UI and schema baselines', () => {
+test('approved Excel calculation change preserves the other payroll, attendance UI and schema baselines', () => {
   const baseline = JSON.parse(readFileSync(new URL('./fixtures/payroll-protected-hashes.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
+  const approved = JSON.parse(readFileSync(new URL('./fixtures/payroll-excel-approval.json', import.meta.url), 'utf8'));
   assert.equal(baseline.length, 7);
   for (const entry of baseline) {
     const content = readFileSync(new URL(`../../${entry.File.replaceAll('\\', '/')}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
@@ -62,6 +63,9 @@ test('approved transport and UI work preserves payroll calculators, attendance U
       assert.match(content, /^  navigation CompanyNavigation\?$/m);
       const protectedSchema = [...entry.ApprovedAllocationModels, ...entry.ApprovedPresentationModels].reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/^  navigation CompanyNavigation\?\n/m, '').replace(/\n{3,}/g, '\n\n');
       assert.equal(createHash('sha256').update(protectedSchema).digest('hex').toUpperCase(), entry.ProtectedSchemaSHA256, 'All schema models outside approved finance metadata and shared menu settings remain unchanged');
+    } else if (entry.File.replaceAll('\\', '/') === 'backend/src/employees/attendance-calculator.ts') {
+      assert.equal(approved.previousCalculatorSHA256, entry.SHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), approved.calculatorSHA256, entry.File);
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });

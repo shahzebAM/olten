@@ -1,4 +1,11 @@
+import { calculatePayrollAmounts, toPayrollMoneyCents } from './payroll-money';
+
 // Pure attendance calculations shared by the API and payroll interface.
+export type AttendanceLunchPolicy = 'SCHEDULED_OVERLAP' | 'FIXED_DAILY';
+
+// App callers opt in explicitly; the pure calculator retains its legacy default.
+export const APP_ATTENDANCE_POLICY = { lunchPolicy: 'FIXED_DAILY' } as const;
+
 export interface AttendanceCalcOptions {
   timeIn: string;
   timeOut: string;
@@ -6,6 +13,7 @@ export interface AttendanceCalcOptions {
   shiftEnd?: string;
   lunchStart?: string;
   lunchEnd?: string;
+  lunchPolicy?: AttendanceLunchPolicy;
   breakOut?: string | null;
   breakIn?: string | null;
   lunchOverrideMinutes?: number | null;
@@ -56,6 +64,7 @@ export interface AttendanceAggregationOptions {
   shiftEnd?: string;
   lunchStart?: string;
   lunchEnd?: string;
+  lunchPolicy?: AttendanceLunchPolicy;
   maxRegularMinutes?: number;
 }
 
@@ -74,6 +83,12 @@ export interface AttendanceAggregationResult<
 
 type Interval = { start: number; end: number };
 type AllocatedInterval = Interval & { index: number; earlyOt: number };
+type AttendanceGroup = {
+  employeeId: number | string;
+  date: string;
+  indices: number[];
+  paidLeave: number[];
+};
 const MINUTES_PER_DAY = 1440;
 
 export const parseTimeToMinutes = (timeStr?: string | null): number | null => {
@@ -210,6 +225,206 @@ const subtractIntervals = (span: Interval, unpaid: Interval[]): Interval[] => {
   return paid;
 };
 
+const mergeIntervals = (intervals: Interval[]): Interval[] => {
+  const merged: Interval[] = [];
+  for (const interval of intervals.slice().sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1);
+    if (previous && interval.start <= previous.end)
+      previous.end = Math.max(previous.end, interval.end);
+    else if (interval.end > interval.start) merged.push({ ...interval });
+  }
+  return merged;
+};
+
+const intersectIntervals = (
+  spans: Interval[],
+  windows: Interval[],
+): Interval[] =>
+  mergeIntervals(
+    spans.flatMap((span) =>
+      windows.flatMap((window) => {
+        const start = Math.max(span.start, window.start);
+        const end = Math.min(span.end, window.end);
+        return end > start ? [{ start, end }] : [];
+      }),
+    ),
+  );
+
+const intervalMinutes = (intervals: Interval[]): number =>
+  intervals.reduce((sum, interval) => sum + interval.end - interval.start, 0);
+
+// A split midnight punch continues the previous workday's break allowance.
+// Move only that session; a later daytime session keeps its own workday.
+const joinMidnightContinuations = (
+  groups: Map<string, AttendanceGroup>,
+  spans: Map<number, Interval>,
+  records: AttendanceRecordInput[],
+) => {
+  const groupByIndex = new Map<number, string>();
+  groups.forEach((group, key) =>
+    group.indices.forEach((index) => groupByIndex.set(index, key)),
+  );
+  const ordered = Array.from(spans.entries()).sort(
+    ([indexA, spanA], [indexB, spanB]) =>
+      String(records[indexA].employeeId).localeCompare(
+        String(records[indexB].employeeId),
+      ) ||
+      spanA.start - spanB.start ||
+      spanA.end - spanB.end,
+  );
+  for (let position = 1; position < ordered.length; position++) {
+    const [index, span] = ordered[position];
+    if (span.start % MINUTES_PER_DAY !== 0) continue;
+    const previous = ordered
+      .slice(0, position)
+      .reverse()
+      .find(
+        ([previousIndex, previousSpan]) =>
+          String(records[previousIndex].employeeId) ===
+            String(records[index].employeeId) &&
+          previousSpan.start < span.start &&
+          previousSpan.end >= span.start - 1,
+      );
+    if (!previous) continue;
+    const currentKey = groupByIndex.get(index)!;
+    const previousKey = groupByIndex.get(previous[0])!;
+    if (currentKey === previousKey) continue;
+    const current = groups.get(currentKey)!;
+    const destination = groups.get(previousKey)!;
+    current.indices = current.indices.filter((value) => value !== index);
+    destination.indices.push(index);
+    groupByIndex.set(index, previousKey);
+    if (!current.indices.length) groups.delete(currentKey);
+  }
+};
+
+const fixedDailyUnpaidIntervals = (
+  group: AttendanceGroup,
+  spans: Map<number, Interval>,
+  records: AttendanceRecordInput[],
+  options: AttendanceAggregationOptions,
+): Interval[] => {
+  const indices = group.indices.filter((index) => spans.has(index));
+  const working = mergeIntervals(indices.map((index) => spans.get(index)!));
+  if (!working.length) return [];
+  const without = (source: Interval[], removed: Interval[]) =>
+    mergeIntervals(
+      source.flatMap((span) =>
+        subtractIntervals(span, intersectIntervals([span], removed)),
+      ),
+    );
+  const hasRecordedBreak = (index: number) => {
+    const record = records[index];
+    return (
+      (record.lunchOverrideMinutes !== undefined &&
+        record.lunchOverrideMinutes !== null &&
+        Number.isFinite(Number(record.lunchOverrideMinutes))) ||
+      Boolean(record.breakOut && record.breakIn)
+    );
+  };
+  const explicitIndices = indices.filter(hasRecordedBreak);
+  const explicitByIndex = new Map(
+    explicitIndices.map((index) => [
+      index,
+      unpaidIntervals(records[index], spans.get(index)!, options),
+    ]),
+  );
+  // Break fields belong to their source session. An override of zero protects
+  // that session, rather than cancelling another session's automatic break.
+  const explicitPaid = mergeIntervals(
+    explicitIndices.flatMap((index) =>
+      subtractIntervals(spans.get(index)!, explicitByIndex.get(index)!),
+    ),
+  );
+  const explicitUnpaid = without(
+    mergeIntervals(Array.from(explicitByIndex.values()).flat()),
+    explicitPaid,
+  );
+  const automaticWorking = without(
+    mergeIntervals(
+      indices
+        .filter((index) => !hasRecordedBreak(index))
+        .map((index) => spans.get(index)!),
+    ),
+    explicitIndices.map((index) => spans.get(index)!),
+  );
+  // A short continuation cannot acquire a meal deduction solely because a
+  // separate, explicitly recorded session makes the combined workday longer.
+  if (intervalMinutes(automaticWorking) <= 60) return explicitUnpaid;
+  const envelope = { start: working[0].start, end: working.at(-1)!.end };
+  const representative =
+    records[
+      indices
+        .slice()
+        .sort((a, b) => spans.get(a)!.start - spans.get(b)!.start)[0]
+    ];
+  const scheduled = recurringWindows(
+    envelope,
+    representative.lunchStart ?? options.lunchStart ?? '12:00',
+    representative.lunchEnd ?? options.lunchEnd ?? '13:00',
+  );
+  const actual = mergeIntervals(
+    indices.flatMap((index) => {
+      const record = records[index];
+      return record.breakOut && record.breakIn
+        ? recurringWindows(spans.get(index)!, record.breakOut, record.breakIn)
+        : [];
+    }),
+  );
+  const preferred = mergeIntervals([...actual, ...scheduled]);
+  const shiftStart =
+    parseTimeToMinutes(
+      representative.shiftStart ?? options.shiftStart ?? '08:00',
+    ) ?? 480;
+  const workdayStart =
+    Date.parse(`${group.date}T00:00:00Z`) / 60000 + shiftStart;
+  // Time off after a standalone midnight extra is not the daytime meal break.
+  const gaps = subtractIntervals(envelope, working).filter(
+    (gap) => gap.start >= workdayStart,
+  );
+  // Only a lunch/recorded-break gap is evidence of an already unpaid break.
+  // A midnight extra session followed by daytime work must retain its minutes.
+  let remaining = Math.min(
+    intervalMinutes(automaticWorking),
+    Math.max(
+      0,
+      60 -
+        intervalMinutes(explicitUnpaid) -
+        intervalMinutes(intersectIntervals(gaps, preferred)),
+    ),
+  );
+  const unpaid: Interval[] = [...explicitUnpaid];
+  for (const interval of intersectIntervals(automaticWorking, preferred)) {
+    const duration = Math.min(remaining, interval.end - interval.start);
+    if (duration)
+      unpaid.push({ start: interval.start, end: interval.start + duration });
+    remaining -= duration;
+  }
+  // A late start can miss noon entirely. Allocate the missing duration once,
+  // after the preferred windows, so the daily total still matches Excel.
+  const originDayWorking = intersectIntervals(
+    automaticWorking,
+    indices
+      .filter(
+        (index) => toAttendanceDateYMD(records[index].date) === group.date,
+      )
+      .map((index) => spans.get(index)!),
+  );
+  const continuationWorking = without(automaticWorking, originDayWorking);
+  for (const interval of [
+    ...originDayWorking.slice().reverse(),
+    ...continuationWorking.slice().reverse(),
+  ].flatMap((span) =>
+    subtractIntervals(span, intersectIntervals([span], unpaid)),
+  )) {
+    const duration = Math.min(remaining, interval.end - interval.start);
+    if (duration)
+      unpaid.push({ start: interval.end - duration, end: interval.end });
+    remaining -= duration;
+  }
+  return mergeIntervals(unpaid);
+};
+
 const unpaidIntervals = (
   record: AttendanceRecordInput,
   span: Interval,
@@ -289,15 +504,7 @@ export const aggregateAttendanceRecords = <T extends AttendanceRecordInput>(
   };
   const duplicateIndices: number[] = [];
   const seen = new Set<string>();
-  const groups = new Map<
-    string,
-    {
-      employeeId: number | string;
-      date: string;
-      indices: number[];
-      paidLeave: number[];
-    }
-  >();
+  const groups = new Map<string, AttendanceGroup>();
   const spans = new Map<number, Interval>();
   const events: Array<{
     time: number;
@@ -385,10 +592,25 @@ export const aggregateAttendanceRecords = <T extends AttendanceRecordInput>(
     if (!span) return;
     spans.set(index, span);
     addEvents(span, index, false);
-    subtractIntervals(span, unpaidIntervals(record, span, options)).forEach(
-      (paid) => addEvents(paid, index, true),
-    );
+    if (options.lunchPolicy !== 'FIXED_DAILY')
+      subtractIntervals(span, unpaidIntervals(record, span, options)).forEach(
+        (paid) => addEvents(paid, index, true),
+      );
   });
+
+  if (options.lunchPolicy === 'FIXED_DAILY') {
+    joinMidnightContinuations(groups, spans, records);
+    groups.forEach((group) => {
+      const unpaid = fixedDailyUnpaidIntervals(group, spans, records, options);
+      group.indices.forEach((index) => {
+        const span = spans.get(index);
+        if (!span) return;
+        subtractIntervals(span, intersectIntervals([span], unpaid)).forEach(
+          (paid) => addEvents(paid, index, true),
+        );
+      });
+    });
+  }
 
   const ownershipOrder = new Map(
     Array.from(spans.entries())
@@ -620,6 +842,7 @@ export interface AttendancePayrollOptions extends AttendanceAggregationOptions {
   basicSalary: number;
   govHolidayAmt?: number;
   ratePerDay?: number;
+  payRateSource?: { amount: number; days: number };
   overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
 }
 
@@ -657,14 +880,23 @@ export const calculateAttendancePayroll = (
         ? basicSalary / days
         : 0;
   const ratePerHour = ratePerDay / 8;
-  const money = (value: number) => Math.round(value * 100) / 100;
-  const otPay = money((overtimeMinutes / 60) * ratePerHour * 1.25);
-  const undertimeDeduction = money((undertimeMinutes / 60) * ratePerHour);
+  const amounts = calculatePayrollAmounts({
+    basicSalary,
+    daysWorked: days,
+    ratePerDay: options.ratePerDay,
+    rateSource: options.payRateSource,
+    overtimeMinutes,
+    undertimeMinutes,
+    govHolidayAmt,
+  });
   return {
     version: 1 as const,
     cutoffStart: options.startDate,
     cutoffEnd: options.endDate,
     totalMinutes: summary.netMinutes,
+    grossMinutes: summary.grossMinutes,
+    lunchDeductionMinutes: summary.lunchDeductionMinutes,
+    lunchPolicy: options.lunchPolicy ?? 'SCHEDULED_OVERLAP',
     regularMinutes,
     overtimeMinutes,
     overtimeBasis,
@@ -674,9 +906,16 @@ export const calculateAttendancePayroll = (
     basicSalary,
     ratePerDay,
     ratePerHour,
-    otPay,
-    undertimeDeduction,
+    otPay: amounts.otPay,
+    undertimeDeduction: amounts.undertimeDeduction,
     govHolidayAmt,
-    grossPay: money(basicSalary - undertimeDeduction + otPay + govHolidayAmt),
+    roundingAdjustment:
+      (toPayrollMoneyCents(amounts.grossPay) -
+        (toPayrollMoneyCents(basicSalary) -
+          toPayrollMoneyCents(amounts.undertimeDeduction) +
+          toPayrollMoneyCents(amounts.otPay) +
+          toPayrollMoneyCents(govHolidayAmt))) /
+      100,
+    grossPay: amounts.grossPay,
   };
 };

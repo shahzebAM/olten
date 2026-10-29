@@ -282,7 +282,7 @@ describe('attendance source records and payroll snapshots', () => {
     expectNoWrites();
   });
 
-  it('uses each employee company schedule and unpaid lunch when reading attendance', async () => {
+  it('uses company schedules and the shared fixed one-hour break when reading attendance', async () => {
     sourceRows = [
       row(1, '08:30', '17:30'),
       row(2, '10:00', '19:00', { employeeId: 2 }),
@@ -290,7 +290,8 @@ describe('attendance source records and payroll snapshots', () => {
     const result = await service.getAttendances();
 
     expect(result.find((log) => log.employeeId === 1)?.hours).toBe(8);
-    expect(result.find((log) => log.employeeId === 2)?.hours).toBe(8.5);
+    // Excel's fixed-hour policy replaces the former 30-minute lunch overlap.
+    expect(result.find((log) => log.employeeId === 2)?.hours).toBe(8);
     expectNoWrites();
   });
 

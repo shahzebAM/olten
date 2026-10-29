@@ -5,12 +5,15 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
 const baseline = JSON.parse(readFileSync(new URL('./fixtures/payroll-ui-baseline.json', import.meta.url), 'utf8'));
+const approved = JSON.parse(readFileSync(new URL('./fixtures/payroll-excel-approval.json', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('../src/modules/PayrollModule.tsx', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const tree = ts.createSourceFile('PayrollModule.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed });
 const hash = text => createHash('sha256').update(text).digest('hex');
 
-test('authorized payroll styling preserves every non-class code node against the pre-redesign baseline', () => {
+test('approved Excel payroll changes preserve the documented calculation and UI baseline', () => {
+  assert.equal(approved.previousNonClassCodeSHA256, baseline.nonClassCodeSHA256);
+  assert.deepEqual(approved.scope, ['fixed-daily-break', 'decimal-money', 'payroll-breakdown']);
   const transformed = ts.transform(tree, [context => {
     const visit = node => {
       if (ts.isImportDeclaration(node) && !node.importClause && node.moduleSpecifier.text === './payroll-workspace.css') return undefined;
@@ -20,11 +23,11 @@ test('authorized payroll styling preserves every non-class code node against the
     return node => ts.visitNode(node, visit);
   }]);
   try {
-    assert.equal(hash(printer.printFile(transformed.transformed[0])), baseline.nonClassCodeSHA256);
+    assert.equal(hash(printer.printFile(transformed.transformed[0])), approved.nonClassCodeSHA256);
   } finally { transformed.dispose(); }
 });
 
-test('payslip and summary print/export markup remain exactly unchanged', () => {
+test('payslips add only the approved rounding row and summary print/export markup is unchanged', () => {
   const templates = {};
   function visit(node) {
     if (ts.isJsxElement(node)) {
@@ -36,7 +39,8 @@ test('payslip and summary print/export markup remain exactly unchanged', () => {
     ts.forEachChild(node, visit);
   }
   visit(tree);
-  assert.deepEqual(templates, baseline.printTemplatesSHA256);
+  assert.equal(approved.printTemplatesSHA256['report-print-area'], baseline.printTemplatesSHA256['report-print-area']);
+  assert.deepEqual(templates, approved.printTemplatesSHA256);
 });
 
 test('payroll palette is opt-in and its stylesheet applies only to screen media', () => {

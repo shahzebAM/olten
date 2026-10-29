@@ -162,7 +162,8 @@ describe('Excel cutoff payroll calculations with minute-only attendance', () => 
   });
 
   it.each([
-    ['16:00', 420, 60, 94.38, 660.62],
+    // Full-precision 755 - 94.375 = 660.625; round the final amount once.
+    ['16:00', 420, 60, 94.38, 660.63],
     ['17:00', 480, 0, 0, 755],
     ['18:00', 540, 0, 0, 872.97],
   ])(

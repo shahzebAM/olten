@@ -6,9 +6,11 @@ import {
 import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { resolvePayrollBasis, validatePayrollProfile } from './payroll-profile';
+import { multiplyPayrollCents, toPayrollMoneyCents } from './payroll-money';
 import type { Attendance, Settings } from '@prisma/client';
 import type { AttendanceCalcResult } from './attendance-calculator';
 import {
+  APP_ATTENDANCE_POLICY,
   aggregateAttendanceRecords,
   attendanceSessionKey,
   calculateAttendanceMetrics,
@@ -28,6 +30,8 @@ export type {
 } from './attendance-calculator';
 
 const prisma = new PrismaClient();
+// Changing calculation rules invalidates previews prepared by earlier releases.
+export const PAYROLL_CALCULATION_VERSION = 'excel-fixed-break-20261029-v1';
 type PayrollDatabase = Pick<
   Prisma.TransactionClient,
   'employee' | 'attendance' | 'settings' | 'payroll'
@@ -108,7 +112,7 @@ export interface PayrollTaxResult {
 
 export const toMoneyCents = (val: any): number => {
   const num = typeof val === 'number' ? val : parseFloat(String(val ?? '0'));
-  return Number.isFinite(num) ? Math.round(num * 100) : 0;
+  return Number.isFinite(num) ? toPayrollMoneyCents(num) : 0;
 };
 
 // ==========================================
@@ -332,7 +336,10 @@ export const calculatePhilippinePayrollTax = (
       sorted.find(b => taxableIncomeCents >= toMoneyCents(b.min)) || sorted[sorted.length - 1];
     excessCents = Math.max(0, taxableIncomeCents - toMoneyCents(applicable.excessOver));
     const baseTaxCents = toMoneyCents(applicable.baseTax);
-    taxCents = Math.max(0, baseTaxCents + Math.round(excessCents * Number(applicable.rate)));
+    taxCents = Math.max(
+      0,
+      baseTaxCents + multiplyPayrollCents(excessCents, Number(applicable.rate)),
+    );
     bracketMin = applicable.min;
     rate = applicable.rate;
     minTax = applicable.baseTax;
@@ -473,7 +480,10 @@ export class EmployeesService {
         settings = await this.getSettings(employee.company);
         settingsByCompany.set(employee.company, settings);
       }
-      const summary = aggregateAttendanceRecords(employeeLogs, settings);
+      const summary = aggregateAttendanceRecords(employeeLogs, {
+        ...settings,
+        ...APP_ATTENDANCE_POLICY,
+      });
       result.push(
         ...summary.records.map((log) => ({ ...log, hours: log.metrics.total })),
       );
@@ -559,6 +569,7 @@ export class EmployeesService {
       );
     }
     const metrics = calculateAttendanceMetrics({
+      ...APP_ATTENDANCE_POLICY,
       timeIn,
       timeOut,
       shiftStart,
@@ -791,6 +802,7 @@ export class EmployeesService {
       throw new BadRequestException('Invalid holiday adjustment.');
     const calculated = calculateAttendancePayroll(logs, {
       ...settings,
+      ...APP_ATTENDANCE_POLICY,
       employeeId,
       startDate: cutoffStart,
       endDate: cutoffEnd,
@@ -798,6 +810,14 @@ export class EmployeesService {
       basicSalary: basis?.basicSalary ?? employee.baseRate,
       overtimeBasis: profile?.overtimeBasis ?? 'CUTOFF_NET',
       ...(basis ? { ratePerDay: basis.ratePerDay } : {}),
+      ...(profile?.basis === 'CUTOFF'
+        ? {
+            payRateSource: {
+              amount: employee.baseRate,
+              days: profile.referenceDays,
+            },
+          }
+        : {}),
       govHolidayAmt,
     });
     const selected = logs.filter((log) => {
@@ -830,6 +850,7 @@ export class EmployeesService {
     };
     const attendanceSummary = {
       ...calculated,
+      calculationVersion: PAYROLL_CALCULATION_VERSION,
       ...(profile && basis
         ? {
             version: 2,
@@ -879,6 +900,10 @@ export class EmployeesService {
     const previewFingerprint = createHash('sha256')
       .update(
         JSON.stringify({
+          calculation: {
+            version: PAYROLL_CALCULATION_VERSION,
+            ...APP_ATTENDANCE_POLICY,
+          },
           employee: {
             id: employee.id,
             company: employee.company,
