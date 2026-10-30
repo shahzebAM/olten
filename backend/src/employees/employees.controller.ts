@@ -1,8 +1,21 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Headers, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  Headers,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PayrollAuthGuard } from '../auth/payroll-auth.guard';
+import type { PayrollRequest } from '../auth/payroll-auth.guard';
 import { AdminAuthGuard } from '../auth/admin-auth.guard';
 
 const prisma = new PrismaClient();
@@ -56,8 +69,14 @@ export class EmployeesController {
 
   @Post('employees/attendance/import-biometrics')
   @UseGuards(PayrollAuthGuard)
-  async importBiometrics(@Body() data: Record<string, unknown>) {
-    return await this.employeesService.importBiometrics(data);
+  async importBiometrics(
+    @Body() data: Record<string, unknown>,
+    @Req() request: PayrollRequest,
+  ) {
+    return await this.employeesService.importBiometrics(
+      data,
+      request.payrollActor,
+    );
   }
 
   @Patch('employees/attendance/:id')
@@ -68,8 +87,11 @@ export class EmployeesController {
 
   @Delete('employees/attendance/:id')
   @UseGuards(PayrollAuthGuard)
-  async deleteAttendance(@Param('id') id: string) {
-    return await this.employeesService.deleteAttendance(Number(id));
+  async deleteAttendance(
+    @Param('id') id: string,
+    @Headers('x-company') company?: string,
+  ) {
+    return await this.employeesService.deleteAttendance(Number(id), company);
   }
 
 // ==========================================

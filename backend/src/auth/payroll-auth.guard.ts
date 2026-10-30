@@ -11,6 +11,10 @@ import { PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { AuthSessionService } from './auth-session.service';
 
+export type PayrollRequest = Request & {
+  payrollActor?: { id: number; username: string };
+};
+
 @Injectable()
 export class PayrollAuthGuard implements CanActivate, OnModuleDestroy {
   private readonly prisma = new PrismaClient();
@@ -80,7 +84,7 @@ export class PayrollAuthGuard implements CanActivate, OnModuleDestroy {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<PayrollRequest>();
     const user = await this.sessions.authenticate(
       request.headers.authorization,
     );
@@ -163,6 +167,7 @@ export class PayrollAuthGuard implements CanActivate, OnModuleDestroy {
     await this.records(company, 'attendance', body.recordIds);
     await this.records(company, 'payroll', body.payrollIds);
     request.headers['x-company'] = company;
+    request.payrollActor = { id: user.id, username: user.username };
     if (['POST', 'PATCH', 'PUT'].includes(request.method)) {
       body.company = company;
       request.body = body;

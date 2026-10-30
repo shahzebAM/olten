@@ -50,6 +50,7 @@ describe('Payroll authenticated company boundary', () => {
     previewPayroll: jest.fn(),
     createPayroll: jest.fn(),
     updateAttendance: jest.fn(),
+    importBiometrics: jest.fn(),
     deletePayroll: jest.fn(),
     getSettings: jest.fn(),
     updateSettings: jest.fn(),
@@ -160,6 +161,20 @@ describe('Payroll authenticated company boundary', () => {
       .expect(401);
     expect(employees.getEmployees).not.toHaveBeenCalled();
     expect(database.employee.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('passes the authenticated actor and trusted company to attendance imports', async () => {
+    employees.importBiometrics.mockResolvedValue({ dryRun: true });
+    await request(app.getHttpServer())
+      .post('/employees/attendance/import-biometrics')
+      .set('Authorization', 'Bearer test')
+      .set('x-company', 'Company A')
+      .send({ mode: 'replace', dryRun: true, rows: [] })
+      .expect(201);
+    expect(employees.importBiometrics).toHaveBeenCalledWith(
+      expect.objectContaining({ company: 'Company A', mode: 'replace' }),
+      { id: user.id, username: user.username },
+    );
   });
 
   it.each([undefined, '', ['Company A'], 'Company\nA'])(

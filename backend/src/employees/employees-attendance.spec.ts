@@ -23,6 +23,8 @@ jest.mock('@prisma/client', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    $executeRaw: jest.fn(),
+    $transaction: jest.fn(),
   };
   return { PrismaClient: jest.fn(() => mockDatabase), mockDatabase };
 });
@@ -83,6 +85,11 @@ interface SourceRow {
 }
 
 interface MockDatabase {
+  $executeRaw: jest.Mock<Promise<number>, [TemplateStringsArray, ...unknown[]]>;
+  $transaction: jest.Mock<
+    Promise<unknown>,
+    [(database: MockDatabase) => Promise<unknown>, unknown?]
+  >;
   employee: {
     findUnique: jest.Mock<
       Promise<(typeof employees)[number] | null>,
@@ -154,6 +161,8 @@ describe('attendance source records and payroll snapshots', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    database.$executeRaw.mockResolvedValue(1);
+    database.$transaction.mockImplementation((work) => work(database));
     sourceRows = [];
     savedPayrolls = [];
     database.employee.findUnique.mockImplementation(
@@ -348,6 +357,205 @@ describe('attendance source records and payroll snapshots', () => {
     const missing = await service.updateAttendance(1, { timeOut: '' });
     expect(missing.hours).toBe(0);
     expect(sourceRows[1]).toEqual(row(2, '19:00', '20:00'));
+  });
+
+  it('locks the employee before create normalization and duplicate reads', async () => {
+    await service.createAttendance({
+      employeeId: 1,
+      company: 'Company A',
+      date: '2026-10-06',
+      timeIn: '08:30',
+      timeOut: '17:30',
+    });
+    expect(database.$transaction).toHaveBeenCalledTimes(1);
+    expect(database.$executeRaw.mock.calls[0][1]).toBe(1);
+    expect(database.$executeRaw.mock.calls[0][0].join('?')).toContain(
+      'FOR UPDATE',
+    );
+    expect(database.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      database.employee.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(database.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      database.attendance.findMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('normalizes employee and settings from the transaction and rejects company mismatch', async () => {
+    const transactionEmployee = jest
+      .fn<
+        ReturnType<MockDatabase['employee']['findUnique']>,
+        Parameters<MockDatabase['employee']['findUnique']>
+      >()
+      .mockResolvedValue(employees[1]);
+    const transactionSettings = jest
+      .fn<
+        ReturnType<MockDatabase['settings']['findUnique']>,
+        Parameters<MockDatabase['settings']['findUnique']>
+      >()
+      .mockResolvedValue(settingRows[2]);
+    database.$transaction.mockImplementation((work) =>
+      work({
+        ...database,
+        employee: { ...database.employee, findUnique: transactionEmployee },
+        settings: { ...database.settings, findUnique: transactionSettings },
+      }),
+    );
+    const created = await service.createAttendance({
+      employeeId: 2,
+      company: 'Company B',
+      date: '2026-10-06',
+      timeIn: '10:00',
+      timeOut: '19:00',
+    });
+    expect(created.shiftStart).toBe('10:00');
+    expect(created.shiftEnd).toBe('19:00');
+    expect(database.employee.findUnique).not.toHaveBeenCalled();
+    expect(database.settings.findUnique).not.toHaveBeenCalled();
+    const writes = database.attendance.create.mock.calls.length;
+    await expect(
+      service.createAttendance({
+        employeeId: 2,
+        company: 'Company A',
+        date: '2026-10-06',
+        timeIn: '10:00',
+        timeOut: '19:00',
+      }),
+    ).rejects.toThrow('Employee does not belong to this company.');
+    expect(database.attendance.create).toHaveBeenCalledTimes(writes);
+  });
+
+  it('locks both reassignment owners in ascending order and re-reads after locking', async () => {
+    sourceRows = [row(1, '10:00', '19:00', { employeeId: 2 })];
+    const updated = await service.updateAttendance(1, {
+      employeeId: 1,
+      timeOut: '18:00',
+    });
+    expect(database.$executeRaw.mock.calls.map((call) => call[1])).toEqual([
+      1, 2,
+    ]);
+    expect(database.attendance.findUnique).toHaveBeenCalledTimes(2);
+    expect(
+      database.attendance.findUnique.mock.invocationCallOrder[0],
+    ).toBeLessThan(database.$executeRaw.mock.invocationCallOrder[0]);
+    expect(database.$executeRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      database.attendance.findUnique.mock.invocationCallOrder[1],
+    );
+    expect(updated.employeeId).toBe(1);
+  });
+
+  it('rejects reassigning attendance from another company after locking its owner', async () => {
+    sourceRows = [row(1, '10:00', '19:00', { employeeId: 2 })];
+    await expect(
+      service.updateAttendance(1, {
+        employeeId: 1,
+        company: 'Company A',
+        timeOut: '18:00',
+      }),
+    ).rejects.toThrow('Employee does not belong to this company.');
+    expect(database.$executeRaw.mock.calls.map((call) => call[1])).toEqual([
+      1, 2,
+    ]);
+    expect(database.employee.findUnique).toHaveBeenCalledWith({
+      where: { id: 2 },
+    });
+    expect(database.$executeRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      database.employee.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(database.attendance.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an employee moved to another company while PATCH waits for its lock', async () => {
+    sourceRows = [row(1, '08:30', '17:30')];
+    database.$executeRaw.mockImplementation(() => {
+      database.employee.findUnique.mockResolvedValue({
+        ...employees[0],
+        company: 'Company B',
+      });
+      return Promise.resolve(1);
+    });
+    await expect(
+      service.updateAttendance(1, { company: 'Company A', timeOut: '18:00' }),
+    ).rejects.toThrow('Employee does not belong to this company.');
+    expect(database.attendance.update).not.toHaveBeenCalled();
+  });
+
+  it('uses the fresh locked record for PATCH without restoring replaced punches', async () => {
+    sourceRows = [row(1, '08:30', '17:30')];
+    database.$executeRaw.mockImplementation(() => {
+      sourceRows[0] = row(1, '10:00', '17:30');
+      return Promise.resolve(1);
+    });
+    const updated = await service.updateAttendance(1, { timeOut: '18:00' });
+    expect(updated.timeIn).toBe('10:00');
+    expect(updated.timeOut).toBe('18:00');
+  });
+
+  it.each(['removed', 'reassigned'] as const)(
+    'rejects PATCH when the source was %s before its employee lock was acquired',
+    async (change) => {
+      sourceRows = [row(1, '08:30', '17:30')];
+      database.$executeRaw.mockImplementation(() => {
+        sourceRows =
+          change === 'removed'
+            ? []
+            : [row(1, '08:30', '17:30', { employeeId: 2 })];
+        return Promise.resolve(1);
+      });
+      await expect(
+        service.updateAttendance(1, { timeOut: '18:00' }),
+      ).rejects.toThrow('Attendance record changed.');
+      expect(database.attendance.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['removed', 'reassigned'] as const)(
+    'rejects DELETE when the source was %s before its employee lock was acquired',
+    async (change) => {
+      sourceRows = [row(1, '08:30', '17:30')];
+      database.$executeRaw.mockImplementation(() => {
+        sourceRows =
+          change === 'removed'
+            ? []
+            : [row(1, '08:30', '17:30', { employeeId: 2 })];
+        return Promise.resolve(1);
+      });
+      await expect(service.deleteAttendance(1)).rejects.toThrow(
+        'Attendance record changed.',
+      );
+      expect(database.attendance.delete).not.toHaveBeenCalled();
+    },
+  );
+
+  it('locks and re-reads the owner before deleting its session', async () => {
+    sourceRows = [row(1, '08:30', '17:30')];
+    await service.deleteAttendance(1, 'Company A');
+    expect(database.attendance.findUnique).toHaveBeenCalledTimes(2);
+    expect(database.$executeRaw.mock.calls.map((call) => call[1])).toEqual([1]);
+    expect(database.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      database.attendance.findUnique.mock.invocationCallOrder[1],
+    );
+    expect(
+      database.attendance.findUnique.mock.invocationCallOrder[1],
+    ).toBeLessThan(database.attendance.delete.mock.invocationCallOrder[0]);
+    expect(sourceRows).toEqual([]);
+  });
+
+  it('rejects deletion after an employee moves outside the guarded company', async () => {
+    sourceRows = [row(1, '08:30', '17:30')];
+    database.$executeRaw.mockImplementation(() => {
+      database.employee.findUnique.mockResolvedValue({
+        ...employees[0],
+        company: 'Company B',
+      });
+      return Promise.resolve(1);
+    });
+    await expect(service.deleteAttendance(1, 'Company A')).rejects.toThrow(
+      'Employee does not belong to this company.',
+    );
+    expect(database.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      database.employee.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(database.attendance.delete).not.toHaveBeenCalled();
   });
 
   it('reads fresh attendance and applies cutoff net hours by default', async () => {

@@ -17,6 +17,7 @@ jest.mock('@prisma/client', () => {
       delete: jest.fn(),
     },
     $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
   };
   return {
     PrismaClient: jest.fn(() => mockDatabase),
@@ -98,6 +99,7 @@ interface MockDatabase {
     Promise<unknown>,
     [(client: MockDatabase) => Promise<unknown>, unknown?]
   >;
+  $executeRaw: jest.Mock<Promise<number>, [TemplateStringsArray, ...unknown[]]>;
 }
 const database = jest.requireMock<{ mockDatabase: MockDatabase }>(
   '@prisma/client',
@@ -174,6 +176,7 @@ describe('Excel break policy through attendance and payroll services', () => {
       return Promise.resolve(saved);
     });
     database.$transaction.mockImplementation((work) => work(database));
+    database.$executeRaw.mockResolvedValue(1);
     service = new EmployeesService();
   });
 

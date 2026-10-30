@@ -48,6 +48,7 @@ type AttendanceWriteInput = Partial<
 > & {
   employeeId?: number | string;
   id?: number;
+  company?: string;
 };
 
 type PayrollCutoffSource = {
@@ -198,7 +199,7 @@ export const filterAndAggregatePayrollRecords = (
     throw new BadRequestException('Invalid date range: Date From cannot be later than Date To.');
   }
 
-  const empMap = new Map<number, any>(employees.map(e => [Number(e.id), e]));
+  const empMap = new Map<number, any>(employees.map((e) => [Number(e.id), e]));
 
   const matched = payrolls.filter(pr => {
     const emp = empMap.get(Number(pr.employeeId));
@@ -500,19 +501,29 @@ export class EmployeesService {
   private async computeNormalizedAttendanceData(
     data: AttendanceWriteInput,
     existingRecord?: Attendance,
+    database: Pick<Prisma.TransactionClient, 'employee' | 'settings'> = prisma,
   ) {
     const employeeId = Number(data.employeeId ?? existingRecord?.employeeId);
     if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
       throw new BadRequestException('A valid employee is required.');
     }
-    const employee = await prisma.employee.findUnique({
+    const employee = await database.employee.findUnique({
       where: { id: employeeId },
     });
     if (!employee) throw new BadRequestException('Employee not found.');
+    if (
+      data.company !== undefined &&
+      (typeof data.company !== 'string' ||
+        data.company.trim() !== employee.company)
+    ) {
+      throw new BadRequestException(
+        'Employee does not belong to this company.',
+      );
+    }
     const date = toAttendanceDateYMD(data.date ?? existingRecord?.date);
     if (!date)
       throw new BadRequestException('A valid attendance date is required.');
-    const settings = await this.getSettings(employee.company);
+    const settings = await this.getSettings(employee.company, database);
     const normalizePunch = (value: unknown): string => {
       if (value === null || value === undefined || value === '') return '';
       if (typeof value !== 'string')
@@ -538,8 +549,11 @@ export class EmployeesService {
     ) {
       throw new BadRequestException('Invalid leave attendance.');
     }
-    const sourceValue = <K extends keyof AttendanceWriteInput>(field: K) =>
-      data[field] !== undefined ? data[field] : existingRecord?.[field];
+    const sourceValue = <
+      K extends keyof AttendanceWriteInput & keyof Attendance,
+    >(
+      field: K,
+    ) => (data[field] !== undefined ? data[field] : existingRecord?.[field]);
     const shiftStart = normalizePunch(
       sourceValue('shiftStart') || settings.shiftStart,
     );
@@ -606,42 +620,118 @@ export class EmployeesService {
     };
   }
 
-  async createAttendance(data: any) {
-    const normalized = await this.computeNormalizedAttendanceData(
-      data as AttendanceWriteInput,
-    );
-    const existing = await prisma.attendance.findMany({
-      where: { employeeId: normalized.employeeId },
-    });
-    const duplicate = existing.find(
-      (log) => attendanceSessionKey(log) === attendanceSessionKey(normalized),
-    );
-    if (duplicate) return duplicate;
-    return await prisma.attendance.create({ data: normalized });
+  private async lockAttendanceEmployees(
+    database: Pick<Prisma.TransactionClient, '$executeRaw'>,
+    employeeIds: number[],
+  ) {
+    const sortedIds = [...new Set(employeeIds)].sort((a, b) => a - b);
+    if (sortedIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new BadRequestException('A valid employee is required.');
+    }
+    // Biometrics replacement locks these same employee rows. Serialize manual
+    // writers before they read/normalize attendance, and order reassignment
+    // locks consistently with the importer's ascending employee order.
+    for (const employeeId of sortedIds) {
+      await database.$executeRaw`SELECT "id" FROM "Employee" WHERE "id" = ${employeeId} FOR UPDATE`;
+    }
   }
 
-  async importBiometrics(data: Record<string, unknown>) {
-    return await importBiometricAttendance(prisma, data);
+  private async assertAttendanceOwnerCompany(
+    database: Pick<Prisma.TransactionClient, 'employee'>,
+    employeeId: number,
+    company?: string,
+  ) {
+    if (company === undefined) return;
+    const employee = await database.employee.findUnique({
+      where: { id: employeeId },
+    });
+    if (
+      !employee ||
+      typeof company !== 'string' ||
+      company.trim() !== employee.company
+    ) {
+      throw new BadRequestException(
+        'Employee does not belong to this company.',
+      );
+    }
+  }
+
+  async createAttendance(data: any) {
+    const input = data as AttendanceWriteInput;
+    return await prisma.$transaction(async (database) => {
+      await this.lockAttendanceEmployees(database, [Number(input.employeeId)]);
+      const normalized = await this.computeNormalizedAttendanceData(
+        input,
+        undefined,
+        database,
+      );
+      const existing = await database.attendance.findMany({
+        where: { employeeId: normalized.employeeId },
+      });
+      const duplicate = existing.find(
+        (log) => attendanceSessionKey(log) === attendanceSessionKey(normalized),
+      );
+      if (duplicate) return duplicate;
+      return await database.attendance.create({ data: normalized });
+    });
+  }
+
+  async importBiometrics(
+    data: Record<string, unknown>,
+    actor?: { id: number; username: string },
+  ) {
+    return await importBiometricAttendance(prisma, data, actor);
   }
 
   async updateAttendance(id: number, data: any) {
     const { id: _id, ...cleanData } = data as AttendanceWriteInput;
-    const existing = await prisma.attendance.findUnique({ where: { id } });
-    if (!existing)
-      throw new BadRequestException('Attendance record not found.');
-    const normalized = await this.computeNormalizedAttendanceData(
-      cleanData,
-      existing,
-    );
-    return await prisma.attendance.update({
-      where: { id },
-      data: normalized,
+    return await prisma.$transaction(async (database) => {
+      const owner = await database.attendance.findUnique({ where: { id } });
+      if (!owner) throw new BadRequestException('Attendance record not found.');
+      await this.lockAttendanceEmployees(database, [
+        owner.employeeId,
+        Number(cleanData.employeeId ?? owner.employeeId),
+      ]);
+      const existing = await database.attendance.findUnique({ where: { id } });
+      if (!existing || existing.employeeId !== owner.employeeId) {
+        throw new ConflictException(
+          'Attendance record changed. Refresh attendance before editing again.',
+        );
+      }
+      await this.assertAttendanceOwnerCompany(
+        database,
+        existing.employeeId,
+        cleanData.company,
+      );
+      const normalized = await this.computeNormalizedAttendanceData(
+        cleanData,
+        existing,
+        database,
+      );
+      return await database.attendance.update({
+        where: { id },
+        data: normalized,
+      });
     });
   }
 
-  async deleteAttendance(id: number) {
-    return await prisma.attendance.delete({
-      where: { id },
+  async deleteAttendance(id: number, company?: string) {
+    return await prisma.$transaction(async (database) => {
+      const owner = await database.attendance.findUnique({ where: { id } });
+      if (!owner) throw new BadRequestException('Attendance record not found.');
+      await this.lockAttendanceEmployees(database, [owner.employeeId]);
+      const existing = await database.attendance.findUnique({ where: { id } });
+      if (!existing || existing.employeeId !== owner.employeeId) {
+        throw new ConflictException(
+          'Attendance record changed. Refresh attendance before deleting again.',
+        );
+      }
+      await this.assertAttendanceOwnerCompany(
+        database,
+        existing.employeeId,
+        company,
+      );
+      return await database.attendance.delete({ where: { id } });
     });
   }
 
