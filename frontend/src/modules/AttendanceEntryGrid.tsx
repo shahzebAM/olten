@@ -209,7 +209,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Bulk attendance entry">
       <div className="border-b border-slate-200 p-4">
         <h2 className="font-bold text-indigo-950">Attendance Logs</h2>
-        <p className="mt-1 text-xs text-slate-500">Enter a cutoff, then save once. Hours are confirmed by the existing attendance service.</p>
+        <p className="mt-1 text-xs text-slate-500">Enter a cutoff, then save once. Same-day sessions share the automatic break allowance. Hours are confirmed by the attendance service.</p>
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <div className="relative min-w-64 flex-1" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setPickerOpen(false); }}>
             <label htmlFor="attendance-employee" className="mb-1 block text-xs font-semibold text-slate-600">Employee</label>

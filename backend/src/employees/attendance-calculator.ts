@@ -384,18 +384,34 @@ const fixedDailyUnpaidIntervals = (
   const workdayStart =
     Date.parse(`${group.date}T00:00:00Z`) / 60000 + shiftStart;
   // Time off after a standalone midnight extra is not the daytime meal break.
-  const gaps = subtractIntervals(envelope, working).filter(
-    (gap) => gap.start >= workdayStart,
+  const allGaps = subtractIntervals(envelope, working);
+  const gaps = allGaps.filter((gap) => gap.start >= workdayStart);
+  const scheduledWork = recurringWindows(
+    envelope,
+    representative.shiftStart ?? options.shiftStart ?? '08:00',
+    representative.shiftEnd ?? options.shiftEnd ?? '17:00',
   );
-  // Only a lunch/recorded-break gap is evidence of an already unpaid break.
-  // A midnight extra session followed by daytime work must retain its minutes.
+  // OUT/IN gaps wholly inside a scheduled workday are already unpaid, even
+  // when staff take their break outside the configured lunch window. Keep
+  // pre/post-shift extras separate and retain existing recorded meal evidence.
+  const daytimeGaps = allGaps.filter(
+    (gap) =>
+      // A 23:59/00:00 source continuation is not a recorded daytime break.
+      Math.floor(gap.start / MINUTES_PER_DAY) ===
+        Math.floor(gap.end / MINUTES_PER_DAY) &&
+      scheduledWork.some(
+        (window) => gap.start >= window.start && gap.end <= window.end,
+      ),
+  );
+  const creditedGaps = mergeIntervals([
+    ...intersectIntervals(gaps, preferred),
+    ...daytimeGaps,
+  ]);
   let remaining = Math.min(
     intervalMinutes(automaticWorking),
     Math.max(
       0,
-      60 -
-        intervalMinutes(explicitUnpaid) -
-        intervalMinutes(intersectIntervals(gaps, preferred)),
+      60 - intervalMinutes(explicitUnpaid) - intervalMinutes(creditedGaps),
     ),
   );
   const unpaid: Interval[] = [...explicitUnpaid];

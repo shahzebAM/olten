@@ -19,6 +19,22 @@ const load = (file, dependencies = {}) => {
 const money = load('../../backend/src/employees/payroll-money.ts');
 const calculator = load('../../backend/src/employees/attendance-calculator.ts', { './payroll-money': money });
 
+test('browser payroll credits an already unpaid daytime gap across the employee’s sessions', () => {
+  const rows = [
+    { id: 1, employeeId: 1, date: '2026-10-12', timeIn: '08:30', timeOut: '11:00' },
+    { id: 2, employeeId: 1, date: '2026-10-12', timeIn: '12:00', timeOut: '17:30' },
+  ];
+  const result = calculator.calculateAttendancePayroll(rows, { ...calculator.APP_ATTENDANCE_POLICY, employeeId: 1, startDate: '2026-10-12', endDate: '2026-10-12', shiftStart: '08:30', shiftEnd: '17:30', lunchStart: '12:00', lunchEnd: '13:00', daysWorked: 1, basicSalary: 500, ratePerDay: 500 });
+  assert.equal(result.totalMinutes, 480);
+  assert.equal(result.lunchDeductionMinutes, 0);
+  assert.equal(result.grossPay, 500);
+});
+
+test('a zero-break exception remains session-specific and a continuous afternoon shift keeps its default', () => {
+  assert.equal(calculator.calculateAttendanceMetrics({ ...calculator.APP_ATTENDANCE_POLICY, timeIn: '13:01', timeOut: '18:20', lunchOverrideMinutes: 0 }).netMinutes, 319);
+  assert.equal(calculator.calculateAttendanceMetrics({ ...calculator.APP_ATTENDANCE_POLICY, timeIn: '14:00', timeOut: '22:00' }).lunchDeductionMinutes, 60);
+});
+
 test('browser and API share the approved fixed daily break and exact money calculations', () => {
   const result = calculator.calculateAttendanceMetrics({
     ...calculator.APP_ATTENDANCE_POLICY, timeIn: '12:48', timeOut: '19:48',

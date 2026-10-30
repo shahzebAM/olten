@@ -37,7 +37,7 @@ export type {
 
 const prisma = new PrismaClient();
 // Changing calculation rules invalidates previews prepared by earlier releases.
-export const PAYROLL_CALCULATION_VERSION = 'scheduled-rest-day-20261029-v2';
+export const PAYROLL_CALCULATION_VERSION = 'same-day-breaks-20261030-v3';
 type PayrollDatabase = Pick<
   Prisma.TransactionClient,
   'employee' | 'attendance' | 'settings' | 'payroll'

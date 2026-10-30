@@ -1,0 +1,17 @@
+{
+  "parentCommit": "14e1746c1d723d9c21c385ae785aee4ae6bb5ccd",
+  "previousApproval": "payroll-biometrics-approval.json",
+  "scope": [
+    "same-day-session-break-accounting",
+    "payroll-break-explanation"
+  ],
+  "authorization": "User requested applying shared same-day session break treatment to other employees. Credit already-unpaid internal gaps within the scheduled shift toward the one-hour automatic allowance, retaining explicit overrides and existing single-shift, pre/post-shift and midnight-continuation behavior. Saved payrolls and raw punches remain unchanged.",
+  "previousNonClassCodeSHA256": "15f1e092182e22703c1e68316d5404a77ae760bb973000e4a8f462ddf6402a14",
+  "nonClassCodeSHA256": "025728a46170030534f026e3ab876bfee7a914248b03a07753fd9e0fe06374b2",
+  "previousCalculatorSHA256": "24281F93D3DC8E297070958CA11B7483592ED20A2BAC132EB1B31E6C85B5B226",
+  "calculatorSHA256": "6A79472F8C054F5D7F3DBAFCC037DD6A477CCEB85E74597E8997A5ED75D8ACB2",
+  "printTemplatesSHA256": {
+    "payslip-print-area": "45f21a5183255ebcfc05c723381c91deb9d3501f317e29055d76860acb84ee11",
+    "report-print-area": "df036fb72dbe68cdaa579a1886b558a687789ea339593686592e6188476742a3"
+  }
+}

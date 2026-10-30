@@ -405,7 +405,7 @@ describe('scheduled rest-day pay through the payroll service', () => {
       )
       .digest('hex');
     const preview = await service.previewPayroll(input);
-    expect(PAYROLL_CALCULATION_VERSION).toBe('scheduled-rest-day-20261029-v2');
+    expect(PAYROLL_CALCULATION_VERSION).toBe('same-day-breaks-20261030-v3');
     expect(preview.previewFingerprint).not.toBe(previousFingerprint);
 
     await expect(

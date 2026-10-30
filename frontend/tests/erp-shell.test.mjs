@@ -54,6 +54,7 @@ test('approved rest-day calculator and profile changes preserve the other protec
   const approved = JSON.parse(readFileSync(new URL('./fixtures/payroll-excel-approval.json', import.meta.url), 'utf8'));
   const restDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-rest-day-approval.json', import.meta.url), 'utf8'));
   const workflowApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-workflow-approval.json', import.meta.url), 'utf8'));
+  const sameDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-same-day-breaks-approval.json', import.meta.url), 'utf8'));
   assert.equal(restDayApproved.parentCommit, '9cde900d7d5e062b234bceb9c01df6935ff9aa71');
   assert.equal(restDayApproved.previousApproval, 'payroll-excel-approval.json');
   assert.equal(baseline.length, 7);
@@ -73,7 +74,9 @@ test('approved rest-day calculator and profile changes preserve the other protec
     } else if (entry.File.replaceAll('\\', '/') === 'backend/src/employees/attendance-calculator.ts') {
       assert.equal(approved.previousCalculatorSHA256, entry.SHA256);
       assert.equal(restDayApproved.previousCalculatorSHA256, approved.calculatorSHA256);
-      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), restDayApproved.calculatorSHA256, entry.File);
+      assert.equal(sameDayApproved.previousCalculatorSHA256, restDayApproved.calculatorSHA256);
+      assert.deepEqual(sameDayApproved.scope, ['same-day-session-break-accounting', 'payroll-break-explanation']);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), sameDayApproved.calculatorSHA256, entry.File);
     } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/modules/PayrollProfileEditor.tsx') {
       assert.equal(restDayApproved.previousProfileEditorSHA256, entry.SHA256);
       assert.equal(workflowApproved.previousProfileEditorSHA256, restDayApproved.profileEditorSHA256);
@@ -83,6 +86,11 @@ test('approved rest-day calculator and profile changes preserve the other protec
       assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), workflowApproved.profileHelpersSHA256, entry.File);
       const basisResolver = content.slice(content.indexOf('export function resolvePayrollBasis('));
       assert.equal(createHash('sha256').update(basisResolver).digest('hex'), workflowApproved.basisResolverSHA256, 'Existing payroll basis formulas remain unchanged');
+    } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/modules/AttendanceEntryGrid.tsx') {
+      const previousCopy = 'Enter a cutoff, then save once. Hours are confirmed by the existing attendance service.';
+      const updatedCopy = 'Enter a cutoff, then save once. Same-day sessions share the automatic break allowance. Hours are confirmed by the attendance service.';
+      assert.ok(content.includes(updatedCopy));
+      assert.equal(createHash('sha256').update(content.replace(updatedCopy, previousCopy)).digest('hex').toUpperCase(), entry.SHA256, 'Attendance entry behavior remains unchanged; only its break explanation changed');
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });
