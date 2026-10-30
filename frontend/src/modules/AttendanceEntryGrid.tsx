@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
 import { getApiAuthHeaders } from '../lib/apiSession';
-import { displayEntryTime, displayManualEntryTime, entrySessionKey, fromRecord, getCutoffDates, getInitialCutoff, isChanged, mergeRows, moveCutoff, normalizeManualEntryTime, rowPunches, samePunches, sameSource, sourcePunches } from '../lib/attendanceEntry';
+import { displayEntryTime, displayManualEntryTime, entrySessionKey, fromRecord, getCutoffDates, getInitialCutoff, isChanged, mergeRows, moveCutoff, normalizeManualEntryTime, removeEntryRow, rowPunches, samePunches, sameSource, sourcePunches } from '../lib/attendanceEntry';
 import type { AttendanceEntryEmployee, AttendanceEntryRecord, CutoffSelection, EntryKind, EntryRow } from '../lib/attendanceEntry';
 type Props = {
   selectedCompany: string;
@@ -31,6 +31,8 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
   const [loadedScope, setLoadedScope] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
+  const [pendingRemovalId, setPendingRemovalId] = useState<number | null>(null);
   const [officialCurrent, setOfficialCurrent] = useState(false);
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -48,8 +50,8 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
   const dates = useMemo(() => getCutoffDates(cutoff), [cutoff]);
   const scope = `${selectedCompany}:${employee?.id ?? ''}:${cutoff.month}:${cutoff.period}`;
   const ready = !!employee && dates.length > 0 && loadedScope === scope;
-  const dirty = ready && rows.some(isChanged);
-  const uncertain = ready && rows.some(row => !!row.unconfirmed);
+  const dirty = ready && (rows.some(isChanged) || pendingRemovalId !== null);
+  const uncertain = ready && (rows.some(row => !!row.unconfirmed) || pendingRemovalId !== null);
 
   const readRecords = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany }, signal });
@@ -77,7 +79,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
   }, [scope, selectedEmployeeId, dates, readRecords, onRecordsChange]);
 
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
-  useEffect(() => { onBusyChange(saving || loading); }, [saving, loading, onBusyChange]);
+  useEffect(() => { onBusyChange(saving || loading || removingKey !== null); }, [saving, loading, removingKey, onBusyChange]);
   useEffect(() => () => { onDirtyChange(false); onBusyChange(false); }, [onDirtyChange, onBusyChange]);
   useEffect(() => {
     if (!dirty && !saving) return;
@@ -86,7 +88,10 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, saving]);
 
-  const allowSwitch = () => !saveLock.current && (!dirty || window.confirm('Discard unsaved attendance changes? Saved database records will remain.'));
+  const allowSwitch = () => {
+    if (pendingRemovalId !== null) { setMessage('Use Check saved status / Refresh to confirm the removal before switching attendance.'); return false; }
+    return !saveLock.current && (!dirty || window.confirm('Discard unsaved attendance changes? Saved database records will remain.'));
+  };
   const switchCutoff = (next: CutoffSelection) => {
     if (next.month === cutoff.month && next.period === cutoff.period) return;
     if (!allowSwitch()) return;
@@ -108,12 +113,61 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
     try {
       const fresh = await readRecords();
       setRecords(fresh); onRecordsChange(fresh); setOfficialCurrent(true);
-      setRows(mergeRows(fresh, dates, employee.id, reset ? [] : rows));
+      const removed = pendingRemovalId !== null && !fresh.some(record => record.id === pendingRemovalId);
+      const drafts = removed ? rows.filter(row => row.source?.id !== pendingRemovalId) : rows;
+      setRows(mergeRows(fresh, dates, employee.id, reset ? [] : drafts, true));
+      setPendingRemovalId(null);
       loadedScopeRef.current = scope;
       setLoadedScope(scope); setLoadError('');
-      setMessage(reset ? 'Unsaved changes reset. Saved records reloaded.' : 'Saved attendance refreshed. Local edits have been retained.');
+      setMessage(removed ? 'Session removal confirmed. Other attendance edits have been retained.' : pendingRemovalId !== null ? 'The session is still present. Removal was not confirmed; use Remove session to retry.' : reset ? 'Unsaved changes reset. Saved records reloaded.' : 'Saved attendance refreshed. Local edits have been retained.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Refresh failed. Your drafts have been retained.'); }
     finally { saveLock.current = false; setLoading(false); }
+  };
+
+  const removeSession = async (row: EntryRow) => {
+    if (!employee || !ready || saveLock.current || uncertain) return;
+    if (!row.source) {
+      setRows(current => removeEntryRow(current, row.key));
+      setMessage('Unsaved session removed.');
+      return;
+    }
+    const source = row.source;
+    const description = source.timeIn === 'LEAVE' ? `${source.timeOut.toLowerCase()} leave` : `${displayEntryTime(source.timeIn) || 'blank'} – ${displayEntryTime(source.timeOut) || 'blank'}`;
+    if (!window.confirm(`Remove ${fullName(employee)}’s saved session on ${row.date} (${description})?${isChanged(row) ? ' Unsaved edits to this session will be discarded.' : ''} Other sessions and saved payrolls will remain.`)) return;
+    saveLock.current = true; setRemovingKey(row.key); readSequence.current++;
+    setMessage('Removing attendance session…');
+    let sent = false;
+    let failure = '';
+    try {
+      const latest = await readRecords();
+      const current = latest.find(record => record.id === source.id);
+      if (current) {
+        if (!sameSource(source, current)) throw new Error('This session changed on the server. Refresh and review it before removing.');
+        if (!current.sourceFingerprint || !/^[a-f0-9]{64}$/.test(current.sourceFingerprint)) throw new Error('Refresh after the backend update before removing a saved session.');
+        sent = true;
+        const response = await fetch(`${API_BASE_URL}/employees/attendance/${source.id}`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany },
+          body: JSON.stringify({ sourceFingerprint: current.sourceFingerprint }),
+        });
+        if (!response.ok) {
+          let detail = `Session removal failed (${response.status}).`;
+          try { const body = await response.json(); if (typeof body.message === 'string') detail = body.message; } catch { /* Retain the status if no JSON error was supplied. */ }
+          throw new Error(detail);
+        }
+      }
+    } catch (error) { failure = error instanceof Error ? error.message : 'Session removal could not be confirmed.'; }
+    try {
+      const fresh = await readRecords();
+      const removed = !fresh.some(record => record.id === source.id);
+      const drafts = removed ? rows.filter(item => item.key !== row.key) : rows;
+      const merged = mergeRows(fresh, dates, employee.id, drafts, true);
+      setRecords(fresh); onRecordsChange(fresh); setRows(merged); setOfficialCurrent(true); setPendingRemovalId(null);
+      setMessage(removed ? 'Session removed and confirmed. Other sessions and saved payrolls are unchanged.' : failure || 'The session is still present. Removal was not confirmed; use Remove session to retry.');
+    } catch {
+      setOfficialCurrent(false);
+      if (sent) setPendingRemovalId(source.id);
+      setMessage(sent ? 'Removal result unconfirmed. Use Check saved status / Refresh before making further changes. Your other drafts are retained.' : failure || 'Attendance could not be checked. No removal request was sent.');
+    } finally { saveLock.current = false; setRemovingKey(null); }
   };
 
   const save = async () => {
@@ -203,7 +257,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
   const officialAvailable = ready && officialCurrent && savedInCutoff.every(record => record.metrics && Number.isFinite(record.metrics.regularMinutes) && Number.isFinite(record.metrics.otMinutes));
   const totalRegular = savedInCutoff.reduce((sum, record) => sum + (record.metrics?.regularMinutes ?? 0), 0);
   const totalOvertime = savedInCutoff.reduce((sum, record) => sum + (record.metrics?.otMinutes ?? 0), 0);
-  const disabled = saving || loading;
+  const disabled = saving || loading || removingKey !== null;
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Bulk attendance entry">
@@ -250,7 +304,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
               const firstOnDate = index === 0 || rows[index - 1].date !== row.date;
               const punches = rowPunches(row);
               const overnight = row.kind === 'work' && normalizeManualEntryTime(row.timeIn, 'timeIn') && normalizeManualEntryTime(row.timeOut, 'timeOut') && punches.timeOut < punches.timeIn;
-              const readOnly = disabled || !!row.unconfirmed;
+              const readOnly = disabled || !!row.unconfirmed || pendingRemovalId !== null;
               return <tr key={row.key} data-entry-date={row.date} data-record-id={row.source?.id} className={`border-b border-slate-200 ${row.error ? 'bg-rose-50' : changed ? 'bg-amber-50/70' : 'hover:bg-slate-50'} ${firstOnDate ? 'border-t' : ''}`}>
                 <th scope="row" className="px-3 py-2 font-medium text-slate-700"><span>{dateLabel(row.date)}</span><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{row.source ? `#${row.source.id}` : changed ? 'Unsaved' : 'Blank'}</span></th>
                 <td className="px-3 py-2 text-xs text-slate-500">{dateLabel(row.date, true)}</td>
@@ -266,7 +320,8 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
                 <td className="px-3 py-2 font-mono text-xs text-purple-700">{pending ? 'Pending' : row.source ? row.source.metrics ? hoursLabel(row.source.metrics.otMinutes) : 'Unavailable' : '—'}</td>
                 <td className="min-w-56 px-3 py-1.5">
                   <div className="flex flex-wrap items-center gap-2"><select aria-label={`${label} entry type`} value={row.kind} disabled={readOnly} onChange={event => updateRow(row.key, { kind: event.target.value as EntryKind, timeIn: '', timeOut: '' })} className={`${fieldClass} py-1 text-xs`}><option value="work">Work</option><option value="paid">Paid leave</option><option value="unpaid">Unpaid leave</option></select>
-                    {firstOnDate && <button type="button" disabled={disabled} onClick={() => setRows(current => { const added: EntryRow = { key: `new-${++nextKey.current}`, date: row.date, kind: 'work', timeIn: '', timeOut: '', reason: '' }; const last = current.findLastIndex(item => item.date === row.date); return [...current.slice(0, last + 1), added, ...current.slice(last + 1)]; })} className="text-xs font-semibold text-indigo-600 disabled:opacity-50" aria-label={`Add Session ${row.date}`}>+ Add Session</button>}
+                    {firstOnDate && <button type="button" disabled={disabled || pendingRemovalId !== null} onClick={() => setRows(current => { const added: EntryRow = { key: `new-${++nextKey.current}`, date: row.date, kind: 'work', timeIn: '', timeOut: '', reason: '' }; const last = current.findLastIndex(item => item.date === row.date); return [...current.slice(0, last + 1), added, ...current.slice(last + 1)]; })} className="text-xs font-semibold text-indigo-600 disabled:opacity-50" aria-label={`Add Session ${row.date}`}>+ Add Session</button>}
+                    {(row.source || row.key.startsWith('new-') || changed) && <button type="button" disabled={disabled || uncertain} onClick={() => void removeSession(row)} className="text-xs font-semibold text-rose-700 hover:text-rose-900 disabled:opacity-50" aria-label={`Remove session ${label}`}>{removingKey === row.key ? 'Removing…' : 'Remove session'}</button>}
                     {changed && <span className="text-[10px] font-semibold text-amber-700">{row.unconfirmed ? 'Check status' : 'Unsaved'}</span>}
                   </div>
                   {(row.kind !== 'work' || row.reason) && <input aria-label={`${label} reason`} placeholder="Reason (optional)" value={row.reason} disabled={readOnly} onChange={event => updateRow(row.key, { reason: event.target.value })} className={`${fieldClass} mt-1 w-full py-1 text-xs`} />}

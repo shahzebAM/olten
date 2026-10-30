@@ -1,0 +1,12 @@
+{
+  "parentCommit": "49e61e49d22f5b74d4edf81eb7a2183118251f97",
+  "previousApproval": "payroll-quick-entry-approval.json",
+  "scope": [
+    "attendance-session-removal"
+  ],
+  "authorization": "User requested a remove-session option. Unsaved rows are local only; saved sessions use authenticated company-scoped guarded deletion, retain other drafts and saved payroll history.",
+  "previousGridSHA256": "C54164F5272E7E57264B9CF0172A4288846AF447E592F500B1DE1E7F79515E3A",
+  "gridSHA256": "513856197A42808EE1AE1FFF992C840F8221DB433D69AB80926756232745FA9E",
+  "previousEntryHelpersSHA256": "B195FB87AF01D78D9251DB3D15D65696E624DADF06CA0CA490692221944E66A1",
+  "entryHelpersSHA256": "B134498C0EBEC38F61746ED5523F43E40D6F6FF8AF9A1B116342483E81331191"
+}

@@ -56,6 +56,10 @@ test('approved rest-day calculator and profile changes preserve the other protec
   const workflowApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-workflow-approval.json', import.meta.url), 'utf8'));
   const sameDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-same-day-breaks-approval.json', import.meta.url), 'utf8'));
   const quickEntryApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-quick-entry-approval.json', import.meta.url), 'utf8'));
+  const removalApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-session-removal-approval.json', import.meta.url), 'utf8'));
+  assert.equal(removalApproved.parentCommit, '49e61e49d22f5b74d4edf81eb7a2183118251f97');
+  assert.equal(removalApproved.previousApproval, 'payroll-quick-entry-approval.json');
+  assert.deepEqual(removalApproved.scope, ['attendance-session-removal']);
   assert.equal(quickEntryApproved.parentCommit, 'c96e6ec5fbde0defdef8c8a93d6238de1ec709f0');
   assert.equal(quickEntryApproved.previousApproval, 'payroll-same-day-breaks-approval.json');
   assert.deepEqual(quickEntryApproved.scope, ['manual-attendance-compact-time-entry']);
@@ -92,10 +96,12 @@ test('approved rest-day calculator and profile changes preserve the other protec
       assert.equal(createHash('sha256').update(basisResolver).digest('hex'), workflowApproved.basisResolverSHA256, 'Existing payroll basis formulas remain unchanged');
     } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/modules/AttendanceEntryGrid.tsx') {
       assert.equal(quickEntryApproved.previousGridSHA256, 'B6516D67B57085337ECC5B108AF613076434FBAE4C61EF79D7EDE988B1144855');
-      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), quickEntryApproved.gridSHA256, 'Only the approved compact manual entry UI changes extend the shared-break grid');
+      assert.equal(removalApproved.previousGridSHA256, quickEntryApproved.gridSHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), removalApproved.gridSHA256, 'Only approved per-session removal extends the quick-entry grid');
     } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/lib/attendanceEntry.ts') {
       assert.equal(quickEntryApproved.previousEntryHelpersSHA256, entry.SHA256);
-      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), quickEntryApproved.entryHelpersSHA256, 'Only approved manual draft normalization extends the attendance helpers');
+      assert.equal(removalApproved.previousEntryHelpersSHA256, quickEntryApproved.entryHelpersSHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), removalApproved.entryHelpersSHA256, 'Only approved session removal and draft preservation extend the attendance helpers');
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });

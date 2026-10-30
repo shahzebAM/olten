@@ -73,3 +73,36 @@ test('additional sessions accept explicit afternoon arrivals and morning overnig
   const overnight = entry.rowPunches(draft({ timeIn: '820PM', timeOut: '820AM' }));
   assert.equal(overnight.timeIn, '20:20'); assert.equal(overnight.timeOut, '08:20');
 });
+
+test('removing an unsaved session keeps its sibling sessions and unrelated drafts intact', () => {
+  const rows = [draft(), draft({ key: 'new-2', timeIn: '', timeOut: '' }), draft({ key: 'new-3', date: '2026-10-13', timeIn: '900', timeOut: '' })];
+  const before = JSON.stringify(rows);
+  const remaining = entry.removeEntryRow(rows, 'new-2');
+  assert.deepEqual(Array.from(remaining, row => row.key), ['new-1', 'new-3']);
+  assert.equal(remaining[0], rows[0]); assert.equal(remaining[1], rows[2]);
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test('removing the last session leaves a clean blank date in the same position', () => {
+  const rows = [draft({ key: 'other-before', date: '2026-10-11' }), draft(), draft({ key: 'other-after', date: '2026-10-13' })];
+  const remaining = entry.removeEntryRow(rows, 'new-1');
+  assert.equal(remaining.length, 3);
+  assert.equal(remaining[1].date, '2026-10-12');
+  assert.equal(remaining[1].timeIn, ''); assert.equal(remaining[1].timeOut, '');
+  assert.equal(remaining[1].source, undefined); assert.equal(entry.isChanged(remaining[1]), false);
+  assert.equal(remaining[0], rows[0]); assert.equal(remaining[2], rows[2]);
+});
+
+test('a missing removal key never removes an unrelated session', () => {
+  const rows = [draft()];
+  assert.equal(entry.removeEntryRow(rows, 'missing'), rows);
+});
+
+test('reconciling a saved removal retains typed and empty added sessions on other dates', () => {
+  const record = { id: 2, employeeId: 7, date: '2026-10-12', timeIn: '13:00', timeOut: '17:00', hours: 4 };
+  const drafts = [entry.fromRecord(record), draft({ key: 'new-empty', timeIn: '', timeOut: '' }), draft({ key: 'new-typed', date: '2026-10-13', timeIn: '900', timeOut: '' })];
+  const merged = entry.mergeRows([record], ['2026-10-12', '2026-10-13'], 7, drafts, true);
+  assert.deepEqual(Array.from(merged, row => row.key), ['saved-2', 'new-empty', 'new-typed']);
+  assert.equal(merged[2].timeIn, '900');
+  assert.equal(entry.mergeRows([], ['2026-10-12'], 7, [], true)[0].timeIn, '');
+});

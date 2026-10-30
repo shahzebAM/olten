@@ -6,6 +6,7 @@ import {
 import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { importBiometricAttendance } from './biometrics-attendance.service';
+import { getAttendanceSourceFingerprint } from './attendance-session-source';
 import {
   resolveEffectivePayrollProfile,
   resolvePayrollBasis,
@@ -472,7 +473,10 @@ export class EmployeesService {
       prisma.employee.findMany({ where: company ? { company } : undefined }),
     ]);
     const result: Array<
-      (typeof logs)[number] & { metrics: AttendanceCalcResult }
+      (typeof logs)[number] & {
+        metrics: AttendanceCalcResult;
+        sourceFingerprint: string;
+      }
     > = [];
     const settingsByCompany = new Map<
       string,
@@ -492,7 +496,11 @@ export class EmployeesService {
         ...APP_ATTENDANCE_POLICY,
       });
       result.push(
-        ...summary.records.map((log) => ({ ...log, hours: log.metrics.total })),
+        ...summary.records.map((log) => ({
+          ...log,
+          hours: log.metrics.total,
+          sourceFingerprint: getAttendanceSourceFingerprint(log),
+        })),
       );
     }
     return result;
@@ -715,7 +723,30 @@ export class EmployeesService {
     });
   }
 
-  async deleteAttendance(id: number, company?: string) {
+  async deleteAttendance(
+    id: number,
+    company?: string,
+    options: { sourceFingerprint?: unknown } = {},
+    actor?: { id: number; username: string },
+  ) {
+    const fingerprint = options.sourceFingerprint;
+    if (
+      fingerprint !== undefined &&
+      (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/i.test(fingerprint))
+    )
+      throw new BadRequestException(
+        'A valid attendance source fingerprint is required.',
+      );
+    if (
+      actor &&
+      (!Number.isSafeInteger(actor.id) ||
+        actor.id <= 0 ||
+        typeof actor.username !== 'string' ||
+        !actor.username.trim())
+    )
+      throw new BadRequestException(
+        'A valid attendance removal actor is required.',
+      );
     return await prisma.$transaction(async (database) => {
       const owner = await database.attendance.findUnique({ where: { id } });
       if (!owner) throw new BadRequestException('Attendance record not found.');
@@ -731,7 +762,38 @@ export class EmployeesService {
         existing.employeeId,
         company,
       );
-      return await database.attendance.delete({ where: { id } });
+      const sourceFingerprint = getAttendanceSourceFingerprint(existing);
+      if (
+        typeof fingerprint === 'string' &&
+        fingerprint.toLowerCase() !== sourceFingerprint
+      )
+        throw new ConflictException(
+          'This attendance session changed. Refresh attendance before removing it.',
+        );
+      const removed = await database.attendance.delete({ where: { id } });
+      if (actor) {
+        const employee = await database.employee.findUnique({
+          where: { id: existing.employeeId },
+        });
+        if (!employee) throw new BadRequestException('Employee not found.');
+        await database.erpAuditLog.create({
+          data: {
+            company: employee.company,
+            actorId: actor.id,
+            actor: actor.username,
+            action: 'ATTENDANCE_SESSION_REMOVED',
+            entityType: 'Attendance',
+            entityId: String(existing.id),
+            details: JSON.parse(
+              JSON.stringify({
+                before: existing,
+                sourceFingerprint,
+              }),
+            ) as Prisma.InputJsonValue,
+          },
+        });
+      }
+      return removed;
     });
   }
 

@@ -26,6 +26,7 @@ export interface AttendanceEntryRecord {
   breakIn?: string | null;
   lunchOverrideMinutes?: number | null;
   metrics?: AttendanceCalcResult;
+  sourceFingerprint?: string;
 }
 
 export interface CutoffSelection {
@@ -143,10 +144,10 @@ export const sameSource = (a: AttendanceEntryRecord, b: AttendanceEntryRecord) =
 ).every(field => (a[field] ?? null) === (b[field] ?? null));
 
 // Keep every source ID. Only overlay drafts that have not been confirmed saved.
-export function mergeRows(records: AttendanceEntryRecord[], dates: string[], employeeId: number, drafts: EntryRow[] = []): EntryRow[] {
+export function mergeRows(records: AttendanceEntryRecord[], dates: string[], employeeId: number, drafts: EntryRow[] = [], preserveEmptyDrafts = false): EntryRow[] {
   const saved = records.filter(record => record.employeeId === employeeId && dates.includes(toAttendanceDateYMD(record.date)));
   const rows = saved.map(fromRecord);
-  for (const draft of drafts.filter(isChanged)) {
+  for (const draft of drafts.filter(row => isChanged(row) || (preserveEmptyDrafts && !row.source && row.key.startsWith('new-')))) {
     const confirmed = draft.unconfirmed && saved.find(record => (
       !draft.source || record.id === draft.source.id
     ) && entrySessionKey(record) === entrySessionKey({ employeeId, date: draft.date, ...draft.unconfirmed! }) && samePunches(sourcePunches(record), draft.unconfirmed!));
@@ -159,4 +160,14 @@ export function mergeRows(records: AttendanceEntryRecord[], dates: string[], emp
     const sessions = rows.filter(row => row.date === date);
     return sessions.length ? sessions : [{ key: `blank-${date}`, date, kind: 'work' as const, timeIn: '', timeOut: '', reason: '' }];
   });
+}
+
+export function removeEntryRow(rows: EntryRow[], key: string): EntryRow[] {
+  const index = rows.findIndex(row => row.key === key);
+  if (index < 0) return rows;
+  const date = rows[index].date;
+  const remaining = rows.filter(row => row.key !== key);
+  if (remaining.some(row => row.date === date)) return remaining;
+  const blank: EntryRow = { key: `blank-${date}`, date, kind: 'work', timeIn: '', timeOut: '', reason: '' };
+  return [...remaining.slice(0, index), blank, ...remaining.slice(index)];
 }

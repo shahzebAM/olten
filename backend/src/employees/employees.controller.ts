@@ -10,6 +10,7 @@ import {
   Headers,
   UseGuards,
   Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { EmployeesService } from './employees.service'; 
 import { PrismaClient } from '@prisma/client';
@@ -90,8 +91,22 @@ export class EmployeesController {
   async deleteAttendance(
     @Param('id') id: string,
     @Headers('x-company') company?: string,
+    @Body() data?: Record<string, unknown>,
+    @Req() request?: PayrollRequest,
   ) {
-    return await this.employeesService.deleteAttendance(Number(id), company);
+    const input = data ?? {};
+    if (
+      Object.keys(input).some(
+        (key) => !['company', 'sourceFingerprint'].includes(key),
+      )
+    )
+      throw new BadRequestException('Invalid attendance removal fields.');
+    return await this.employeesService.deleteAttendance(
+      Number(id),
+      company,
+      { sourceFingerprint: input.sourceFingerprint },
+      request?.payrollActor,
+    );
   }
 
 // ==========================================
