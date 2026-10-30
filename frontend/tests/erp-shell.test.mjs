@@ -53,6 +53,7 @@ test('approved rest-day calculator and profile changes preserve the other protec
   const baseline = JSON.parse(readFileSync(new URL('./fixtures/payroll-protected-hashes.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
   const approved = JSON.parse(readFileSync(new URL('./fixtures/payroll-excel-approval.json', import.meta.url), 'utf8'));
   const restDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-rest-day-approval.json', import.meta.url), 'utf8'));
+  const workflowApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-workflow-approval.json', import.meta.url), 'utf8'));
   assert.equal(restDayApproved.parentCommit, '9cde900d7d5e062b234bceb9c01df6935ff9aa71');
   assert.equal(restDayApproved.previousApproval, 'payroll-excel-approval.json');
   assert.equal(baseline.length, 7);
@@ -64,7 +65,10 @@ test('approved rest-day calculator and profile changes preserve the other protec
       // Removing those additions retains the original 8eb736a protected schema hash.
       assert.deepEqual(entry.ApprovedPresentationModels, ['CompanyNavigation']);
       assert.match(content, /^  navigation CompanyNavigation\?$/m);
-      const protectedSchema = [...entry.ApprovedAllocationModels, ...entry.ApprovedPresentationModels].reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/^  navigation CompanyNavigation\?\n/m, '').replace(/\n{3,}/g, '\n\n');
+      assert.deepEqual(workflowApproved.addedSettingsField, { model: 'Settings', name: 'payrollDefaults', type: 'Json?' });
+      assert.match(content, /model Settings \{[^}]*\n  payrollDefaults Json\?\n/);
+      assert.equal([...content.matchAll(/^  payrollDefaults Json\?$/gm)].length, 1);
+      const protectedSchema = [...entry.ApprovedAllocationModels, ...entry.ApprovedPresentationModels].reduce((text, name) => text.replace(new RegExp(`model ${name} \\{[\\s\\S]*?\\n\\}`, 'g'), ''), content).replace(/^  navigation CompanyNavigation\?\n/m, '').replace(/^  payrollDefaults Json\?\n/m, '').replace(/\n{3,}/g, '\n\n');
       assert.equal(createHash('sha256').update(protectedSchema).digest('hex').toUpperCase(), entry.ProtectedSchemaSHA256, 'All schema models outside approved finance metadata and shared menu settings remain unchanged');
     } else if (entry.File.replaceAll('\\', '/') === 'backend/src/employees/attendance-calculator.ts') {
       assert.equal(approved.previousCalculatorSHA256, entry.SHA256);
@@ -72,7 +76,13 @@ test('approved rest-day calculator and profile changes preserve the other protec
       assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), restDayApproved.calculatorSHA256, entry.File);
     } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/modules/PayrollProfileEditor.tsx') {
       assert.equal(restDayApproved.previousProfileEditorSHA256, entry.SHA256);
-      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), restDayApproved.profileEditorSHA256, entry.File);
+      assert.equal(workflowApproved.previousProfileEditorSHA256, restDayApproved.profileEditorSHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), workflowApproved.profileEditorSHA256, entry.File);
+    } else if (entry.File.replaceAll('\\', '/') === 'backend/src/employees/payroll-profile.ts') {
+      assert.equal(workflowApproved.previousProfileHelpersSHA256, entry.SHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), workflowApproved.profileHelpersSHA256, entry.File);
+      const basisResolver = content.slice(content.indexOf('export function resolvePayrollBasis('));
+      assert.equal(createHash('sha256').update(basisResolver).digest('hex'), workflowApproved.basisResolverSHA256, 'Existing payroll basis formulas remain unchanged');
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });

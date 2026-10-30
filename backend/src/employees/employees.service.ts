@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
-import { resolvePayrollBasis, validatePayrollProfile } from './payroll-profile';
+import {
+  resolveEffectivePayrollProfile,
+  resolvePayrollBasis,
+  validatePayrollDefaults,
+  validatePayrollProfile,
+} from './payroll-profile';
 import { multiplyPayrollCents, toPayrollMoneyCents } from './payroll-money';
 import type { Attendance, Settings } from '@prisma/client';
 import type { AttendanceCalcResult } from './attendance-calculator';
@@ -744,6 +749,73 @@ export class EmployeesService {
     }
   }
 
+  private checkedPayrollDefaults(value: unknown) {
+    try {
+      return validatePayrollDefaults(value);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error
+          ? error.message
+          : 'Invalid company payroll defaults.',
+      );
+    }
+  }
+
+  async getPayrollDefaults(
+    company: string,
+    database: Pick<Prisma.TransactionClient, 'settings'> = prisma,
+  ) {
+    const requestedCompany = company?.trim();
+    if (!requestedCompany)
+      throw new BadRequestException('A valid company is required.');
+    const configured = await database.settings.findUnique({
+      where: { company: requestedCompany },
+    });
+    return {
+      company: requestedCompany,
+      defaults: this.checkedPayrollDefaults(configured?.payrollDefaults),
+      configured: configured?.payrollDefaults != null,
+    };
+  }
+
+  async updatePayrollDefaults(company: string, data: Record<string, unknown>) {
+    const requestedCompany = company?.trim();
+    if (!requestedCompany)
+      throw new BadRequestException('A valid company is required.');
+    if (
+      !data ||
+      data.defaults === undefined ||
+      Object.keys(data).some((key) => !['company', 'defaults'].includes(key))
+    )
+      throw new BadRequestException(
+        'Provide only the company payroll defaults.',
+      );
+    if (data.company !== undefined && data.company !== requestedCompany)
+      throw new BadRequestException(
+        'Payroll defaults do not belong to this company.',
+      );
+    const defaults = this.checkedPayrollDefaults(data.defaults);
+    const payrollDefaults = data.defaults === null ? Prisma.DbNull : defaults;
+    const schedule = await this.getSettings(requestedCompany);
+    await prisma.settings.upsert({
+      where: { company: requestedCompany },
+      create: {
+        company: requestedCompany,
+        payrollDefaults,
+        shiftStart: schedule.shiftStart,
+        shiftEnd: schedule.shiftEnd,
+        lunchStart: schedule.lunchStart,
+        lunchEnd: schedule.lunchEnd,
+      },
+      update: { payrollDefaults },
+    });
+    return {
+      company: requestedCompany,
+      defaults,
+      configured: data.defaults !== null,
+    };
+  }
+
   async previewPayroll(data: Record<string, unknown>) {
     return this.preparePayroll(data, prisma);
   }
@@ -776,7 +848,19 @@ export class EmployeesService {
       );
     const settings = await this.getSettings(employee.company, database);
     const logs = await database.attendance.findMany({ where: { employeeId } });
-    const profile = this.checkedPayrollProfile(employee.payrollProfile ?? null);
+    const rawProfile = this.checkedPayrollProfile(
+      employee.payrollProfile ?? null,
+    );
+    // Global shift fallback must not inherit another company's payroll rules.
+    const companyPayrollDefaults = this.checkedPayrollDefaults(
+      settings.company === employee.company && 'payrollDefaults' in settings
+        ? settings.payrollDefaults
+        : null,
+    );
+    const profile = resolveEffectivePayrollProfile(
+      rawProfile,
+      companyPayrollDefaults,
+    );
     let basis: ReturnType<typeof resolvePayrollBasis> | null = null;
     if (profile) {
       try {
@@ -856,6 +940,9 @@ export class EmployeesService {
         ? {
             version: 2,
             payrollProfile: profile,
+            ...(rawProfile?.rulesSource === 'COMPANY'
+              ? { companyPayrollDefaults }
+              : {}),
             paidDays: basis.paidDays,
             scheduledDates: basis.scheduledDates,
             workedDateCount: source.workedDateCount,
@@ -909,7 +996,7 @@ export class EmployeesService {
             id: employee.id,
             company: employee.company,
             baseRate: employee.baseRate,
-            profile,
+            profile: rawProfile,
             cashAdvanceBalance: employee.cashAdvanceBalance,
             loanBalance: employee.loanBalance,
           },
@@ -918,6 +1005,9 @@ export class EmployeesService {
             shiftEnd: settings.shiftEnd,
             lunchStart: settings.lunchStart,
             lunchEnd: settings.lunchEnd,
+            ...(rawProfile?.rulesSource === 'COMPANY'
+              ? { companyPayrollDefaults }
+              : {}),
           },
           cutoffStart,
           cutoffEnd,
@@ -947,7 +1037,7 @@ export class EmployeesService {
         lastName: employee.lastName,
         company: employee.company,
         baseRate: employee.baseRate,
-        payrollProfile: profile,
+        payrollProfile: rawProfile,
         cashAdvanceBalance: employee.cashAdvanceBalance,
         cashAdvanceInstallment: employee.cashAdvanceInstallment,
         loanBalance: employee.loanBalance,
@@ -956,7 +1046,8 @@ export class EmployeesService {
       attendanceSummary,
       computed,
       source,
-      configurationRequired: profile === null,
+      companyPayrollDefaults,
+      configurationRequired: rawProfile === null,
       previewFingerprint,
     };
   }

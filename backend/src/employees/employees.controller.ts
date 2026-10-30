@@ -108,6 +108,21 @@ export class EmployeesController {
     return await this.employeesService.previewPayroll(data);
   }
 
+  @Get('employees/payroll/defaults')
+  @UseGuards(PayrollAuthGuard)
+  async getPayrollDefaults(@Headers('x-company') company: string) {
+    return await this.employeesService.getPayrollDefaults(company);
+  }
+
+  @Patch('employees/payroll/defaults')
+  @UseGuards(PayrollAuthGuard)
+  async updatePayrollDefaults(
+    @Headers('x-company') company: string,
+    @Body() data: Record<string, unknown>,
+  ) {
+    return await this.employeesService.updatePayrollDefaults(company, data);
+  }
+
   @Delete('employees/payroll/:id')
   @UseGuards(PayrollAuthGuard)
   async deletePayroll(@Param('id') id: string) {

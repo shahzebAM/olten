@@ -6,10 +6,56 @@ export type PayrollProfile = {
   workingWeekdays: number[];
   fixedPaidDays?: number;
   overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
+  rulesSource?: 'COMPANY' | 'EMPLOYEE';
 } & (
   | { basis: 'DAILY'; dailyRate: number }
   | { basis: 'CUTOFF'; referenceDays: number }
 );
+
+export type PayrollDefaults = {
+  version: 1;
+  workingWeekdays: number[];
+  overtimeBasis: 'DAILY' | 'CUTOFF_NET';
+};
+
+export function validatePayrollDefaults(value: unknown): PayrollDefaults {
+  if (value === null || value === undefined)
+    return {
+      version: 1,
+      workingWeekdays: [1, 2, 3, 4, 5, 6],
+      overtimeBasis: 'CUTOFF_NET',
+    };
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Valid company payroll defaults are required.');
+  const defaults = value as Record<string, unknown>;
+  if (
+    defaults.version !== 1 ||
+    (defaults.overtimeBasis !== 'DAILY' &&
+      defaults.overtimeBasis !== 'CUTOFF_NET') ||
+    Object.keys(defaults).some(
+      (key) => !['version', 'workingWeekdays', 'overtimeBasis'].includes(key),
+    )
+  )
+    throw new Error('Unsupported company payroll defaults.');
+  const weekdays = defaults.workingWeekdays;
+  if (
+    !Array.isArray(weekdays) ||
+    !weekdays.length ||
+    weekdays.some(
+      (day) =>
+        typeof day !== 'number' || !Number.isInteger(day) || day < 0 || day > 6,
+    ) ||
+    new Set(weekdays).size !== weekdays.length
+  )
+    throw new Error(
+      'Select unique company working weekdays from Sunday through Saturday.',
+    );
+  return {
+    version: 1,
+    workingWeekdays: [...(weekdays as number[])].sort((a, b) => a - b),
+    overtimeBasis: defaults.overtimeBasis,
+  };
+}
 
 export function validatePayrollProfile(value: unknown): PayrollProfile | null {
   if (value === null) return null;
@@ -23,6 +69,12 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
   )
     throw new Error('Unsupported pay profile or paid-day rule.');
   const weekdays = profile.workingWeekdays;
+  if (
+    profile.rulesSource !== undefined &&
+    profile.rulesSource !== 'COMPANY' &&
+    profile.rulesSource !== 'EMPLOYEE'
+  )
+    throw new Error('Select company payroll rules or employee-specific rules.');
   if (
     profile.overtimeBasis !== undefined &&
     profile.overtimeBasis !== 'DAILY' &&
@@ -79,6 +131,7 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
     'paidDayBasis',
     'workingWeekdays',
     'overtimeBasis',
+    'rulesSource',
     ...(profile.basis === 'DAILY' ? ['dailyRate'] : ['referenceDays']),
     ...(profile.paidDayBasis === 'FIXED' ? ['fixedPaidDays'] : []),
   ];
@@ -91,12 +144,29 @@ export function validatePayrollProfile(value: unknown): PayrollProfile | null {
     ...(profile.overtimeBasis !== undefined
       ? { overtimeBasis: profile.overtimeBasis }
       : {}),
+    ...(profile.rulesSource !== undefined
+      ? { rulesSource: profile.rulesSource }
+      : {}),
     ...(profile.paidDayBasis === 'FIXED'
       ? { fixedPaidDays: Number(profile.fixedPaidDays) }
       : {}),
     ...(profile.basis === 'DAILY'
       ? { basis: 'DAILY', dailyRate: Number(profile.dailyRate) }
       : { basis: 'CUTOFF', referenceDays: Number(profile.referenceDays) }),
+  };
+}
+
+export function resolveEffectivePayrollProfile(
+  value: unknown,
+  defaultsValue?: unknown,
+): PayrollProfile | null {
+  const profile = validatePayrollProfile(value);
+  if (!profile || profile.rulesSource !== 'COMPANY') return profile;
+  const defaults = validatePayrollDefaults(defaultsValue);
+  return {
+    ...profile,
+    workingWeekdays: defaults.workingWeekdays,
+    overtimeBasis: defaults.overtimeBasis,
   };
 }
 

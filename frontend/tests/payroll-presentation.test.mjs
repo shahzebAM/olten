@@ -7,6 +7,7 @@ import ts from 'typescript';
 const baseline = JSON.parse(readFileSync(new URL('./fixtures/payroll-ui-baseline.json', import.meta.url), 'utf8'));
 const approved = JSON.parse(readFileSync(new URL('./fixtures/payroll-excel-approval.json', import.meta.url), 'utf8'));
 const restDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-rest-day-approval.json', import.meta.url), 'utf8'));
+const workflowApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-workflow-approval.json', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('../src/modules/PayrollModule.tsx', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const tree = ts.createSourceFile('PayrollModule.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed });
@@ -19,6 +20,10 @@ test('approved rest-day payroll changes chain to the retained Excel and UI basel
   assert.equal(restDayApproved.previousApproval, 'payroll-excel-approval.json');
   assert.equal(restDayApproved.previousNonClassCodeSHA256, approved.nonClassCodeSHA256);
   assert.deepEqual(restDayApproved.scope, ['scheduled-rest-day-pay', 'pay-profile-defaults-and-schedule-warning', 'payroll-rest-day-preview-and-exports']);
+  assert.equal(workflowApproved.parentCommit, 'dbe83568073b9982d5e94b04d1d7041f2b6d5682');
+  assert.equal(workflowApproved.previousApproval, 'payroll-rest-day-approval.json');
+  assert.equal(workflowApproved.previousNonClassCodeSHA256, restDayApproved.nonClassCodeSHA256);
+  assert.deepEqual(workflowApproved.scope, ['employee-details-pay-setup', 'company-payroll-defaults', 'readonly-payroll-computation']);
   const transformed = ts.transform(tree, [context => {
     const visit = node => {
       if (ts.isImportDeclaration(node) && !node.importClause && node.moduleSpecifier.text === './payroll-workspace.css') return undefined;
@@ -28,7 +33,7 @@ test('approved rest-day payroll changes chain to the retained Excel and UI basel
     return node => ts.visitNode(node, visit);
   }]);
   try {
-    assert.equal(hash(printer.printFile(transformed.transformed[0])), restDayApproved.nonClassCodeSHA256);
+    assert.equal(hash(printer.printFile(transformed.transformed[0])), workflowApproved.nonClassCodeSHA256);
   } finally { transformed.dispose(); }
 });
 
@@ -48,6 +53,7 @@ test('payslips include the approved rest-day snapshot breakdown and summary prin
   assert.deepEqual(restDayApproved.previousPrintTemplatesSHA256, approved.printTemplatesSHA256);
   assert.equal(restDayApproved.printTemplatesSHA256['report-print-area'], baseline.printTemplatesSHA256['report-print-area']);
   assert.deepEqual(templates, restDayApproved.printTemplatesSHA256);
+  assert.deepEqual(templates, workflowApproved.printTemplatesSHA256);
 });
 
 test('payroll palette is opt-in and its stylesheet applies only to screen media', () => {

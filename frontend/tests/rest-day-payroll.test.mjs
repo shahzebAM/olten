@@ -26,27 +26,29 @@ const load = (file, dependencies = {}) => {
 const money = load('../../backend/src/employees/payroll-money.ts');
 const calculator = load('../../backend/src/employees/attendance-calculator.ts', { './payroll-money': money });
 const profileHelpers = load('../../backend/src/employees/payroll-profile.ts', { './attendance-calculator': calculator });
+const paySetupHelpers = load('../src/lib/employeePaySetup.ts', { '../../../backend/src/employees/payroll-profile': profileHelpers });
 const ProfileEditor = load('../src/modules/PayrollProfileEditor.tsx', {
   '../../../backend/src/employees/payroll-profile': profileHelpers,
-  '../lib/apiSession': { getApiAuthHeaders: () => ({}) },
+  '../lib/employeePaySetup': paySetupHelpers,
 }).default;
 const employee = { id: 1, company: 'Example', baseRate: 9815, payrollProfile: null };
 const renderProfile = patch => renderToStaticMarkup(React.createElement(ProfileEditor, {
-  employee: { ...employee, ...patch }, API_BASE_URL: 'http://example.invalid',
+  value: paySetupHelpers.createPaySetupDraft(patch?.payrollProfile ?? employee.payrollProfile),
+  baseRate: String(employee.baseRate), companyDefaults: profileHelpers.validatePayrollDefaults(null),
   cutoffStart: '2026-10-11', cutoffEnd: '2026-10-25',
-  onSaved() {}, onDirtyChange() {}, onBusyChange() {},
+  onChange() {}, onBaseRateChange() {},
 }));
 const text = html => html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ');
 
 test('new pay profiles require an agreed daily rate and use scheduled cutoff days', () => {
   const html = renderProfile();
   assert.match(html, /value="DAILY" selected=""/);
-  assert.match(html, /value="SCHEDULED" selected=""/);
+  assert.match(html, /value="COMPANY" selected=""/);
   const dailyRateInput = html.match(/<input\b[^>]*aria-label="Daily rate"[^>]*>/)?.[0];
   assert.ok(dailyRateInput);
   assert.match(dailyRateInput, /value=""/);
   assert.doesNotMatch(dailyRateInput, /value="755"/);
-  assert.match(html, /One-time pay profile setup required/);
+  assert.match(text(html), /save once with employee details/);
 });
 
 test('fixed profiles remain fixed and visibly identify a divisor/calendar mismatch', () => {
@@ -57,7 +59,7 @@ test('fixed profiles remain fixed and visibly identify a divisor/calendar mismat
   assert.match(text(html), /14 required paid days/);
   assert.match(text(html), /₱701\.07 per day/);
   assert.match(text(html), /requires 14 paid days, while this cutoff has 12 scheduled working days/);
-  assert.match(html, /^<details open=""/);
+  assert.match(html, /<details open=""/);
   assert.match(text(html), /Review fixed paid days/);
   assert.match(html, /role="alert"/);
   assert.match(html, /aria-label="Working Sun"/);
@@ -73,7 +75,6 @@ test('the agreed daily profile derives 12 days and preserves the daily rate', ()
   assert.match(text(html), /₱9060\.00 basic pay/);
   assert.doesNotMatch(text(html), /This fixed profile requires/);
   assert.doesNotMatch(text(html), /Review fixed paid days/);
-  assert.doesNotMatch(html, /^<details open=""/);
 });
 
 test('browser calculation keeps rest-day work separate from ordinary cutoff overtime', () => {
@@ -109,7 +110,7 @@ test('a Sunday on the saved working schedule stays ordinary', () => {
 
 test('preview, saved payslips and exports consume rest-day snapshot values', () => {
   const source = readFileSync(new URL('../src/modules/PayrollModule.tsx', import.meta.url), 'utf8');
-  assert.match(source, /workingWeekdays: emp\.payrollProfile\?\.workingWeekdays/);
+  assert.match(source, /workingWeekdays: effectiveProfile\.workingWeekdays/);
   assert.match(source, /label="Ordinary Cutoff Hours"/);
   assert.match(source, /label="Rest Day OT Hours"/);
   assert.match(source, /summary\.restDayPay \?\? 0/);

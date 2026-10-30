@@ -3,12 +3,14 @@ import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { toPng } from 'html-to-image';
 import { APP_ATTENDANCE_POLICY, aggregateAttendanceRecords, attendanceSessionKey, calculateAttendanceMetrics, calculateAttendancePayroll, parseTimeToMinutes, toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
-import { resolvePayrollBasis } from '../../../backend/src/employees/payroll-profile';
+import { resolvePayrollBasis, validatePayrollDefaults } from '../../../backend/src/employees/payroll-profile';
 import { multiplyPayrollCents, toPayrollMoneyCents } from '../../../backend/src/employees/payroll-money';
 import AttendanceEntryGrid from './AttendanceEntryGrid';
-import PayrollProfileEditor from './PayrollProfileEditor';
+import PayrollProfileFields, { SavedEmployeePaySetup } from './PayrollProfileEditor';
 import type { PayrollProfileEmployee } from './PayrollProfileEditor';
-import type { PayrollProfile } from '../../../backend/src/employees/payroll-profile';
+import CompanyPayrollSetup from './CompanyPayrollSetup';
+import type { PayrollDefaults, PayrollProfile } from '../../../backend/src/employees/payroll-profile';
+import { buildEmployeePaySetup, createPaySetupDraft, effectiveEmployeePayProfile } from '../lib/employeePaySetup';
 import { getCutoffDates, getInitialCutoff, moveCutoff } from '../lib/attendanceEntry';
 import type { AttendanceEntryRecord as AttendanceRecord, CutoffSelection } from '../lib/attendanceEntry';
 import { getApiAuthHeaders } from '../lib/apiSession';
@@ -178,7 +180,6 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
     <hr className="border-t border-slate-200 my-5 sm:my-6" />
 
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-      <InputField required type="number" step="0.01" label="Base Salary per Cutoff (₱)" placeholder="0.00" value={formData.baseRate} onChange={handleChange('baseRate', 'standard')} />
       <div className="flex flex-col gap-1.5 w-full">
         <label className="text-sm font-medium text-slate-600">Employment Status <span className="text-blue-600">*</span></label>
         <div className="relative">
@@ -218,6 +219,13 @@ const EmployeeFormFields = ({ formData, handleChange }: any) => (
 // ==========================================
 // 3. INTERFACES 
 // ==========================================
+
+const initialFormState = {
+  employeeId: '', firstName: '', middleName: '', lastName: '', dateOfBirth: '',
+  civilStatus: 'Single', address: '', employmentStatus: 'Probationary',
+  baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: '',
+  cashAdvanceBalance: '', cashAdvanceInstallment: '', loanBalance: '', loanInstallment: ''
+};
 
 interface Employee {
   id: number;
@@ -311,7 +319,10 @@ interface PayrollPreview {
   source: { fetchedAt: string; attendanceDateCount: number; workedDateCount: number; paidLeaveDateCount: number; unpaidLeaveDateCount: number; sessionCount: number };
   configurationRequired: boolean;
   previewFingerprint: string;
+  companyPayrollDefaults?: PayrollDefaults;
 }
+
+type CompanyPaySetupState = { company: string; saved: PayrollDefaults | null; draft: PayrollDefaults | null; configured: boolean; loading: boolean; saving: boolean; error: string };
 
 interface SummaryReportRow {
   emp: Employee;
@@ -335,7 +346,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'setup'>('dashboard');
   const [attendanceDirty, setAttendanceDirty] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
   const [attendanceRefreshVersion, setAttendanceRefreshVersion] = useState(0);
@@ -350,10 +361,14 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [previewRevision, setPreviewRevision] = useState(0);
-  const [profileDirty, setProfileDirty] = useState(false);
-  const [profileBusy, setProfileBusy] = useState(false);
   const [payrollUnconfirmed, setPayrollUnconfirmed] = useState(false);
   const payrollSaveLock = useRef(false);
+  const employeeSaveLock = useRef<number | null>(null);
+  const workspaceVersion = useRef(0);
+  const [defaultsReloadVersion, setDefaultsReloadVersion] = useState(0);
+  const [companyPaySetup, setCompanyPaySetup] = useState<CompanyPaySetupState>({ company: selectedCompany, saved: null, draft: null, configured: false, loading: true, saving: false, error: '' });
+  const companyDefaults = companyPaySetup.company === selectedCompany && !companyPaySetup.loading && !companyPaySetup.error ? companyPaySetup.saved : null;
+  const companyDefaultsDirty = companyPaySetup.company === selectedCompany && JSON.stringify(companyPaySetup.draft) !== JSON.stringify(companyPaySetup.saved);
 
 const [payrollActiveSearchQuery, setPayrollActiveSearchQuery] = useState('');
   const [payrollHistorySearchQuery, setPayrollHistorySearchQuery] = useState('');
@@ -448,13 +463,11 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   const [lunchStart, setLunchStart] = useState('12:00');
   const [lunchEnd, setLunchEnd] = useState('13:00');
 
-  const initialFormState = {
-    employeeId: '', firstName: '', middleName: '', lastName: '', dateOfBirth: '', 
-    civilStatus: 'Single', address: '', employmentStatus: 'Probationary', 
-    baseRate: '', bankAccount: '', tin: '', sssNumber: '', philhealth: '', pagIbig: '',
-    cashAdvanceBalance: '', cashAdvanceInstallment: '', loanBalance: '', loanInstallment: ''
-  };
   const [formData, setFormData] = useState(initialFormState);
+  const [paySetup, setPaySetup] = useState(() => createPaySetupDraft());
+  const [existingBaseRate, setExistingBaseRate] = useState<number | null>(null);
+  const [employeeFormBaseline, setEmployeeFormBaseline] = useState(() => JSON.stringify({ formData: initialFormState, paySetup: createPaySetupDraft() }));
+  const employeeFormDirty = JSON.stringify({ formData, paySetup }) !== employeeFormBaseline;
 
   const [payrollData, setPayrollData] = useState({
     daysWorked: '14', cashAdvance: '', companyLoan: '', sss: '', pagIbig: '', philhealth: '', isDeclared: false,
@@ -473,17 +486,48 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   ]);
 
   useEffect(() => {
+    workspaceVersion.current += 1;
+    setIsSaving(false);
+    setEmployees([]); setAttendances([]); setPayrolls([]);
+    setIsEditModalOpen(false); setIsPayrollModalOpen(false); setActiveEmployee(null); setPayrollPreview(null);
+    setIsSaving(false);
+    setEditingId(null); setExistingBaseRate(null);
+    setFormData(initialFormState); setPaySetup(createPaySetupDraft());
+    setEmployeeFormBaseline(JSON.stringify({ formData: initialFormState, paySetup: createPaySetupDraft() }));
     fetchEmployees();
     fetchAttendances();
     fetchPayrolls();
     fetchSettings();
+    return () => { workspaceVersion.current += 1; };
   }, [selectedCompany]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const company = selectedCompany;
+    setCompanyPaySetup(current => current.company === company ? { ...current, loading: true, error: '' } : { company, saved: null, draft: null, configured: false, loading: true, saving: false, error: '' });
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/employees/payroll/defaults`, { cache: 'no-store', headers: { ...getApiAuthHeaders(), 'x-company': company }, signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok) throw new Error(typeof result.message === 'string' ? result.message : 'Company payroll defaults could not be loaded.');
+        if (result.company !== company || !result.defaults || typeof result.configured !== 'boolean') throw new Error('The server did not confirm this company’s payroll defaults.');
+        const defaults = validatePayrollDefaults(result.defaults);
+        if (controller.signal.aborted) return;
+        setCompanyPaySetup(current => current.company !== company ? current : { ...current, saved: defaults, draft: JSON.stringify(current.draft) !== JSON.stringify(current.saved) ? current.draft : defaults, configured: result.configured, loading: false, error: '' });
+      } catch (error) {
+        if (!controller.signal.aborted) setCompanyPaySetup(current => current.company !== company ? current : { ...current, loading: false, error: error instanceof Error ? error.message : 'Company payroll defaults could not be loaded.' });
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedCompany, API_BASE_URL, defaultsReloadVersion]);
+
   const fetchSettings = async () => {
+    const scope = workspaceVersion.current;
     try {
       const response = await fetch(`${API_BASE_URL}/settings?company=${encodeURIComponent(selectedCompany)}`, { headers: { ...getApiAuthHeaders(), 'x-company': selectedCompany } });
-      if (response.ok) {
+      if (response.ok && scope === workspaceVersion.current) {
         const data = await response.json();
+        if (scope !== workspaceVersion.current) return;
         const settingsObj = Array.isArray(data) ? data[0] : data;
         setLunchStart(settingsObj?.lunchStart || '12:00');
         setLunchEnd(settingsObj?.lunchEnd || '13:00');
@@ -501,28 +545,34 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
   };
 
   const fetchEmployees = async () => {
+    const scope = workspaceVersion.current;
     try {
       const response = await fetch(`${API_BASE_URL}/employees?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
+      if (scope !== workspaceVersion.current) return;
       setEmployees(Array.isArray(data) ? data : (data.data || []));
-    } catch (error) { showToast("Could not fetch employees.", "error"); }
+    } catch { if (scope === workspaceVersion.current) showToast("Could not fetch employees.", "error"); }
   };
 
   const fetchAttendances = async () => {
+    const scope = workspaceVersion.current;
     try {
       const response = await fetch(`${API_BASE_URL}/employees/attendance/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
+      if (scope !== workspaceVersion.current) return;
       setAttendances(Array.isArray(data) ? data : (data.data || []));
     } catch (error) { console.error(error); }
   };
 
   const fetchPayrolls = async () => {
+    const scope = workspaceVersion.current;
     try {
       const response = await fetch(`${API_BASE_URL}/employees/payroll/all?company=${encodeURIComponent(selectedCompany)}&limit=5000`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', ...getApiAuthHeaders(), 'x-company': selectedCompany } });
       if (!response.ok) throw new Error();
       const data = await response.json();
+      if (scope !== workspaceVersion.current) return;
       setPayrolls(Array.isArray(data) ? data : (data.data || []));
     } catch (error) { console.error(error); }
   };
@@ -532,6 +582,7 @@ const [tempShiftStart, setTempShiftStart] = useState('08:00');
     showToast("Syncing with database...", "success");
     try {
       await Promise.all([ fetchEmployees(), fetchAttendances(), fetchPayrolls() ]);
+      setDefaultsReloadVersion(version => version + 1);
       showToast("Data is completely up to date!", "success");
     } catch (e) { showToast("Failed to refresh data from server.", "error"); } 
     finally { setIsSaving(false); }
@@ -623,6 +674,17 @@ const toCents = (val: any): number => {
   };
 
   const canLeaveAttendance = () => {
+    if (isEditModalOpen || activeTab === 'add') {
+      if (isSaving) { showToast('Please wait for employee details to finish saving.', 'error'); return false; }
+      if (employeeFormDirty && !window.confirm('Discard unsaved employee details and pay setup?')) return false;
+    }
+    if (activeTab === 'setup') {
+      if (companyPaySetup.saving) { showToast('Please wait for company payroll defaults to finish saving.', 'error'); return false; }
+      if (companyDefaultsDirty) {
+        if (!window.confirm('Discard unsaved company payroll defaults?')) return false;
+        setCompanyPaySetup(current => ({ ...current, draft: current.saved }));
+      }
+    }
     if (activeTab !== 'attendance') return true;
     if (attendanceBusy || isSaving) {
       showToast('Please wait for the attendance operation to finish.', 'error');
@@ -640,6 +702,54 @@ const toCents = (val: any): number => {
     setIsMobileMenuOpen(false);
     return true;
   };
+
+  const beginNewEmployee = () => {
+    if (activeTab === 'add' && !canLeaveAttendance()) return;
+    if (!changeTab('add')) return;
+    const nextPaySetup = createPaySetupDraft();
+    setFormData(initialFormState); setPaySetup(nextPaySetup);
+    setExistingBaseRate(null); setEditingId(null);
+    setEmployeeFormBaseline(JSON.stringify({ formData: initialFormState, paySetup: nextPaySetup }));
+  };
+
+  const closeEmployeeModal = () => {
+    if (isSaving) return;
+    if (employeeFormDirty && !window.confirm('Discard unsaved employee details and pay setup?')) return;
+    setIsEditModalOpen(false);
+  };
+
+  const saveCompanyPayrollDefaults = async () => {
+    if (!companyPaySetup.draft || companyPaySetup.loading || companyPaySetup.error || companyPaySetup.saving) return;
+    const scope = workspaceVersion.current;
+    const company = selectedCompany;
+    let defaults: PayrollDefaults;
+    try { defaults = validatePayrollDefaults(companyPaySetup.draft); }
+    catch (error) { showToast(error instanceof Error ? error.message : 'Check company payroll defaults.', 'error'); return; }
+    setCompanyPaySetup(current => ({ ...current, saving: true }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/employees/payroll/defaults`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': company }, body: JSON.stringify({ defaults }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.message === 'string' ? result.message : 'Company payroll defaults could not be saved.');
+      if (result.company !== company || !result.defaults || result.configured !== true) throw new Error('The server did not confirm the company payroll defaults.');
+      const saved = validatePayrollDefaults(result.defaults);
+      if (scope !== workspaceVersion.current) return;
+      setCompanyPaySetup({ company, saved, draft: saved, configured: true, loading: false, saving: false, error: '' });
+      setPreviewRevision(version => version + 1);
+      showToast('Company payroll defaults saved. Employee wages and individual rules are preserved.', 'success');
+    } catch (error) {
+      if (scope === workspaceVersion.current) {
+        setCompanyPaySetup(current => ({ ...current, saving: false }));
+        showToast(error instanceof Error ? error.message : 'Company payroll defaults could not be saved.', 'error');
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!((isEditModalOpen || activeTab === 'add') && (employeeFormDirty || isSaving)) && !(activeTab === 'setup' && (companyDefaultsDirty || companyPaySetup.saving))) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isEditModalOpen, activeTab, employeeFormDirty, companyDefaultsDirty, isSaving, companyPaySetup.saving]);
 
   const exportToCSV = (filename: string, headers: string[], data: any[][]) => {
     const csvContent = [headers.join(','), ...data.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
@@ -933,9 +1043,14 @@ const toCents = (val: any): number => {
 
   const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim() || !formData.baseRate) {
+    const scope = workspaceVersion.current;
+    if (employeeSaveLock.current === scope) return;
+    if (!formData.employeeId.trim() || !formData.firstName.trim() || !formData.lastName.trim() || !formData.dateOfBirth || !formData.address.trim()) {
       showToast("All core employee details (including Employee ID) must be filled out.", "error"); return;
     }
+    let savedPaySetup: ReturnType<typeof buildEmployeePaySetup>;
+    try { savedPaySetup = buildEmployeePaySetup(paySetup, formData.baseRate, existingBaseRate, companyDefaults); }
+    catch (error) { showToast(error instanceof Error ? error.message : 'Complete the employee pay setup.', 'error'); return; }
 
     const empIdToCheck = formData.employeeId.trim().toLowerCase();
     const isDuplicate = employees.find(emp => 
@@ -949,12 +1064,13 @@ const toCents = (val: any): number => {
         return;
     }
 
+    employeeSaveLock.current = scope;
     setIsSaving(true);
     const payload = {
       ...formData, 
       employeeId: formData.employeeId.trim(), 
       company: selectedCompany, 
-      baseRate: parseFloat(formData.baseRate), dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+      ...savedPaySetup, dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       middleName: formData.middleName?.trim() || null, 
       bankAccount: formData.bankAccount?.trim() || null, 
       tin: formData.tin?.trim() || null,
@@ -975,15 +1091,22 @@ const toCents = (val: any): number => {
       if (!response.ok) { 
         const errorData = await response.json().catch(() => ({}));
         showToast(errorData.message || "Failed to save. Employee ID or Govt ID already exists.", "error"); 
-        setIsSaving(false); 
         return; 
       }
-      
+      const savedEmployee = await response.json();
+      if (savedEmployee.company !== selectedCompany || !Number.isSafeInteger(savedEmployee.id) || !savedEmployee.payrollProfile) throw new Error('The server did not confirm employee details and pay setup.');
+      if (scope !== workspaceVersion.current) return;
+      setActiveEmployee(current => current?.id === savedEmployee.id ? { ...current, ...savedEmployee } : current);
+      setEmployees(current => current.map(employee => employee.id === savedEmployee.id ? { ...employee, ...savedEmployee } : employee));
+      setEmployeeFormBaseline(JSON.stringify({ formData, paySetup }));
+      setPreviewRevision(version => version + 1);
       await fetchEmployees();
+      if (scope !== workspaceVersion.current) return;
       setIsEditModalOpen(false);
       showToast(editingId ? "Successfully updated employee!" : "Successfully registered employee!", "success");
-      if (!editingId) { setFormData(initialFormState); changeTab('list'); }
-    } catch (error) { showToast("Network Error. Cannot connect to backend.", "error"); } finally { setIsSaving(false); }
+      if (!editingId) setActiveTab('list');
+    } catch (error) { if (scope === workspaceVersion.current) showToast(error instanceof Error ? error.message : 'Employee details could not be saved.', 'error'); }
+    finally { if (employeeSaveLock.current === scope) employeeSaveLock.current = null; if (scope === workspaceVersion.current) setIsSaving(false); }
   };
 
   const deleteEmployee = async (id: number) => {
@@ -997,7 +1120,7 @@ const toCents = (val: any): number => {
   };
 
   const openEditModal = (emp: Employee) => {
-    setFormData({
+    const nextFormData = {
       employeeId: emp.employeeId || '', 
       firstName: emp.firstName, middleName: emp.middleName || '', lastName: emp.lastName,
       dateOfBirth: emp.dateOfBirth ? emp.dateOfBirth.split('T')[0] : '', civilStatus: emp.civilStatus,
@@ -1008,7 +1131,10 @@ const toCents = (val: any): number => {
       cashAdvanceInstallment: emp.cashAdvanceInstallment ? emp.cashAdvanceInstallment.toString() : '',
       loanBalance: emp.loanBalance ? emp.loanBalance.toString() : '',
       loanInstallment: emp.loanInstallment ? emp.loanInstallment.toString() : ''
-    });
+    };
+    const nextPaySetup = createPaySetupDraft(emp.payrollProfile);
+    setFormData(nextFormData); setPaySetup(nextPaySetup); setExistingBaseRate(emp.baseRate);
+    setEmployeeFormBaseline(JSON.stringify({ formData: nextFormData, paySetup: nextPaySetup }));
     setEditingId(emp.id); setIsEditModalOpen(true); 
   };
 
@@ -1069,6 +1195,7 @@ const toCents = (val: any): number => {
         if (controller.signal.aborted) return;
         setPayrollPreview({ data: result, requestKey: previewKey });
         setActiveEmployee(current => current?.id === result.employee.id ? { ...current, ...result.employee } : current);
+        setEmployees(current => current.map(employee => employee.id === result.employee.id ? { ...employee, ...result.employee } : employee));
       } catch (error) {
         if (!controller.signal.aborted) setPreviewError(error instanceof Error ? error.message : 'Payroll preview could not be refreshed.');
       } finally { if (!controller.signal.aborted) setPreviewBusy(false); }
@@ -1090,25 +1217,18 @@ const toCents = (val: any): number => {
   } : null;
   const previewReady = !!computed && payrollPreview?.requestKey === previewKey && !previewBusy && !previewError;
   useEffect(() => {
-    if (!isPayrollModalOpen || (!profileDirty && !isSaving)) return;
+    if (!isPayrollModalOpen || !isSaving) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [isPayrollModalOpen, profileDirty, isSaving]);
+  }, [isPayrollModalOpen, isSaving]);
   const closePayrollModal = () => {
-    if (payrollSaveLock.current || profileBusy) { showToast('Please wait for the payroll operation to finish.', 'error'); return; }
-    if (profileDirty && !window.confirm('Discard unsaved pay profile edits?')) return;
+    if (payrollSaveLock.current) { showToast('Please wait for the payroll operation to finish.', 'error'); return; }
     if (payrollUnconfirmed) { void fetchPayrolls(); void fetchEmployees(); }
     setIsPayrollModalOpen(false);
   };
-  const profileSaved = (updated: PayrollProfileEmployee) => {
-    setActiveEmployee(current => current?.id === updated.id ? { ...current, ...updated } : current);
-    setEmployees(current => current.map(employee => employee.id === updated.id ? { ...employee, ...updated } : employee));
-    setPreviewRevision(version => version + 1);
-  };
-
   const savePayrollToDatabase = async () => {
-    if (!activeEmployee || !computed || !payrollRequest || !previewReady || savedPreview?.configurationRequired || profileDirty || profileBusy || payrollSaveLock.current || payrollUnconfirmed) return;
+    if (!activeEmployee || !computed || !payrollRequest || !previewReady || savedPreview?.configurationRequired || payrollSaveLock.current || payrollUnconfirmed) return;
     payrollSaveLock.current = true;
     setIsSaving(true);
     const payload = {
@@ -1222,7 +1342,7 @@ const toCents = (val: any): number => {
 
   const getPageTitle = () => {
     switch(activeTab) {
-      case 'dashboard': return 'System Overview'; case 'list': return 'Personnel Directory'; case 'add': return 'Register Employee'; case 'attendance': return 'Attendance Logs'; case 'payroll': return 'Payroll Engine'; case 'tax': return 'Tax Reports'; case 'report': return 'Summary Reports'; default: return 'Admin Panel';
+      case 'dashboard': return 'System Overview'; case 'list': return 'Personnel Directory'; case 'add': return 'Register Employee'; case 'attendance': return 'Attendance Logs'; case 'payroll': return 'Payroll Engine'; case 'tax': return 'Tax Reports'; case 'report': return 'Summary Reports'; case 'setup': return 'Payroll Setup'; default: return 'Admin Panel';
     }
   };
 
@@ -1260,16 +1380,18 @@ const toCents = (val: any): number => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm print-hidden">
           <div className="payroll-edit-dialog bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="flex justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 shrink-0">
-              <h2 className="text-lg sm:text-xl font-bold text-blue-950">Edit Employee Record</h2>
-              <button type="button" onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors">✕</button>
+              <h2 className="text-lg sm:text-xl font-bold text-blue-950">Employee Details & Pay Setup</h2>
+              <button type="button" aria-label="Close employee details" onClick={closeEmployeeModal} disabled={isSaving} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors">✕</button>
             </div>
             <form onSubmit={handleSubmitEmployee} className="flex flex-col flex-1 overflow-hidden">
-              <div className="overflow-y-auto p-4 sm:p-6 flex-1 space-y-6">
+              <fieldset disabled={isSaving} className="overflow-y-auto p-4 sm:p-6 flex-1 space-y-6">
                 <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
-              </div>
+                <PayrollProfileFields value={paySetup} onChange={setPaySetup} baseRate={formData.baseRate} onBaseRateChange={value => setFormData(current => ({ ...current, baseRate: value }))} companyDefaults={companyDefaults} defaultsError={companyPaySetup.error} cutoffStart={payrollStartDate} cutoffEnd={payrollEndDate} />
+                {paySetup.rulesSource === 'COMPANY' && !companyDefaults && <button type="button" onClick={() => setDefaultsReloadVersion(version => version + 1)} className="text-sm font-semibold text-green-700 underline">Retry company payroll defaults</button>}
+              </fieldset>
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 p-4 sm:p-5 border-t border-slate-200 bg-slate-50/80 shrink-0">
-                <button type="button" onClick={() => setIsEditModalOpen(false)} className="w-full sm:w-auto py-2.5 px-6 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-100 transition-colors text-sm sm:text-base shadow-sm">Cancel</button>
-                <button type="submit" disabled={isSaving} className="w-full sm:w-auto py-2.5 px-8 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base">{isSaving ? "Saving..." : "Save Changes"}</button>
+                <button type="button" onClick={closeEmployeeModal} disabled={isSaving} className="w-full sm:w-auto py-2.5 px-6 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-100 transition-colors text-sm sm:text-base shadow-sm">Cancel</button>
+                <button type="submit" disabled={isSaving || (paySetup.rulesSource === 'COMPANY' && !companyDefaults)} className="w-full sm:w-auto py-2.5 px-8 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-semibold shadow-sm transition-colors disabled:opacity-50 text-sm sm:text-base">{isSaving ? "Saving..." : "Save Employee & Pay Setup"}</button>
               </div>
             </form>
           </div>
@@ -1398,13 +1520,16 @@ const toCents = (val: any): number => {
             </div>
             <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
               <fieldset disabled={isSaving || payrollUnconfirmed} className="min-w-0 space-y-3">
-                <PayrollProfileEditor key={activeEmployee.id} employee={activeEmployee} API_BASE_URL={API_BASE_URL} cutoffStart={payrollStartDate} cutoffEnd={payrollEndDate} onSaved={profileSaved} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} />
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <SavedEmployeePaySetup employee={activeEmployee} effectiveProfile={summary?.payrollProfile} />
+                  <button type="button" disabled={isSaving || payrollUnconfirmed} onClick={() => { setIsPayrollModalOpen(false); openEditModal(activeEmployee); }} className="mt-2 text-sm font-semibold text-green-700 underline disabled:opacity-50">Open Employee Details</button>
+                </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600" role="status">
                   {previewError || (previewReady ? `Server confirmed · ${savedPreview?.source.workedDateCount} dates worked · ${savedPreview?.source.paidLeaveDateCount} paid leave · ${savedPreview?.source.unpaidLeaveDateCount} unpaid leave · ${savedPreview?.source.sessionCount} saved sessions` : 'Refreshing payroll preview…')}
                   {payrollUnconfirmed && <p className="mt-1 text-rose-700">Check the payroll ledger before creating another payroll for this cutoff.</p>}
-                  <button type="button" disabled={isSaving || profileBusy} onClick={() => setPreviewRevision(version => version + 1)} className="ml-2 font-semibold text-indigo-600 disabled:opacity-50">Refresh Preview</button>
+                  <button type="button" disabled={isSaving} onClick={() => setPreviewRevision(version => version + 1)} className="ml-2 font-semibold text-indigo-600 disabled:opacity-50">Refresh Preview</button>
                 </div>
-                {savedPreview?.configurationRequired && <p className="text-xs text-amber-700">Complete the one-time pay profile before saving payroll. Required days and rates will then be calculated automatically.</p>}
+                {savedPreview?.configurationRequired && <p className="text-xs text-amber-700">Open Employee Details and save the agreed wage once before saving payroll. Future cutoffs load the saved pay setup automatically.</p>}
                 {!savedPreview?.configurationRequired && <p className="text-xs text-slate-500">{summary?.overtimeBasis === 'CUTOFF_NET' ? 'Ordinary cutoff balance: overtime starts above the required ordinary hours; shortages are deducted at the normal hourly rate. Rest-day work is paid separately.' : 'Daily overtime: ordinary workday overtime and shortfalls are calculated separately. Rest-day work has its own rates.'}</p>}
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-4 gap-2 sm:gap-3">
@@ -1509,7 +1634,7 @@ const toCents = (val: any): number => {
                   <p className="text-3xl font-mono font-bold break-all">₱{computed.netPay.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
                 </div>
 
-                <button onClick={savePayrollToDatabase} disabled={isSaving || !previewReady || profileDirty || profileBusy || savedPreview?.configurationRequired || payrollUnconfirmed} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
+                <button onClick={savePayrollToDatabase} disabled={isSaving || !previewReady || savedPreview?.configurationRequired || payrollUnconfirmed} className="mt-3 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl font-bold shadow-sm transition-colors text-sm shrink-0">
                   {isSaving ? "Saving..." : "Close & Save"}
                 </button>
               </div>
@@ -1620,13 +1745,14 @@ const toCents = (val: any): number => {
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Personnel</div>
           <button onClick={() => { changeTab('list'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Directory List</button>
-          <button onClick={() => { if (changeTab('add')) setFormData(initialFormState); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Register New</button>
+          <button onClick={beginNewEmployee} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'add' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Register New</button>
           <button onClick={() => { changeTab('attendance'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'attendance' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Log Attendance</button>
           
           <div className="px-3 pt-6 pb-2 text-xs font-bold text-slate-500 uppercase tracking-widest">Finance</div>
           <button onClick={() => { changeTab('payroll'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'payroll' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Compute Payroll</button>
           <button onClick={() => { changeTab('tax'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'tax' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Tax Reports</button>
           <button onClick={() => { changeTab('report'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'report' ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Summary Reports</button>
+          <button onClick={() => { changeTab('setup'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all font-semibold text-sm ${activeTab === 'setup' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>Payroll Setup</button>
         </div>
       </aside>
 
@@ -1703,7 +1829,8 @@ const toCents = (val: any): number => {
                     <div className="space-y-3">
                       <button onClick={() => changeTab('attendance')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 transition-all">Log Today's Attendance</button>
                       <button onClick={() => changeTab('payroll')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-slate-700 transition-all">Process New Payroll</button>
-                      <button onClick={() => { if (changeTab('add')) setFormData(initialFormState); }} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 transition-all">Register New Employee</button>
+                      <button onClick={beginNewEmployee} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 transition-all">Register New Employee</button>
+                      <button onClick={() => changeTab('setup')} className="w-full text-left font-bold p-4 rounded-xl border border-slate-200 hover:border-green-300 hover:bg-green-50 text-slate-700 transition-all">Company Payroll Defaults</button>
                     </div>
                   </div>
 
@@ -1755,12 +1882,12 @@ const toCents = (val: any): number => {
                             </td>
                             <td className="py-4 px-6 align-top pt-5"><span className={`inline-flex px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide ring-1 ring-inset ${getStatusStyle(emp.employmentStatus)}`}>{emp.employmentStatus}</span></td>
                             <td className="py-4 px-6 align-top pt-5">
-                              <div className="font-bold text-blue-950">₱{Number(emp.baseRate).toLocaleString()}</div>
+                              <div className="font-bold text-blue-950">₱{Number(emp.payrollProfile?.basis === 'DAILY' ? emp.payrollProfile.dailyRate : emp.baseRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-normal text-slate-500">/ {emp.payrollProfile?.basis === 'DAILY' ? 'day' : 'cutoff'}</span></div>
                               <div className="text-xs font-mono text-slate-500 mt-1">Acct: {emp.bankAccount || '--'}</div>
                             </td>
                             <td className="py-4 px-6 align-top pt-4 text-xs font-mono text-slate-600 space-y-1.5"><p>TIN: {emp.tin || '--'}</p><p>SSS: {emp.sssNumber || '--'}</p></td>
                             <td className="py-4 px-6 align-top pt-5 text-right">
-                              <button onClick={() => openEditModal(emp)} className="text-blue-600 hover:underline text-xs font-bold uppercase mr-4">Edit</button>
+                              <button onClick={() => openEditModal(emp)} className="text-blue-600 hover:underline text-xs font-bold uppercase mr-4">Employee Details</button>
                               <button onClick={() => deleteEmployee(emp.id)} className="text-red-500 hover:underline text-xs font-bold uppercase">Delete</button>
                             </td>
                           </tr>
@@ -1850,18 +1977,20 @@ const toCents = (val: any): number => {
                             const totalLogged = payrollAttendance.netMinutes / 60;
                             let tableOtLogged: number | null = null;
                             try {
-                              const basis = emp.payrollProfile ? resolvePayrollBasis(emp.payrollProfile, emp.baseRate, payrollStartDate, payrollEndDate) : null;
+                              const effectiveProfile = effectiveEmployeePayProfile(emp.payrollProfile, companyDefaults);
+                              if (!effectiveProfile) throw new Error('Employee pay setup is required.');
+                              const basis = resolvePayrollBasis(effectiveProfile, emp.baseRate, payrollStartDate, payrollEndDate);
                               const payrollCalculation = calculateAttendancePayroll(attendances, {
                                 ...APP_ATTENDANCE_POLICY,
                                 employeeId: emp.id, startDate: payrollStartDate, endDate: payrollEndDate,
                                 shiftStart, shiftEnd, lunchStart, lunchEnd,
-                                daysWorked: basis?.paidDays ?? 14, basicSalary: basis?.basicSalary ?? emp.baseRate,
-                                ratePerDay: basis?.ratePerDay, overtimeBasis: emp.payrollProfile?.overtimeBasis ?? 'CUTOFF_NET',
-                                workingWeekdays: emp.payrollProfile?.workingWeekdays,
-                                ...(emp.payrollProfile?.basis === 'CUTOFF' ? { payRateSource: { amount: emp.baseRate, days: emp.payrollProfile.referenceDays } } : {}),
+                                daysWorked: basis.paidDays, basicSalary: basis.basicSalary,
+                                ratePerDay: basis.ratePerDay, overtimeBasis: effectiveProfile.overtimeBasis ?? 'CUTOFF_NET',
+                                workingWeekdays: effectiveProfile.workingWeekdays,
+                                ...(effectiveProfile.basis === 'CUTOFF' ? { payRateSource: { amount: emp.baseRate, days: effectiveProfile.referenceDays } } : {}),
                               });
                               tableOtLogged = payrollCalculation.totalOvertimeMinutes / 60;
-                            } catch { /* Invalid saved profiles require review in Compute Salary. */ }
+                            } catch { /* Missing rules require Employee Details; no guessed rate or paid days. */ }
 
                             return (
                               <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
@@ -2331,12 +2460,27 @@ const toCents = (val: any): number => {
             )}
 
             {/* REGISTER TAB */}
+            {activeTab === 'setup' && <CompanyPayrollSetup
+              company={selectedCompany} value={companyPaySetup.company === selectedCompany ? companyPaySetup.draft : null}
+              configured={companyPaySetup.company === selectedCompany && companyPaySetup.configured}
+              loading={companyPaySetup.company !== selectedCompany || companyPaySetup.loading} saving={companyPaySetup.saving}
+              dirty={companyDefaultsDirty} error={companyPaySetup.company === selectedCompany ? companyPaySetup.error : ''}
+              inheritedCount={employees.filter(employee => employee.company === selectedCompany && employee.payrollProfile?.rulesSource === 'COMPANY').length}
+              individualCount={employees.filter(employee => employee.company === selectedCompany && employee.payrollProfile && employee.payrollProfile.rulesSource !== 'COMPANY').length}
+              onChange={draft => setCompanyPaySetup(current => ({ ...current, draft }))}
+              onSave={() => void saveCompanyPayrollDefaults()} onRetry={() => setDefaultsReloadVersion(version => version + 1)}
+              onReset={() => setCompanyPaySetup(current => ({ ...current, draft: current.saved }))}
+            />}
             {activeTab === 'add' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8">
                 <h2 className="text-xl font-bold text-blue-950 tracking-tight mb-8">201 Personnel Registration</h2>
                 <form onSubmit={handleSubmitEmployee} className="flex flex-col gap-6">
-                  <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
-                  <button type="submit" disabled={isSaving} className={`mt-4 w-full py-3.5 px-4 rounded-xl font-semibold text-white bg-blue-700 hover:bg-blue-800 transition-colors shadow-sm`}>
+                  <fieldset disabled={isSaving} className="space-y-6">
+                    <EmployeeFormFields formData={formData} handleChange={handleFormattedChange} />
+                    <PayrollProfileFields value={paySetup} onChange={setPaySetup} baseRate={formData.baseRate} onBaseRateChange={value => setFormData(current => ({ ...current, baseRate: value }))} companyDefaults={companyDefaults} defaultsError={companyPaySetup.error} cutoffStart={payrollStartDate} cutoffEnd={payrollEndDate} />
+                    {paySetup.rulesSource === 'COMPANY' && !companyDefaults && <button type="button" onClick={() => setDefaultsReloadVersion(version => version + 1)} className="text-sm font-semibold text-green-700 underline">Retry company payroll defaults</button>}
+                  </fieldset>
+                  <button type="submit" disabled={isSaving || (paySetup.rulesSource === 'COMPANY' && !companyDefaults)} className={`mt-4 w-full py-3.5 px-4 rounded-xl font-semibold text-white bg-blue-700 hover:bg-blue-800 transition-colors shadow-sm disabled:opacity-50`}>
                     {isSaving ? 'Registering...' : 'Register Employee to Directory'}
                   </button>
                 </form>

@@ -1,0 +1,27 @@
+{
+  "parentCommit": "dbe83568073b9982d5e94b04d1d7041f2b6d5682",
+  "previousApproval": "payroll-rest-day-approval.json",
+  "approvedOn": "2026-10-30",
+  "scope": [
+    "employee-details-pay-setup",
+    "company-payroll-defaults",
+    "readonly-payroll-computation"
+  ],
+  "authorization": "User approved moving one-time agreed pay setup to Employee Details, company payroll defaults with explicit employee exceptions, and automatic read-only pay rules in Compute Payroll. Existing saved payrolls and approved arithmetic remain unchanged.",
+  "previousNonClassCodeSHA256": "715b645f30d87f714f6bd80452c371df8b930e41b3be72f8b3a149c50633d58b",
+  "nonClassCodeSHA256": "e7b1fac839c8b4cc99bae59f5fe3e1ffdf6ddd40bd03e740e16af9f2ba6c8ecb",
+  "previousProfileEditorSHA256": "A2F446715F50493966D4BA7AC4C1B3574C2CC531438ECA0C5700FC1508966D63",
+  "profileEditorSHA256": "8D0EDA162599997E5ECA12A9FB06EB51EE03CD8761A1D2021ADE5C37A4E700BE",
+  "previousProfileHelpersSHA256": "4730562F05019E8910B94C826E2587862223A7B5F05041AE81DA7B17DD5A4260",
+  "profileHelpersSHA256": "C1AE477F64EF1858EEED4BFEBD546080243596D60B727332DFEB92E64B35B293",
+  "basisResolverSHA256": "349f2aecb38285e261ee6e95f07af236194ed9026d84bbd6ee9b695f525a0e07",
+  "addedSettingsField": {
+    "model": "Settings",
+    "name": "payrollDefaults",
+    "type": "Json?"
+  },
+  "printTemplatesSHA256": {
+    "payslip-print-area": "45f21a5183255ebcfc05c723381c91deb9d3501f317e29055d76860acb84ee11",
+    "report-print-area": "df036fb72dbe68cdaa579a1886b558a687789ea339593686592e6188476742a3"
+  }
+}
