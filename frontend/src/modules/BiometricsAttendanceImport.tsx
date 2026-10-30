@@ -4,7 +4,6 @@ import { getApiAuthHeaders } from '../lib/apiSession';
 import { readBiometricsFile } from '../lib/biometricsWorkbook';
 
 type Props = { selectedCompany: string; API_BASE_URL: string; disabled: boolean; onBusyChange: (busy: boolean) => void; onImported: () => Promise<void> };
-type ImportMode = 'replace' | 'append';
 type ReplacementDay = {
   employeeId: number; personnelId: string; date: string; status: 'replace' | 'unchanged' | 'blocked';
   before: Array<{ id: number; timeIn: string; timeOut: string }>;
@@ -22,7 +21,6 @@ const PAGE_SIZE = 50;
 export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_URL, disabled, onBusyChange, onImported }: Props) {
   const [rows, setRows] = useState<RawBiometricPunch[]>([]);
   const [fileName, setFileName] = useState('');
-  const [mode, setMode] = useState<ImportMode>('replace');
   const [startDate, setStartDate] = useState(''), [endDate, setEndDate] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
@@ -38,7 +36,7 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
     const response = await fetch(`${API_BASE_URL}/employees/attendance/import-biometrics`, {
       method: 'POST', signal: controller.current.signal,
       headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders(), 'x-company': selectedCompany },
-      body: JSON.stringify({ rows: punchRows, startDate: from, endDate: to, mode, submissionKey: submissionKey.current, dryRun, ...(dryRun ? {} : { previewFingerprint: preview?.previewFingerprint }) }),
+      body: JSON.stringify({ rows: punchRows, startDate: from, endDate: to, mode: 'replace', submissionKey: submissionKey.current, dryRun, ...(dryRun ? {} : { previewFingerprint: preview?.previewFingerprint }) }),
     });
     const result = await response.json();
     if (!response.ok) {
@@ -46,7 +44,7 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
       throw new Error(typeof result.message === 'string' ? result.message : `Import request failed (${response.status}).`);
     }
     if (!Array.isArray(result.plan?.sessions) || !Array.isArray(result.plan?.issues) || !Number.isInteger(result.plan?.summary?.newSessions) || !Number.isInteger(result.imported) || !/^[a-f0-9]{64}$/.test(result.previewFingerprint)) throw new Error('The attendance import reply could not be confirmed. Preview again to check saved sessions.');
-    if (mode === 'replace' && !Array.isArray(result.plan.replacementDays)) throw new Error('Attendance overwrite is unavailable on this server version. Refresh after the backend update, then preview again.');
+    if (!Array.isArray(result.plan.replacementDays)) throw new Error('Attendance overwrite is unavailable on this server version. Refresh after the backend update, then preview again.');
     return result as Preview;
   };
   const invalidatePreview = () => {
@@ -81,11 +79,12 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
     const result = await request(rows, startDate, endDate, false);
     if (!alive.current) return;
     setPreview(result);
-    setMessage(`${result.imported} sessions imported${mode === 'replace' ? `; ${result.replacedDays ?? 0} employee dates replaced and ${result.removed ?? 0} old sessions removed` : ''}. ${result.plan.summary.duplicateSessions} exact matches and ${result.plan.summary.conflictSessions} held sessions were left unchanged. Saved payrolls were not changed. Select the employee and matching cutoff below to review.`);
+    setMessage(`${result.imported} sessions imported; ${result.replacedDays ?? 0} employee dates replaced and ${result.removed ?? 0} old sessions removed. ${result.plan.summary.duplicateSessions} exact matches and ${result.plan.summary.conflictSessions} held sessions were left unchanged. Missing punches stay blank and update when you upload a corrected export. Saved payrolls were not changed. Select the employee and matching cutoff below to review.`);
     try { await onImported(); }
     catch { if (alive.current) setError('Import was saved, but the attendance refresh failed. Use Check saved status / Refresh below.'); }
   });
   const summary = preview?.plan.summary;
+  const actionableIssues = preview?.plan.issues.filter(issue => issue.code !== 'incomplete-session') ?? [];
   const replacementDays = preview?.plan.replacementDays?.filter(day => day.status === 'replace' && day.before.length > 0) ?? [];
   const replacementKeys = new Set(replacementDays.map(day => `${day.employeeId}:${day.date}`));
   const newSessions = preview?.plan.sessions.filter(session => session.status === 'new' && !replacementKeys.has(`${session.employeeId}:${session.date}`)).length ?? 0;
@@ -95,10 +94,7 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
       <div><h2 className="font-bold text-slate-900">Import biometrics</h2><p className="mt-1 text-xs text-slate-600">Match personnel IDs in {selectedCompany}. Seconds and departments are ignored. Each IN/OUT pair becomes a separate session on the same date.</p></div>
       <label className={`${button} ${blocked ? 'opacity-50' : 'cursor-pointer'}`}>Choose biometrics file<input aria-label="Choose biometrics file" type="file" accept=".xls,.xlsx,.csv" disabled={blocked} className="sr-only" onChange={event => { chooseFile(event.target.files?.[0]); event.target.value = ''; }} /></label>
     </div>
-    <div className="mt-3 space-y-2">
-      <label className="block text-xs font-semibold text-slate-600">Import behavior<select aria-label="Import behavior" className={`${field} mt-1 block w-full sm:w-auto`} value={mode} disabled={blocked} onChange={event => { setMode(event.target.value as ImportMode); invalidatePreview(); }}><option value="replace">Overwrite matching employee dates</option><option value="append">Add new sessions only</option></select></label>
-      <p className="text-xs text-slate-600">{mode === 'replace' ? 'Re-upload a complete export for each employee date you want to overwrite. Only IDs and dates present in the file are replaced; dates absent from the file stay unchanged. Exact matches keep their saved records. Review the before/after preview, then apply the import.' : 'Add new sessions without replacing saved attendance. Existing exact matches are skipped and conflicts are held for review.'} Saved payrolls stay unchanged.</p>
-    </div>
+    <p className="mt-3 text-xs text-slate-600">Upload the complete export for each employee date. Re-uploading automatically updates those dates without duplicating exact matches. Missing IN or OUT stays blank and updates when you upload a corrected export. Each IN/OUT pair appears as a separate session on the same date. Dates absent from the file and saved payrolls stay unchanged.</p>
     {disabled && <p className="mt-2 text-xs text-amber-800">Save or discard attendance edits and wait for active operations before importing.</p>}
     {busy && <p role="status" className="mt-3 text-sm text-slate-600">Checking attendance import…</p>}
     {fileName && <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -110,8 +106,8 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
     {error && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="mt-3 rounded-md bg-green-50 p-3 text-sm text-green-900">{message}</p>}
     {preview && summary && <div className="mt-4 space-y-3">
-      <p className="text-sm text-slate-700">{summary.employeeCount} matched employees · {newSessions} new sessions{mode === 'replace' ? ` · ${replacementDays.length} employee dates ${preview.dryRun ? 'to replace' : 'replaced'} · ${summary.removedSessions ?? 0} old sessions ${preview.dryRun ? 'to remove' : 'removed'}` : ''} · {summary.duplicateSessions} exact matches · {summary.conflictSessions} held sessions · {summary.incompleteSessions} incomplete sessions</p>
-      <p className="text-xs text-slate-600">{summary.unmatchedPunches} unmatched/ambiguous punches · {summary.invalidPunches} invalid rows · {summary.blockedPunches} punches held for review · {summary.outsideRangePunches} outside the date range · {summary.duplicatePunches} repeated punches ignored. Missing IN or OUT remains blank and adds no paid hours until corrected. Review incomplete sessions before replacing a complete saved day. Leave and protected break exceptions may require review.</p>
+      <p className="text-sm text-slate-700">{summary.employeeCount} matched employees · {newSessions} new sessions · {replacementDays.length} employee dates {preview.dryRun ? 'to replace' : 'replaced'} · {summary.removedSessions ?? 0} old sessions {preview.dryRun ? 'to remove' : 'removed'} · {summary.duplicateSessions} exact matches · {summary.conflictSessions} held sessions · {summary.incompleteSessions} incomplete sessions</p>
+      <p className="text-xs text-slate-600">{summary.unmatchedPunches} unmatched/ambiguous punches · {summary.invalidPunches} invalid rows · {summary.blockedPunches} punches held for review · {summary.outsideRangePunches} outside the date range · {summary.duplicatePunches} repeated punches ignored. Missing IN or OUT remains blank and adds no paid hours. Upload an updated export to fill it automatically. Leave and protected break exceptions may require review.</p>
       {!!replacementDays.length && <details className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><summary className="cursor-pointer font-semibold">{preview.dryRun ? 'Review before/after changes' : 'Applied before/after changes'} · {replacementDays.length} employee dates</summary>
         <div className="mt-3 max-h-80 space-y-3 overflow-auto">{replacementDays.slice(replacementPage * PAGE_SIZE, (replacementPage + 1) * PAGE_SIZE).map(day => <div key={`${day.employeeId}:${day.date}`} className="rounded border border-amber-200 bg-white p-3">
           <p className="font-semibold">ID {day.personnelId} · {day.date}</p>
@@ -127,8 +123,8 @@ export default function BiometricsAttendanceImport({ selectedCompany, API_BASE_U
         {!preview.plan.sessions.length && <p className="p-3 text-sm text-slate-600">No matched sessions in this date range. Review the issues and employee IDs.</p>}
       </div>
       {preview.plan.sessions.length > PAGE_SIZE && <div className="flex items-center gap-2 text-xs"><button type="button" className={button} disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous sessions</button><span>Page {page + 1} of {Math.ceil(preview.plan.sessions.length / PAGE_SIZE)}</span><button type="button" className={button} disabled={(page + 1) * PAGE_SIZE >= preview.plan.sessions.length} onClick={() => setPage(value => value + 1)}>Next sessions</button></div>}
-      {!!preview.plan.issues.length && <details className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><summary className="cursor-pointer font-semibold">Review {preview.plan.issues.length} import issues</summary><ul className="mt-2 max-h-52 space-y-2 overflow-auto">{preview.plan.issues.slice(issuePage * PAGE_SIZE, (issuePage + 1) * PAGE_SIZE).map((issue, index) => <li key={index}>Rows {issue.rowNumbers.join(', ')}{issue.personnelId ? ` · ID ${issue.personnelId}` : ''}{issue.date ? ` · ${issue.date}` : ''}: {issue.message}</li>)}</ul>{preview.plan.issues.length > PAGE_SIZE && <div className="mt-2 flex items-center gap-2"><button type="button" className={button} disabled={issuePage === 0} onClick={() => setIssuePage(value => value - 1)}>Previous issues</button><span>Page {issuePage + 1}</span><button type="button" className={button} disabled={(issuePage + 1) * PAGE_SIZE >= preview.plan.issues.length} onClick={() => setIssuePage(value => value + 1)}>Next issues</button></div>}</details>}
-      <button type="button" className="rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50" disabled={blocked || !preview.dryRun || (!newSessions && !replacementDays.length)} onClick={commit}>{mode === 'replace' ? `Apply import: ${newSessions} new / ${replacementDays.length} replaced dates` : `Import ${newSessions} new sessions`}</button>
+      {!!actionableIssues.length && <details className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><summary className="cursor-pointer font-semibold">Review {actionableIssues.length} import issues</summary><ul className="mt-2 max-h-52 space-y-2 overflow-auto">{actionableIssues.slice(issuePage * PAGE_SIZE, (issuePage + 1) * PAGE_SIZE).map((issue, index) => <li key={index}>Rows {issue.rowNumbers.join(', ')}{issue.personnelId ? ` · ID ${issue.personnelId}` : ''}{issue.date ? ` · ${issue.date}` : ''}: {issue.message}</li>)}</ul>{actionableIssues.length > PAGE_SIZE && <div className="mt-2 flex items-center gap-2"><button type="button" className={button} disabled={issuePage === 0} onClick={() => setIssuePage(value => value - 1)}>Previous issues</button><span>Page {issuePage + 1}</span><button type="button" className={button} disabled={(issuePage + 1) * PAGE_SIZE >= actionableIssues.length} onClick={() => setIssuePage(value => value + 1)}>Next issues</button></div>}</details>}
+      <button type="button" className="rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50" disabled={blocked || !preview.dryRun || (!newSessions && !replacementDays.length)} onClick={commit}>Apply import: {newSessions} new / {replacementDays.length} replaced dates</button>
     </div>}
   </section>;
 }

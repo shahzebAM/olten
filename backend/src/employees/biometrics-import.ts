@@ -25,8 +25,13 @@ export type BiometricPunch = {
   direction: 'IN' | 'OUT';
   rowNumber: number;
 };
+export type BiometricBlankPunch = Pick<
+  BiometricPunch,
+  'personnelId' | 'date' | 'direction' | 'rowNumber'
+>;
 export type BiometricNormalization = {
   punches: BiometricPunch[];
+  blankPunches: BiometricBlankPunch[];
   issues: BiometricIssue[];
   duplicatePunches: number;
 };
@@ -136,6 +141,7 @@ export function normalizeBiometricPunches(
     );
   const result: BiometricNormalization = {
     punches: [],
+    blankPunches: [],
     issues: [],
     duplicatePunches: 0,
   };
@@ -156,7 +162,16 @@ export function normalizeBiometricPunches(
       typeof row.direction === 'string'
         ? row.direction.trim().toUpperCase()
         : '';
-    if (!id || !date || !time || !['IN', 'OUT'].includes(direction)) {
+    const missingTime =
+      row.time === null ||
+      row.time === undefined ||
+      (typeof row.time === 'string' && row.time.trim() === '');
+    if (
+      !id ||
+      !date ||
+      (!time && !missingTime) ||
+      !['IN', 'OUT'].includes(direction)
+    ) {
       result.issues.push({
         code: 'invalid-punch',
         message:
@@ -167,19 +182,34 @@ export function normalizeBiometricPunches(
       });
       return;
     }
-    const key = JSON.stringify([id, date, time.secondsOfDay, direction]);
+    // A missing punch is distinct from the real clock value 00:00.
+    const key = JSON.stringify([
+      id,
+      date,
+      time?.secondsOfDay ?? null,
+      direction,
+    ]);
     if (seen.has(key)) {
       result.duplicatePunches++;
       return;
     }
     seen.add(key);
-    result.punches.push({
-      personnelId: id,
-      date,
-      ...time,
-      direction: direction as 'IN' | 'OUT',
-      rowNumber,
-    });
+    if (missingTime) {
+      result.blankPunches.push({
+        personnelId: id,
+        date,
+        direction: direction as 'IN' | 'OUT',
+        rowNumber,
+      });
+    } else if (time) {
+      result.punches.push({
+        personnelId: id,
+        date,
+        ...time,
+        direction: direction as 'IN' | 'OUT',
+        rowNumber,
+      });
+    }
   });
   return result;
 }
@@ -196,7 +226,7 @@ export function planBiometricImport(
     throw new RangeError('Select a valid import date range.');
   const issues = input.issues.slice();
   const summary: BiometricImportPlan['summary'] = {
-    punchCount: input.punches.length,
+    punchCount: input.punches.length + input.blankPunches.length,
     matchedPunches: 0,
     unmatchedPunches: 0,
     outsideRangePunches: 0,
@@ -223,7 +253,11 @@ export function planBiometricImport(
   }
   const groups = new Map<
     string,
-    { employeeId: number; punches: BiometricPunch[] }
+    {
+      employeeId: number;
+      punches: BiometricPunch[];
+      blankPunches: BiometricBlankPunch[];
+    }
   >();
   const sourceKey = (id: string, date: string) =>
     JSON.stringify([numericKey(id) ?? id, date]);
@@ -235,7 +269,12 @@ export function planBiometricImport(
       )
       .map((issue) => sourceKey(issue.personnelId!, issue.date!)),
   );
-  for (const punch of input.punches) {
+  const sourcePunches = [
+    ...input.punches.map((punch) => ({ kind: 'timed' as const, punch })),
+    ...input.blankPunches.map((punch) => ({ kind: 'blank' as const, punch })),
+  ];
+  for (const entry of sourcePunches) {
+    const { punch } = entry;
     if (punch.date < start || punch.date > end) {
       summary.outsideRangePunches++;
       continue;
@@ -273,15 +312,27 @@ export function planBiometricImport(
     summary.matchedPunches++;
     const employeeId = candidates[0].id,
       groupKey = `${employeeId}:${punch.date}`;
-    const group = groups.get(groupKey) ?? { employeeId, punches: [] };
-    group.punches.push(punch);
+    const group = groups.get(groupKey) ?? {
+      employeeId,
+      punches: [],
+      blankPunches: [],
+    };
+    if (entry.kind === 'timed') group.punches.push(entry.punch);
+    else group.blankPunches.push(entry.punch);
     groups.set(groupKey, group);
   }
   const sessions: BiometricSession[] = [];
   const append = (
     employeeId: number,
-    inputPunch?: BiometricPunch,
-    outputPunch?: BiometricPunch,
+    inputPunch?: Pick<
+      BiometricPunch,
+      'personnelId' | 'date' | 'time' | 'rowNumber'
+    >,
+    outputPunch?: Pick<
+      BiometricPunch,
+      'personnelId' | 'date' | 'time' | 'rowNumber'
+    >,
+    blankRowNumbers?: number[],
   ) => {
     const source = inputPunch ?? outputPunch!;
     const session: BiometricSession = {
@@ -290,10 +341,12 @@ export function planBiometricImport(
       date: source.date,
       timeIn: inputPunch?.time ?? '',
       timeOut: outputPunch?.time ?? '',
-      rowNumbers: [inputPunch?.rowNumber, outputPunch?.rowNumber].filter(
-        (row): row is number => row !== undefined,
-      ),
-      complete: !!inputPunch && !!outputPunch,
+      rowNumbers:
+        blankRowNumbers ??
+        [inputPunch?.rowNumber, outputPunch?.rowNumber].filter(
+          (row): row is number => row !== undefined,
+        ),
+      complete: !!inputPunch?.time && !!outputPunch?.time,
       status: 'new',
     };
     sessions.push(session);
@@ -312,6 +365,17 @@ export function planBiometricImport(
       });
   };
   for (const group of groups.values()) {
+    if (!group.punches.length) {
+      // The export can explicitly include IN and OUT rows with empty clocks.
+      // Represent that date once without inventing a midnight punch/session.
+      append(
+        group.employeeId,
+        { ...group.blankPunches[0], time: '' },
+        undefined,
+        group.blankPunches.map((punch) => punch.rowNumber),
+      );
+      continue;
+    }
     let pending: BiometricPunch | undefined;
     const seen = new Set<string>();
     for (const punch of group.punches

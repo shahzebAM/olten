@@ -310,6 +310,43 @@ describe('biometrics overwrite transaction and retry receipt', () => {
     await apply((await preview(input)).previewFingerprint, input);
     expect(saved).toMatchObject([{ timeIn: '08:00', timeOut: '', hours: 0 }]);
   });
+  it('updates blank and incomplete uploads, then adds separate same-day sessions without manual edits', async () => {
+    const { saved, preview, apply } = setup();
+    let upload = 0;
+    const importFile = async (rows: typeof request.rows) => {
+      const input = {
+        rows,
+        submissionKey: `12345678-1234-4234-8234-${String(++upload).padStart(12, '0')}`,
+      };
+      return apply((await preview(input)).previewFingerprint, input);
+    };
+    await importFile(request.rows.map((item) => ({ ...item, time: '' })));
+    expect(saved).toMatchObject([{ timeIn: '', timeOut: '', hours: 0 }]);
+    await importFile(
+      request.rows.map((item) => ({
+        ...item,
+        time: item.direction === 'IN' ? '' : '17:00',
+      })),
+    );
+    expect(saved).toMatchObject([{ timeIn: '', timeOut: '17:00', hours: 0 }]);
+    await importFile(request.rows);
+    expect(saved).toMatchObject([
+      { timeIn: '08:00', timeOut: '17:00', hours: 8 },
+    ]);
+    const split = [
+      { ...request.rows[0], time: '08:00' },
+      { ...request.rows[1], time: '12:00' },
+      { ...request.rows[0], time: '13:00' },
+      { ...request.rows[1], time: '17:00' },
+    ];
+    await importFile(split);
+    expect(saved.map((item) => [item.timeIn, item.timeOut])).toEqual([
+      ['08:00', '12:00'],
+      ['13:00', '17:00'],
+    ]);
+    expect(await importFile(split)).toMatchObject({ imported: 0, removed: 0 });
+    expect(saved).toHaveLength(2);
+  });
   it('rolls back deletes, inserts and audit together on audit failure', async () => {
     const { saved, tx, preview, apply, audits } = setup();
     const before = structuredClone(saved);

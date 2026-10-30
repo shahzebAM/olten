@@ -40,6 +40,28 @@ test('reads actual OOXML content despite an .xls extension', async () => {
   const result = await reader.readBiometricsFile({ name: 'biometrics.xls', size: data.byteLength, arrayBuffer: async () => data });
   assert.equal(result.rows[0].personnelId, '007'); assert.equal(result.rows[0].time, '08:00:59');
 });
+
+test('blank workbook TIME cells create blank attendance while separate pairs remain distinct', async () => {
+  const result = await reader.extractBiometricRows(book([header,
+    ['007', '', '', '10-12-2026', null, 'IN', 'Ignored'],
+    ['007', '', '', '10-12-2026', null, 'OUT', 'Ignored'],
+    ['007', '', '', '10-13-2026', null, 'IN', 'Ignored'],
+    ['007', '', '', '10-13-2026', '17:00:59', 'OUT', 'Ignored'],
+    ['007', '', '', '10-14-2026', '08:00:59', 'IN', 'Ignored'],
+    ['007', '', '', '10-14-2026', '12:00:59', 'OUT', 'Ignored'],
+    ['007', '', '', '10-14-2026', '13:00:59', 'IN', 'Ignored'],
+    ['007', '', '', '10-14-2026', '17:00:59', 'OUT', 'Ignored'],
+  ]));
+  const plan = planner.planBiometricImport(planner.normalizeBiometricPunches(result.rows), [{ id: 7, employeeId: '007' }], [], result);
+  assert.equal(plan.summary.invalidPunches, 0);
+  assert.equal(plan.summary.incompleteSessions, 2);
+  assert.deepEqual(Array.from(plan.sessions, row => [row.date, row.timeIn, row.timeOut]), [
+    ['2026-10-12', '', ''],
+    ['2026-10-13', '', '17:00'],
+    ['2026-10-14', '08:00', '12:00'],
+    ['2026-10-14', '13:00', '17:00'],
+  ]);
+});
 test('handles formatted numeric IDs and serial Excel dates/times without timezone conversion', async () => {
   const workbook = book([header, [7, '', '', 46308, (20 * 3600 + 27 * 60 + 55) / 86400, 'OUT', '']]);
   workbook.Sheets.Report.A2.w = '0007';

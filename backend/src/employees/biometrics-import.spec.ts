@@ -4,6 +4,7 @@ import {
   normalizeBiometricPunches,
   planBiometricImport,
 } from './biometrics-import';
+import { planBiometricReplacement } from './biometrics-replacement';
 
 const employees = [
   { id: 90, employeeId: '007' },
@@ -24,6 +25,47 @@ const plan = (
   planBiometricImport(normalizeBiometricPunches(rows), staff, existing, range);
 
 describe('biometrics source normalization', () => {
+  it.each(['', '  ', null, undefined])(
+    'recognizes missing clock %p without inventing midnight or rejecting its date',
+    (time) => {
+      const result = normalizeBiometricPunches([{ ...punch('', 'IN'), time }]);
+      expect(result.issues).toEqual([]);
+      expect(result.punches).toEqual([]);
+      expect(result.blankPunches).toEqual([
+        {
+          personnelId: '7',
+          date: '2026-10-12',
+          direction: 'IN',
+          rowNumber: 2,
+        },
+      ]);
+      expect(result.blankPunches[0]).not.toHaveProperty('secondsOfDay');
+      expect(result.blankPunches[0]).not.toHaveProperty('time');
+    },
+  );
+  it('deduplicates blank markers separately from a genuine midnight punch', () => {
+    const normalized = normalizeBiometricPunches([
+      punch('', 'IN'),
+      punch(' ', 'IN'),
+      punch('00:00', 'IN'),
+    ]);
+    expect(normalized.blankPunches).toHaveLength(1);
+    expect(normalized.punches).toHaveLength(1);
+    expect(normalized.punches[0].secondsOfDay).toBe(0);
+    expect(normalized.duplicatePunches).toBe(1);
+    expect(
+      planBiometricImport(normalized, employees, [], range).sessions,
+    ).toMatchObject([{ timeIn: '00:00', timeOut: '', complete: false }]);
+  });
+  it('still requires the employee, date and direction when the time is blank', () => {
+    const result = normalizeBiometricPunches([
+      { ...punch('', 'IN'), personnelId: '' },
+      { ...punch('', 'OUT'), date: 'invalid' },
+      punch('', ''),
+    ]);
+    expect(result.blankPunches).toEqual([]);
+    expect(result.issues).toHaveLength(3);
+  });
   it.each([
     ['10-12-2026', '2026-10-12'],
     ['10/12/2026', '2026-10-12'],
@@ -78,6 +120,151 @@ describe('biometrics source normalization', () => {
 });
 
 describe('biometric employee matching and session planning', () => {
+  it('represents an explicitly empty IN/OUT export date as one blank session', () => {
+    const result = plan([punch('', 'IN'), punch('', 'OUT')]);
+    expect(result.sessions).toMatchObject([
+      {
+        employeeId: 90,
+        date: '2026-10-12',
+        timeIn: '',
+        timeOut: '',
+        rowNumbers: [2, 3],
+        complete: false,
+        status: 'new',
+      },
+    ]);
+    expect(result.sessions).toHaveLength(1);
+    expect(result.summary).toMatchObject({
+      punchCount: 2,
+      matchedPunches: 2,
+      invalidPunches: 0,
+      blockedPunches: 0,
+      incompleteSessions: 1,
+    });
+  });
+  it.each([
+    ['', '17:00', '', '17:00'],
+    ['08:00', '', '08:00', ''],
+  ])(
+    'keeps a blank counterpart for IN %s / OUT %s',
+    (timeIn, timeOut, expectedIn, expectedOut) => {
+      const result = plan([punch(timeIn, 'IN'), punch(timeOut, 'OUT')]);
+      expect(result.sessions).toHaveLength(1);
+      expect(result.sessions[0]).toMatchObject({
+        timeIn: expectedIn,
+        timeOut: expectedOut,
+        complete: false,
+      });
+      expect(result.summary).toMatchObject({
+        punchCount: 2,
+        matchedPunches: 2,
+        invalidPunches: 0,
+      });
+    },
+  );
+  it('does not create extra empty sessions for placeholders beside actual punches', () => {
+    const result = plan([
+      punch('', 'IN'),
+      punch('', 'OUT'),
+      punch('08:00', 'IN'),
+      punch('17:00', 'OUT'),
+    ]);
+    expect(result.sessions).toMatchObject([
+      { timeIn: '08:00', timeOut: '17:00', complete: true },
+    ]);
+    expect(result.sessions).toHaveLength(1);
+    expect(result.summary).toMatchObject({
+      punchCount: 4,
+      matchedPunches: 4,
+      incompleteSessions: 0,
+    });
+  });
+  it('creates separate same-day sessions from two real IN/OUT pairs beside blank markers', () => {
+    const result = plan([
+      punch('17:00:59', 'OUT'),
+      punch('', 'IN'),
+      punch('13:00:30', 'IN'),
+      punch('12:00:30', 'OUT'),
+      punch('', 'OUT'),
+      punch('08:00:15', 'IN'),
+    ]);
+    expect(
+      result.sessions.map((row) => [row.date, row.timeIn, row.timeOut]),
+    ).toEqual([
+      ['2026-10-12', '08:00', '12:00'],
+      ['2026-10-12', '13:00', '17:00'],
+    ]);
+    expect(result.summary).toMatchObject({
+      punchCount: 6,
+      matchedPunches: 6,
+      newSessions: 2,
+      incompleteSessions: 0,
+    });
+  });
+  it('counts blank markers in unmatched, ambiguous and outside-range results', () => {
+    expect(plan([punch('', 'IN', 'unknown')]).summary.unmatchedPunches).toBe(1);
+    expect(
+      plan([punch('', 'IN')], [], [...employees, { id: 92, employeeId: '7' }])
+        .summary.unmatchedPunches,
+    ).toBe(1);
+    const result = plan([punch('', 'IN', '7', '10-10-2026')]);
+    expect(result.sessions).toEqual([]);
+    expect(result.summary.outsideRangePunches).toBe(1);
+  });
+  it('holds blank and real punches when a nonempty malformed time makes that date invalid', () => {
+    const result = plan([
+      punch('', 'IN'),
+      punch('invalid', 'OUT'),
+      punch('08:00', 'IN'),
+    ]);
+    expect(result.sessions).toEqual([]);
+    expect(result.summary).toMatchObject({
+      invalidPunches: 1,
+      blockedPunches: 2,
+    });
+  });
+  it('replans blank-to-partial-to-complete uploads and adds a second session without duplicates', () => {
+    const rows = (timeIn: string, timeOut: string) => [
+      punch(timeIn, 'IN'),
+      punch(timeOut, 'OUT'),
+    ];
+    const replacement = (
+      source: unknown[],
+      existing: Parameters<typeof planBiometricReplacement>[2],
+    ) =>
+      planBiometricReplacement(
+        normalizeBiometricPunches(source),
+        employees,
+        existing,
+        range,
+      );
+    const blank = replacement(rows('', ''), []);
+    const existingBlank = { id: 1, ...blank.sessions[0] };
+    const partial = replacement(rows('08:00', ''), [existingBlank]);
+    expect(partial.sessions).toMatchObject([
+      { timeIn: '08:00', timeOut: '', complete: false },
+    ]);
+    expect(partial.replacementDays[0].removeIds).toEqual([1]);
+    const complete = replacement(rows('08:00', '12:00'), [
+      { id: 2, ...partial.sessions[0] },
+    ]);
+    expect(complete.sessions).toMatchObject([
+      { timeIn: '08:00', timeOut: '12:00', complete: true },
+    ]);
+    const two = replacement(
+      [...rows('08:00', '12:00'), ...rows('13:00', '17:00')],
+      [{ id: 3, ...complete.sessions[0] }],
+    );
+    expect(two.sessions.map((row) => [row.timeIn, row.timeOut])).toEqual([
+      ['08:00', '12:00'],
+      ['13:00', '17:00'],
+    ]);
+    expect(two.replacementDays[0].keepIds).toEqual([3]);
+    expect(two.summary).toMatchObject({
+      duplicateSessions: 1,
+      replacedSessions: 1,
+    });
+  });
   it('does not bridge a session around a malformed punch on the same employee/date', () => {
     const result = plan([
       punch('08:00', 'IN'),

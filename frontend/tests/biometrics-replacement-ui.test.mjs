@@ -47,13 +47,14 @@ function harness(respond) {
   return { render, byLabel, button, upload, calls };
 }
 
-test('overwrite is the visible default and preview shows exact before/after changes before applying', async () => {
+test('import automatically uses replacement without a mode choice and previews before applying', async () => {
   const ui = harness();
-  assert.equal(ui.byLabel('Import behavior').props.value, 'replace');
+  assert.equal(ui.byLabel('Import behavior'), undefined);
+  assert.doesNotMatch(renderToStaticMarkup(ui.render()), /<select|Add new sessions only/);
   await ui.upload();
   assert.equal(ui.calls.length, 1); assert.equal(ui.calls[0].dryRun, true); assert.equal(ui.calls[0].mode, 'replace');
   const html = renderToStaticMarkup(ui.render());
-  for (const text of ['Review before/after changes', '09:00', '17:00', '08:00', '18:00', '1 old sessions will be removed', 'Saved payrolls stay unchanged']) assert.ok(html.includes(text), text);
+  for (const text of ['Review before/after changes', '09:00', '17:00', '08:00', '18:00', '1 old sessions will be removed', 'saved payrolls stay unchanged', 'Missing IN or OUT stays blank', 'Each IN/OUT pair appears as a separate session']) assert.ok(html.includes(text), text);
   const apply = ui.button('Apply import:'); assert.ok(apply); assert.equal(apply.props.disabled, false);
   apply.props.onClick(); await settle();
   assert.equal(ui.calls[1].submissionKey, ui.calls[0].submissionKey);
@@ -64,19 +65,44 @@ test('overwrite is the visible default and preview shows exact before/after chan
   assert.ok(savedHtml.includes('1 old sessions removed'));
 });
 
-test('a lost reply retries with the original submission key; a changed mode requires a new preview', async () => {
+test('a lost reply keeps its key and another upload or preview uses a fresh key with replacement', async () => {
   let failed = false;
   const ui = harness(async body => {
     if (!body.dryRun && !failed) { failed = true; throw new Error('Connection lost'); }
-    return { ok: true, status: 200, json: async () => ({ plan: body.mode === 'replace' ? replacementPlan : { ...replacementPlan, replacementDays: undefined, summary: { ...replacementPlan.summary, newSessions: 1 } }, previewFingerprint: 'b'.repeat(64), imported: body.dryRun ? 0 : 1, replacedDays: 1, removed: 1, dryRun: body.dryRun }) };
+    return { ok: true, status: 200, json: async () => ({ plan: replacementPlan, previewFingerprint: 'b'.repeat(64), imported: body.dryRun ? 0 : 1, replacedDays: 1, removed: 1, dryRun: body.dryRun }) };
   });
   await ui.upload(); ui.button('Apply import:').props.onClick(); await settle();
   ui.button('Apply import:').props.onClick(); await settle();
   assert.equal(ui.calls[1].submissionKey, ui.calls[2].submissionKey);
-  ui.byLabel('Import behavior').props.onChange({ target: { value: 'append' } });
-  assert.equal(ui.button('Import 1 new sessions'), undefined);
   ui.button('Preview import').props.onClick(); await settle();
-  assert.equal(ui.calls.at(-1).mode, 'append'); assert.notEqual(ui.calls.at(-1).submissionKey, ui.calls[0].submissionKey);
+  const previewKey = ui.calls.at(-1).submissionKey;
+  assert.notEqual(previewKey, ui.calls[0].submissionKey);
+  await ui.upload();
+  assert.notEqual(ui.calls.at(-1).submissionKey, previewKey);
+  assert.ok(ui.calls.every(call => call.mode === 'replace'));
+});
+
+test('missing punches display as blank without demanding manual completion or blocking import', async () => {
+  const partial = { ...incoming, timeOut: '', complete: false };
+  const plan = { ...replacementPlan, sessions: [partial], replacementDays: [{ ...replacementDay, incoming: [partial] }], issues: [{ code: 'incomplete-session', message: 'Missing OUT remains blank.', rowNumbers: [2] }], summary: { ...replacementPlan.summary, incompleteSessions: 1 } };
+  const ui = harness(async body => ({ ok: true, status: 200, json: async () => ({ plan, previewFingerprint: 'd'.repeat(64), imported: 0, dryRun: body.dryRun }) }));
+  await ui.upload();
+  const html = renderToStaticMarkup(ui.render());
+  assert.match(html, /aria-label="Missing time out"/);
+  assert.match(html, /Upload an updated export to fill it automatically/);
+  assert.doesNotMatch(html, /manual completion|manually fill|manually correct|Import behavior/);
+  assert.doesNotMatch(html, /Review 1 import issues/);
+  assert.equal(ui.button('Apply import:').props.disabled, false);
+});
+
+test('missing punches are informational while invalid rows still appear for review', async () => {
+  const plan = { ...replacementPlan, issues: [{ code: 'incomplete-session', message: 'Missing OUT remains blank.', rowNumbers: [2] }, { code: 'invalid-punch', message: 'Invalid date in source row.', rowNumbers: [8] }] };
+  const ui = harness(async body => ({ ok: true, status: 200, json: async () => ({ plan, previewFingerprint: 'e'.repeat(64), imported: 0, dryRun: body.dryRun }) }));
+  await ui.upload();
+  const html = renderToStaticMarkup(ui.render());
+  assert.match(html, /Review 1 import issues/);
+  assert.match(html, /Invalid date in source row/);
+  assert.doesNotMatch(html, /Missing OUT remains blank\./);
 });
 
 test('a stale preview clears the apply action and disabled attendance never submits', async () => {
