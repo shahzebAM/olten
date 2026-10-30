@@ -78,6 +78,11 @@ export interface AttendanceAggregationResult<
     employeeId: number | string;
     date: string;
     metrics: AttendanceCalcResult;
+    work: {
+      netMinutes: number;
+      regularMinutes: number;
+      overtimeMinutes: number;
+    };
   }>;
 }
 
@@ -679,6 +684,29 @@ export const aggregateAttendanceRecords = <T extends AttendanceRecordInput>(
       (sum, interval) => sum + interval.end - interval.start,
       0,
     );
+    // The first eight actual work hours belong to the rest-day base rate.
+    // Keep this chronological allocation independent from ordinary early/late
+    // overtime, and resolve it before projecting the source-date cutoff.
+    const workByIndex = new Map<
+      number,
+      { netMinutes: number; regularMinutes: number; overtimeMinutes: number }
+    >();
+    let remainingWorkRegularMinutes = 480;
+    for (const interval of segments) {
+      const duration = interval.end - interval.start;
+      const regular = Math.min(remainingWorkRegularMinutes, duration);
+      remainingWorkRegularMinutes -= regular;
+      const previous = workByIndex.get(interval.index) ?? {
+        netMinutes: 0,
+        regularMinutes: 0,
+        overtimeMinutes: 0,
+      };
+      workByIndex.set(interval.index, {
+        netMinutes: previous.netMinutes + duration,
+        regularMinutes: previous.regularMinutes + regular,
+        overtimeMinutes: previous.overtimeMinutes + duration - regular,
+      });
+    }
     const leaveMinutes = group.paidLeave.length
       ? Math.max(0, Math.min(480, cap) - Math.min(workMinutes, cap))
       : 0;
@@ -799,6 +827,18 @@ export const aggregateAttendanceRecords = <T extends AttendanceRecordInput>(
         employeeId: group.employeeId,
         date: group.date,
         metrics: withDisplay(metrics),
+        work: eligibleIndices.reduce(
+          (total, index) => {
+            const work = workByIndex.get(index);
+            if (work) {
+              total.netMinutes += work.netMinutes;
+              total.regularMinutes += work.regularMinutes;
+              total.overtimeMinutes += work.overtimeMinutes;
+            }
+            return total;
+          },
+          { netMinutes: 0, regularMinutes: 0, overtimeMinutes: 0 },
+        ),
       });
     }
   });
@@ -844,6 +884,7 @@ export interface AttendancePayrollOptions extends AttendanceAggregationOptions {
   ratePerDay?: number;
   payRateSource?: { amount: number; days: number };
   overtimeBasis?: 'DAILY' | 'CUTOFF_NET';
+  workingWeekdays?: number[];
 }
 
 export const calculateAttendancePayroll = (
@@ -862,14 +903,78 @@ export const calculateAttendancePayroll = (
     : 0;
   const requiredMinutes = Math.round(days * 480);
   const overtimeBasis = options.overtimeBasis ?? 'CUTOFF_NET';
+  const workingWeekdays = options.workingWeekdays;
+  if (
+    workingWeekdays !== undefined &&
+    (!Array.isArray(workingWeekdays) ||
+      !workingWeekdays.length ||
+      workingWeekdays.some(
+        (day) => !Number.isInteger(day) || day < 0 || day > 6,
+      ) ||
+      new Set(workingWeekdays).size !== workingWeekdays.length)
+  )
+    throw new RangeError('A valid scheduled working-weekday list is required.');
+  const isRestDay = (date: string) =>
+    workingWeekdays !== undefined &&
+    !workingWeekdays.includes(new Date(`${date}T00:00:00Z`).getUTCDay());
+  const groupLeave = (source: typeof summary.records) => {
+    const result = new Map<string, { net: number; regular: number }>();
+    for (const record of source) {
+      if (record.timeIn.trim().toUpperCase() !== 'LEAVE') continue;
+      const key = JSON.stringify([
+        String(record.employeeId),
+        toAttendanceDateYMD(record.date),
+      ]);
+      const previous = result.get(key) ?? { net: 0, regular: 0 };
+      result.set(key, {
+        net: previous.net + record.metrics.netMinutes,
+        regular: previous.regular + record.metrics.regularMinutes,
+      });
+    }
+    return result;
+  };
+  const leaveByDay = groupLeave(summary.records);
+  const workOnly = (
+    day: AttendanceAggregationResult['days'][number],
+    leaveSource = leaveByDay,
+  ) => {
+    const leave = leaveSource.get(
+      JSON.stringify([String(day.employeeId), day.date]),
+    ) ?? { net: 0, regular: 0 };
+    return {
+      minutes: Math.max(0, day.metrics.netMinutes - leave.net),
+      regular: Math.max(0, day.metrics.regularMinutes - leave.regular),
+      overtime: day.metrics.otMinutes,
+    };
+  };
+  const restDays = summary.days.filter((day) => isRestDay(day.date));
+  const restDayMinutes = restDays.reduce(
+    (sum, day) => sum + day.work.netMinutes,
+    0,
+  );
+  const ordinaryMinutes = summary.netMinutes - restDayMinutes;
+  const ordinaryRegularMinutes =
+    summary.regularMinutes -
+    restDays.reduce((sum, day) => sum + workOnly(day).regular, 0);
+  const ordinaryDailyOvertimeMinutes =
+    summary.otMinutes -
+    restDays.reduce((sum, day) => sum + workOnly(day).overtime, 0);
+  const restDayRegularMinutes = restDays.reduce(
+    (sum, day) => sum + day.work.regularMinutes,
+    0,
+  );
+  const restDayOvertimeMinutes = restDays.reduce(
+    (sum, day) => sum + day.work.overtimeMinutes,
+    0,
+  );
   const regularMinutes =
     overtimeBasis === 'CUTOFF_NET'
-      ? Math.min(summary.netMinutes, requiredMinutes)
-      : summary.regularMinutes;
+      ? Math.min(ordinaryMinutes, requiredMinutes)
+      : ordinaryRegularMinutes;
   const overtimeMinutes =
     overtimeBasis === 'CUTOFF_NET'
-      ? Math.max(0, summary.netMinutes - requiredMinutes)
-      : summary.otMinutes;
+      ? Math.max(0, ordinaryMinutes - requiredMinutes)
+      : ordinaryDailyOvertimeMinutes;
   const undertimeMinutes = Math.max(0, requiredMinutes - regularMinutes);
   const ratePerDay =
     options.ratePerDay !== undefined &&
@@ -887,6 +992,9 @@ export const calculateAttendancePayroll = (
     rateSource: options.payRateSource,
     overtimeMinutes,
     undertimeMinutes,
+    ...(workingWeekdays !== undefined
+      ? { restDayRegularMinutes, restDayOvertimeMinutes }
+      : {}),
     govHolidayAmt,
   });
   return {
@@ -894,6 +1002,18 @@ export const calculateAttendancePayroll = (
     cutoffStart: options.startDate,
     cutoffEnd: options.endDate,
     totalMinutes: summary.netMinutes,
+    ordinaryMinutes,
+    restDayMinutes,
+    restDayRegularMinutes,
+    restDayOvertimeMinutes,
+    totalOvertimeMinutes: overtimeMinutes + restDayOvertimeMinutes,
+    restDayCount: restDays.filter((day) => day.work.netMinutes > 0).length,
+    restDayDates: restDays
+      .filter((day) => day.work.netMinutes > 0)
+      .map((day) => day.date),
+    restDayRegularPay: amounts.restDayRegularPay ?? 0,
+    restDayOvertimePay: amounts.restDayOvertimePay ?? 0,
+    restDayPay: amounts.restDayPay ?? 0,
     grossMinutes: summary.grossMinutes,
     lunchDeductionMinutes: summary.lunchDeductionMinutes,
     lunchPolicy: options.lunchPolicy ?? 'SCHEDULED_OVERLAP',
@@ -914,6 +1034,7 @@ export const calculateAttendancePayroll = (
         (toPayrollMoneyCents(basicSalary) -
           toPayrollMoneyCents(amounts.undertimeDeduction) +
           toPayrollMoneyCents(amounts.otPay) +
+          toPayrollMoneyCents(amounts.restDayPay ?? 0) +
           toPayrollMoneyCents(govHolidayAmt))) /
       100,
     grossPay: amounts.grossPay,

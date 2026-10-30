@@ -274,6 +274,15 @@ interface PayrollRecord {
     lunchPolicy?: 'FIXED_DAILY' | 'SCHEDULED_OVERLAP';
     calculationVersion?: string;
     roundingAdjustment?: number;
+    ordinaryMinutes?: number;
+    restDayMinutes?: number;
+    restDayRegularMinutes?: number;
+    restDayOvertimeMinutes?: number;
+    restDayPay?: number;
+    restDayRegularPay?: number;
+    restDayOvertimePay?: number;
+    restDayCount?: number;
+    totalOvertimeMinutes?: number;
     regularMinutes: number;
     overtimeMinutes: number;
     lateMinutes: number;
@@ -660,12 +669,12 @@ const toCents = (val: any): number => {
   };
 
   const handleExportPayrolls = () => {
-    const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay', 'Cutoff Start', 'Cutoff End', 'Regular Hours', 'OT Hours', 'Late Hours', 'Undertime Hours'];
+    const headers = ['Date Computed', 'System ID', 'Employee ID', 'Employee Name', 'Days Worked', 'Total Hours', 'Gross Pay', 'Total Deductions', 'Net Pay', 'Cutoff Start', 'Cutoff End', 'Regular Hours', 'Total OT Hours', 'Late Hours', 'Undertime Hours', 'Ordinary Cutoff Hours', 'Rest Day Hours', 'Rest Day OT Hours', 'Rest Day Pay'];
     const data = payrolls.map(p => {
       const emp = employees.find(e => e.id === p.employeeId);
      const totalDeds = calculateTotalPayrollDeductions(p);
       const summary = p.attendanceSummary;
-      return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, summary ? (summary.totalMinutes / 60).toFixed(2) : p.totalHours, p.grossPay, totalDeds, p.netPay, summary?.cutoffStart || '', summary?.cutoffEnd || '', summary ? (summary.regularMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.overtimeMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.lateMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.undertimeMinutes / 60).toFixed(2) : 'Unavailable'];
+      return [formatMDY(p.createdAt), p.employeeId, emp?.employeeId || '', emp ? `${emp.lastName}, ${emp.firstName}` : 'Unknown', p.daysWorked, summary ? (summary.totalMinutes / 60).toFixed(2) : p.totalHours, p.grossPay, totalDeds, p.netPay, summary?.cutoffStart || '', summary?.cutoffEnd || '', summary ? (summary.regularMinutes / 60).toFixed(2) : 'Unavailable', summary ? ((summary.totalOvertimeMinutes ?? summary.overtimeMinutes + (summary.restDayOvertimeMinutes ?? 0)) / 60).toFixed(2) : 'Unavailable', summary ? (summary.lateMinutes / 60).toFixed(2) : 'Unavailable', summary ? (summary.undertimeMinutes / 60).toFixed(2) : 'Unavailable', summary?.ordinaryMinutes !== undefined ? (summary.ordinaryMinutes / 60).toFixed(2) : 'Unavailable', summary?.restDayMinutes !== undefined ? (summary.restDayMinutes / 60).toFixed(2) : 'Unavailable', summary?.restDayOvertimeMinutes !== undefined ? (summary.restDayOvertimeMinutes / 60).toFixed(2) : 'Unavailable', summary?.restDayPay ?? 'Unavailable'];
     });
     exportToCSV(`Payroll_Export_${new Date().toISOString().split('T')[0]}.csv`, headers, data);
   };
@@ -1071,6 +1080,9 @@ const toCents = (val: any): number => {
   const summary = savedPreview?.attendanceSummary;
   const computed = savedPreview && summary && payrollRequest ? {
     totalHoursWorked: summary.totalMinutes / 60, regularHours: summary.regularMinutes / 60, ratePerDay: summary.ratePerDay, ratePerHour: summary.ratePerHour,
+    ordinaryHours: (summary.ordinaryMinutes ?? summary.totalMinutes) / 60, restDayHours: (summary.restDayMinutes ?? 0) / 60,
+    restDayRegularHours: (summary.restDayRegularMinutes ?? 0) / 60, restDayOtHours: (summary.restDayOvertimeMinutes ?? 0) / 60,
+    restDayPay: summary.restDayPay ?? 0, restDayRegularPay: summary.restDayRegularPay ?? 0, restDayOtPay: summary.restDayOvertimePay ?? 0,
     requiredHrs: summary.requiredMinutes / 60, otHrs: summary.overtimeMinutes / 60, otPay: summary.otPay, undertimeDeduction: summary.undertimeDeduction,
     grossPay: savedPreview.computed.grossPay, autoTax: savedPreview.computed.withholdingTax, totalDeductions: savedPreview.computed.totalDeductions, netPay: savedPreview.computed.netPay,
     cashAdvanceDed: payrollRequest.cashAdvance, companyLoanDed: payrollRequest.companyLoan, pagIbigLoanDed: payrollRequest.pagIbigLoan, pagIbigHousingLoanDed: payrollRequest.pagIbigHousingLoan,
@@ -1163,7 +1175,7 @@ const toCents = (val: any): number => {
       const totalGross = empPayrolls.reduce((sum, pr) => sum + pr.grossPay, 0);
     const totalDeductions = empPayrolls.reduce((sum, pr) => fromCents(toCents(sum) + toCents(calculateTotalPayrollDeductions(pr))), 0);
       const totalNet = empPayrolls.reduce((sum, pr) => sum + pr.netPay, 0);
-      const otHours = empPayrolls.every(pr => pr.attendanceSummary) ? empPayrolls.reduce((sum, pr) => sum + pr.attendanceSummary!.overtimeMinutes, 0) / 60 : null;
+      const otHours = empPayrolls.every(pr => pr.attendanceSummary) ? empPayrolls.reduce((sum, pr) => sum + (pr.attendanceSummary!.totalOvertimeMinutes ?? pr.attendanceSummary!.overtimeMinutes + (pr.attendanceSummary!.restDayOvertimeMinutes ?? 0)), 0) / 60 : null;
       return { emp, totalHours, totalDays, otHours, totalGross, totalDeductions, totalNet, count: empPayrolls.length };
     }).filter(Boolean) as SummaryReportRow[];
   };
@@ -1293,6 +1305,8 @@ const toCents = (val: any): number => {
                   const payslipMoney = (value: number | null) => value === null ? 'Not recorded' : formatMoney(value);
                   const payslipHours = (value: number | null) => value === null ? 'Not recorded' : formatDecToHM(value);
                   const totalEarnings = rec.grossPay; 
+                  const hasRestDayBreakdown = (rec.attendanceSummary?.restDayMinutes ?? 0) > 0;
+                  const extraEarningsRows = (hasRestDayBreakdown ? 3 : 0) + (rec.attendanceSummary?.roundingAdjustment ? 1 : 0);
                  const totalDeductionsCalc = calculateTotalPayrollDeductions(rec);
 
                   return (
@@ -1303,13 +1317,14 @@ const toCents = (val: any): number => {
                         <tr><td colSpan={5} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 uppercase text-slate-800"><span className="text-[10px] text-slate-500">Employee's Name :</span> <span className="ml-2 font-bold text-sm text-slate-900">{emp.lastName}, {emp.firstName}</span></td><td colSpan={4} className="border border-slate-300 bg-slate-100 font-bold px-3 py-2 text-center uppercase text-slate-800">Date: {formatMDY(rec.createdAt)} ({rec.daysWorked} WORKING DAYS)</td></tr>
                         {legacy && <tr><td colSpan={9} className="border border-slate-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">Older payroll: salary, rates and the earnings breakdown are estimates using the current salary reference and saved days/hours. Original salary details were not recorded. Gross pay, deductions and net pay are the original saved amounts.</td></tr>}
                         <tr><td colSpan={5} className="border border-slate-300 text-center font-bold py-1.5 bg-slate-50 uppercase text-slate-600 tracking-wider">Earnings</td><td colSpan={4} className="border border-slate-300 px-3 py-1.5 font-bold bg-slate-50 text-slate-600">REQUIRED PAID DAYS: <span className="font-bold text-indigo-700 ml-1">{rec.daysWorked}</span></td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-800">BASIC SALARY{legacy ? ' (REFERENCE)' : ''}</td><td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{payslipMoney(breakdown.basicSalary)}</td><td colSpan={4} rowSpan={11} className="border border-slate-300 bg-white"></td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium text-slate-800">BASIC SALARY{legacy ? ' (REFERENCE)' : ''}</td><td className="border border-slate-300 px-1 text-center font-medium text-slate-400">₱</td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{payslipMoney(breakdown.basicSalary)}</td><td colSpan={4} rowSpan={11 + extraEarningsRows} className="border border-slate-300 bg-white"></td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER HOUR</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipMoney(breakdown.ratePerHour)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE PER DAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipMoney(breakdown.ratePerDay)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">TOTAL HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(breakdown.totalHours)}</td></tr>
+                        {hasRestDayBreakdown && <><tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">ORDINARY CUTOFF HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(rec.attendanceSummary!.ordinaryMinutes === undefined ? null : rec.attendanceSummary!.ordinaryMinutes / 60)}</td></tr><tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REST DAY HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(rec.attendanceSummary!.restDayMinutes! / 60)}</td></tr><tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REST DAY OT HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours((rec.attendanceSummary!.restDayOvertimeMinutes ?? 0) / 60)}</td></tr></>}
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">REQUIRED NO.OF HOURS</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(breakdown.requiredHours)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">REGULAR PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{payslipMoney(breakdown.regularPay)}</td></tr>
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">OT HOURS{legacy ? ' (CUTOFF BALANCE)' : ''}</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(breakdown.overtimeHours)}</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">{hasRestDayBreakdown ? 'ORDINARY OT HOURS' : 'OT HOURS'}{legacy ? ' (CUTOFF BALANCE)' : ''}</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipHours(breakdown.overtimeHours)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">RATE FOR OT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipMoney(breakdown.ratePerHour === null ? null : breakdown.ratePerHour * 1.25)}</td></tr>
                         <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-bold text-slate-800">OT PAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right bg-indigo-50 font-mono font-bold text-indigo-900">{payslipMoney(breakdown.otPay)}</td></tr>
                         {manualAdjustment !== null && Math.abs(manualAdjustment) >= 0.01 ? (
@@ -1317,7 +1332,7 @@ const toCents = (val: any): number => {
                         ) : (
                            <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">{legacy ? 'BALANCING ADJ' : 'HOLIDAY'}</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{payslipMoney(manualAdjustment)}</td></tr>
                         )}
-                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">SUNDAY</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">-</td></tr>
+                        <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">{hasRestDayBreakdown ? 'REST DAY PAY (130% / 169%)' : 'SUNDAY'}</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{rec.attendanceSummary?.restDayPay === undefined ? '-' : payslipMoney(rec.attendanceSummary.restDayPay)}</td></tr>
                         {!!rec.attendanceSummary?.roundingAdjustment && <tr><td colSpan={2} className="border border-slate-300 px-3 py-1 font-medium">ROUNDING ADJUSTMENT</td><td className="border border-slate-300"></td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono text-slate-700">{formatMoney(rec.attendanceSummary.roundingAdjustment)}</td></tr>}
                         <tr><td colSpan={5} className="border border-slate-300 bg-white border-t-0"></td><td colSpan={2} className="border border-slate-300 px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50 uppercase text-[10px] tracking-wider border-l-0">Total Earnings:</td><td colSpan={2} className="border border-slate-300 px-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50 border-b-2 border-slate-400 text-sm">{formatMoney(totalEarnings)}</td></tr>
                       {(() => {
@@ -1383,20 +1398,21 @@ const toCents = (val: any): number => {
             </div>
             <div className="overflow-y-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4 items-start">
               <fieldset disabled={isSaving || payrollUnconfirmed} className="min-w-0 space-y-3">
-                <PayrollProfileEditor key={activeEmployee.id} employee={activeEmployee} API_BASE_URL={API_BASE_URL} onSaved={profileSaved} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} />
+                <PayrollProfileEditor key={activeEmployee.id} employee={activeEmployee} API_BASE_URL={API_BASE_URL} cutoffStart={payrollStartDate} cutoffEnd={payrollEndDate} onSaved={profileSaved} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} />
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600" role="status">
                   {previewError || (previewReady ? `Server confirmed · ${savedPreview?.source.workedDateCount} dates worked · ${savedPreview?.source.paidLeaveDateCount} paid leave · ${savedPreview?.source.unpaidLeaveDateCount} unpaid leave · ${savedPreview?.source.sessionCount} saved sessions` : 'Refreshing payroll preview…')}
                   {payrollUnconfirmed && <p className="mt-1 text-rose-700">Check the payroll ledger before creating another payroll for this cutoff.</p>}
                   <button type="button" disabled={isSaving || profileBusy} onClick={() => setPreviewRevision(version => version + 1)} className="ml-2 font-semibold text-indigo-600 disabled:opacity-50">Refresh Preview</button>
                 </div>
                 {savedPreview?.configurationRequired && <p className="text-xs text-amber-700">Complete the one-time pay profile before saving payroll. Required days and rates will then be calculated automatically.</p>}
-                {!savedPreview?.configurationRequired && <p className="text-xs text-slate-500">{summary?.overtimeBasis === 'CUTOFF_NET' ? 'Excel cutoff balance: overtime starts above the required cutoff hours; shortages are deducted at the normal hourly rate.' : 'Daily overtime: each workday’s overtime and shortfall are calculated separately.'}</p>}
+                {!savedPreview?.configurationRequired && <p className="text-xs text-slate-500">{summary?.overtimeBasis === 'CUTOFF_NET' ? 'Ordinary cutoff balance: overtime starts above the required ordinary hours; shortages are deducted at the normal hourly rate. Rest-day work is paid separately.' : 'Daily overtime: ordinary workday overtime and shortfalls are calculated separately. Rest-day work has its own rates.'}</p>}
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 text-[10px] sm:text-xs uppercase tracking-wider">Time & Attendance</h3>
                 <div className="grid grid-cols-4 gap-2 sm:gap-3">
                   <InputField compact type="text" disabled label="Required Paid Days" value={savedPreview?.configurationRequired ? 'Setup required' : String((summary?.requiredMinutes ?? 0) / 480)} />
                   <InputField compact type="number" step="0.01" label="Govt Adj (±)" placeholder="0.00" value={payrollData.govHolidayAmt} onChange={(e: any) => setPayrollData({...payrollData, govHolidayAmt: e.target.value})} />
-                  <InputField compact type="text" disabled label="Logged Hours" value={formatDecToHM(computed.totalHoursWorked)} />
-                  <InputField compact type="text" disabled label="OT Hours" value={formatDecToHM(computed.otHrs)} />
+                  <InputField compact type="text" disabled label="Ordinary Cutoff Hours" value={formatDecToHM(computed.ordinaryHours)} />
+                  <InputField compact type="text" disabled label="Ordinary OT Hours" value={formatDecToHM(computed.otHrs)} />
+                  {computed.restDayHours > 0 && <><InputField compact type="text" disabled label="Rest Day Hours" value={formatDecToHM(computed.restDayHours)} /><InputField compact type="text" disabled label="Rest Day OT Hours" value={formatDecToHM(computed.restDayOtHours)} /><p className="text-[10px] text-slate-500 sm:col-span-2">Govt Adj is for separate approved adjustments; rest-day pay is added automatically.</p></>}
                 </div>
                 <h3 className="font-bold text-slate-800 border-b pb-1.5 mt-2 text-[10px] sm:text-xs uppercase tracking-wider">Deductions</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start">
@@ -1448,7 +1464,9 @@ const toCents = (val: any): number => {
                   {summary?.lunchDeductionMinutes !== undefined && <div className="flex justify-between"><span className="text-slate-500">Unpaid Breaks:</span> <span className="font-mono">{formatDecToHM(summary.lunchDeductionMinutes / 60)}</span></div>}
                   {summary?.lunchPolicy === 'FIXED_DAILY' && <p className="text-[10px] text-slate-500">One unpaid hour per workday, including recorded lunch gaps. Recorded break overrides take precedence. Workdays of one hour or less have no automatic break.</p>}
                   {!!summary?.roundingAdjustment && <div className="flex justify-between"><span className="text-slate-500">Rounding Adjustment:</span> <span className="font-mono">₱{summary.roundingAdjustment.toFixed(2)}</span></div>}
-                  <div className="flex justify-between"><span className="text-slate-500">Valid Logged Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">All Paid Work Hours:</span> <span className="font-mono">{formatDecToHM(computed.totalHoursWorked)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Ordinary Cutoff Hours:</span> <span className="font-mono">{formatDecToHM(computed.ordinaryHours)}</span></div>
+                  {computed.restDayHours > 0 && <div className="flex justify-between"><span className="text-slate-500">Rest Day Hours:</span> <span className="font-mono">{formatDecToHM(computed.restDayHours)}</span></div>}
                   <div className="flex justify-between"><span className="text-slate-500">Regular Hours:</span> <span className="font-mono">{formatDecToHM(computed.regularHours)}</span></div>
                   
                  {computed.govHolidayAmt !== 0 && (
@@ -1460,10 +1478,15 @@ const toCents = (val: any): number => {
 
                   {computed.otHrs > 0 && (
                     <div className="flex justify-between font-medium text-emerald-700 bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 mt-1 mb-1 text-[11px]">
-                      <span>Total Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span> 
+                      <span>Ordinary Overtime ({computed.otHrs.toFixed(4)} hrs @ 125%):</span>
                       <span className="font-mono">+ ₱{computed.otPay.toFixed(2)}</span>
                     </div>
                   )}
+                  {computed.restDayHours > 0 && <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-1.5 text-[11px] text-emerald-700">
+                    <div className="flex justify-between font-semibold"><span>Rest Day Pay ({formatDecToHM(computed.restDayHours)}):</span><span className="font-mono">+ ₱{computed.restDayPay.toFixed(2)}</span></div>
+                    <div className="mt-1 flex justify-between"><span>{formatDecToHM(computed.restDayRegularHours)} @ 130%:</span><span className="font-mono">₱{computed.restDayRegularPay.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span>{formatDecToHM(computed.restDayOtHours)} overtime @ 169%:</span><span className="font-mono">₱{computed.restDayOtPay.toFixed(2)}</span></div>
+                  </div>}
                   {computed.undertimeDeduction > 0 && (
                     <div className="flex justify-between font-medium text-rose-700 bg-rose-50 p-1.5 rounded text-[11px]">
                       <span>Lates/Undertime Deduction:</span> 
@@ -1813,7 +1836,7 @@ const toCents = (val: any): number => {
                         <tr>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase w-24">Emp ID</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Employee Name</th>
-                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Valid Logged Hours</th>
+                          <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">All Paid Hours</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase">Total OT Hours</th>
                           <th className="py-3.5 px-6 text-xs font-semibold text-slate-600 uppercase text-right">Action</th>
                         </tr>
@@ -1828,14 +1851,16 @@ const toCents = (val: any): number => {
                             let tableOtLogged: number | null = null;
                             try {
                               const basis = emp.payrollProfile ? resolvePayrollBasis(emp.payrollProfile, emp.baseRate, payrollStartDate, payrollEndDate) : null;
-                              tableOtLogged = calculateAttendancePayroll(attendances, {
+                              const payrollCalculation = calculateAttendancePayroll(attendances, {
                                 ...APP_ATTENDANCE_POLICY,
                                 employeeId: emp.id, startDate: payrollStartDate, endDate: payrollEndDate,
                                 shiftStart, shiftEnd, lunchStart, lunchEnd,
                                 daysWorked: basis?.paidDays ?? 14, basicSalary: basis?.basicSalary ?? emp.baseRate,
                                 ratePerDay: basis?.ratePerDay, overtimeBasis: emp.payrollProfile?.overtimeBasis ?? 'CUTOFF_NET',
+                                workingWeekdays: emp.payrollProfile?.workingWeekdays,
                                 ...(emp.payrollProfile?.basis === 'CUTOFF' ? { payRateSource: { amount: emp.baseRate, days: emp.payrollProfile.referenceDays } } : {}),
-                              }).overtimeMinutes / 60;
+                              });
+                              tableOtLogged = payrollCalculation.totalOvertimeMinutes / 60;
                             } catch { /* Invalid saved profiles require review in Compute Salary. */ }
 
                             return (

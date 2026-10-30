@@ -8,6 +8,8 @@ export interface PayrollAmountOptions {
   rateSource?: { amount: number; days: number };
   overtimeMinutes: number;
   undertimeMinutes: number;
+  restDayRegularMinutes?: number;
+  restDayOvertimeMinutes?: number;
   govHolidayAmt?: number;
 }
 
@@ -114,8 +116,17 @@ export function calculatePayrollAmounts(options: PayrollAmountOptions) {
     numerator: minutes(options.undertimeMinutes),
     denominator: 480n,
   });
+  const restDayRegular = multiply(dailyRate, {
+    numerator: minutes(options.restDayRegularMinutes ?? 0) * 13n,
+    denominator: 4800n,
+  });
+  const restDayOvertime = multiply(dailyRate, {
+    numerator: minutes(options.restDayOvertimeMinutes ?? 0) * 169n,
+    denominator: 48000n,
+  });
+  const restDay = add(restDayRegular, restDayOvertime);
   const gross = add(
-    add(basic, overtime),
+    add(add(basic, overtime), restDay),
     add(
       { numerator: -shortage.numerator, denominator: shortage.denominator },
       decimal(options.govHolidayAmt ?? 0),
@@ -125,5 +136,13 @@ export function calculatePayrollAmounts(options: PayrollAmountOptions) {
     otPay: money(overtime),
     undertimeDeduction: money(shortage),
     grossPay: money(gross),
+    ...(options.restDayRegularMinutes !== undefined ||
+    options.restDayOvertimeMinutes !== undefined
+      ? {
+          restDayRegularPay: money(restDayRegular),
+          restDayOvertimePay: money(restDayOvertime),
+          restDayPay: money(restDay),
+        }
+      : {}),
   };
 }

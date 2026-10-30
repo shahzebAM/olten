@@ -31,7 +31,7 @@ export type {
 
 const prisma = new PrismaClient();
 // Changing calculation rules invalidates previews prepared by earlier releases.
-export const PAYROLL_CALCULATION_VERSION = 'excel-fixed-break-20261029-v1';
+export const PAYROLL_CALCULATION_VERSION = 'scheduled-rest-day-20261029-v2';
 type PayrollDatabase = Pick<
   Prisma.TransactionClient,
   'employee' | 'attendance' | 'settings' | 'payroll'
@@ -809,6 +809,7 @@ export class EmployeesService {
       daysWorked,
       basicSalary: basis?.basicSalary ?? employee.baseRate,
       overtimeBasis: profile?.overtimeBasis ?? 'CUTOFF_NET',
+      workingWeekdays: profile?.workingWeekdays,
       ...(basis ? { ratePerDay: basis.ratePerDay } : {}),
       ...(profile?.basis === 'CUTOFF'
         ? {
