@@ -55,6 +55,10 @@ test('approved rest-day calculator and profile changes preserve the other protec
   const restDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-rest-day-approval.json', import.meta.url), 'utf8'));
   const workflowApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-workflow-approval.json', import.meta.url), 'utf8'));
   const sameDayApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-same-day-breaks-approval.json', import.meta.url), 'utf8'));
+  const quickEntryApproved = JSON.parse(readFileSync(new URL('./fixtures/payroll-quick-entry-approval.json', import.meta.url), 'utf8'));
+  assert.equal(quickEntryApproved.parentCommit, 'c96e6ec5fbde0defdef8c8a93d6238de1ec709f0');
+  assert.equal(quickEntryApproved.previousApproval, 'payroll-same-day-breaks-approval.json');
+  assert.deepEqual(quickEntryApproved.scope, ['manual-attendance-compact-time-entry']);
   assert.equal(restDayApproved.parentCommit, '9cde900d7d5e062b234bceb9c01df6935ff9aa71');
   assert.equal(restDayApproved.previousApproval, 'payroll-excel-approval.json');
   assert.equal(baseline.length, 7);
@@ -87,10 +91,11 @@ test('approved rest-day calculator and profile changes preserve the other protec
       const basisResolver = content.slice(content.indexOf('export function resolvePayrollBasis('));
       assert.equal(createHash('sha256').update(basisResolver).digest('hex'), workflowApproved.basisResolverSHA256, 'Existing payroll basis formulas remain unchanged');
     } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/modules/AttendanceEntryGrid.tsx') {
-      const previousCopy = 'Enter a cutoff, then save once. Hours are confirmed by the existing attendance service.';
-      const updatedCopy = 'Enter a cutoff, then save once. Same-day sessions share the automatic break allowance. Hours are confirmed by the attendance service.';
-      assert.ok(content.includes(updatedCopy));
-      assert.equal(createHash('sha256').update(content.replace(updatedCopy, previousCopy)).digest('hex').toUpperCase(), entry.SHA256, 'Attendance entry behavior remains unchanged; only its break explanation changed');
+      assert.equal(quickEntryApproved.previousGridSHA256, 'B6516D67B57085337ECC5B108AF613076434FBAE4C61EF79D7EDE988B1144855');
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), quickEntryApproved.gridSHA256, 'Only the approved compact manual entry UI changes extend the shared-break grid');
+    } else if (entry.File.replaceAll('\\', '/') === 'frontend/src/lib/attendanceEntry.ts') {
+      assert.equal(quickEntryApproved.previousEntryHelpersSHA256, entry.SHA256);
+      assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), quickEntryApproved.entryHelpersSHA256, 'Only approved manual draft normalization extends the attendance helpers');
     } else assert.equal(createHash('sha256').update(content).digest('hex').toUpperCase(), entry.SHA256, entry.File);
   }
 });

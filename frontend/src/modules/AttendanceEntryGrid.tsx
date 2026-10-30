@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toAttendanceDateYMD } from '../../../backend/src/employees/attendance-calculator';
 import { getApiAuthHeaders } from '../lib/apiSession';
-import { displayEntryTime, entrySessionKey, fromRecord, getCutoffDates, getInitialCutoff, isChanged, mergeRows, moveCutoff, normalizeEntryTime, rowPunches, samePunches, sameSource, sourcePunches } from '../lib/attendanceEntry';
+import { displayEntryTime, displayManualEntryTime, entrySessionKey, fromRecord, getCutoffDates, getInitialCutoff, isChanged, mergeRows, moveCutoff, normalizeManualEntryTime, rowPunches, samePunches, sameSource, sourcePunches } from '../lib/attendanceEntry';
 import type { AttendanceEntryEmployee, AttendanceEntryRecord, CutoffSelection, EntryKind, EntryRow } from '../lib/attendanceEntry';
 type Props = {
   selectedCompany: string;
@@ -122,7 +122,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
     if (!changed.length) return;
     const errors = new Map<string, string>();
     for (const row of changed) {
-      if (row.kind === 'work' && (!normalizeEntryTime(row.timeIn) || !normalizeEntryTime(row.timeOut))) errors.set(row.key, 'Enter both valid times, e.g. 9:00 AM and 6:00 PM.');
+      if (row.kind === 'work' && (!normalizeManualEntryTime(row.timeIn, 'timeIn') || !normalizeManualEntryTime(row.timeOut, 'timeOut'))) errors.set(row.key, 'Enter both valid times, e.g. 9:00 AM and 6:00 PM.');
       const key = entrySessionKey({ employeeId: employee.id, date: row.date, ...rowPunches(row) });
       const changedSession = !row.source || key !== entrySessionKey(row.source);
       if (changedSession && rows.some(other => other.key !== row.key && (other.source || isChanged(other)) && entrySessionKey({ employeeId: employee.id, date: other.date, ...rowPunches(other) }) === key)) errors.set(row.key, 'This session already exists. Edit its existing row.');
@@ -210,6 +210,7 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
       <div className="border-b border-slate-200 p-4">
         <h2 className="font-bold text-indigo-950">Attendance Logs</h2>
         <p className="mt-1 text-xs text-slate-500">Enter a cutoff, then save once. Same-day sessions share the automatic break allowance. Hours are confirmed by the attendance service.</p>
+        <p className="mt-1 text-xs text-slate-500">Quick entry: 820 becomes 8:20 AM in Time In and 8:20 PM in Time Out. Press Tab or Enter, or leave the field to format. Type AM/PM explicitly for other sessions; 24-hour times also work.</p>
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <div className="relative min-w-64 flex-1" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setPickerOpen(false); }}>
             <label htmlFor="attendance-employee" className="mb-1 block text-xs font-semibold text-slate-600">Employee</label>
@@ -247,17 +248,19 @@ export default function AttendanceEntryGrid({ selectedCompany, API_BASE_URL, emp
               const pending = changed || (!!row.source && !officialCurrent);
               const label = `${row.date} session ${rows.slice(0, index + 1).filter(item => item.date === row.date).length}`;
               const firstOnDate = index === 0 || rows[index - 1].date !== row.date;
-              const overnight = row.kind === 'work' && normalizeEntryTime(row.timeIn) && normalizeEntryTime(row.timeOut) && normalizeEntryTime(row.timeOut)! < normalizeEntryTime(row.timeIn)!;
+              const punches = rowPunches(row);
+              const overnight = row.kind === 'work' && normalizeManualEntryTime(row.timeIn, 'timeIn') && normalizeManualEntryTime(row.timeOut, 'timeOut') && punches.timeOut < punches.timeIn;
               const readOnly = disabled || !!row.unconfirmed;
               return <tr key={row.key} data-entry-date={row.date} data-record-id={row.source?.id} className={`border-b border-slate-200 ${row.error ? 'bg-rose-50' : changed ? 'bg-amber-50/70' : 'hover:bg-slate-50'} ${firstOnDate ? 'border-t' : ''}`}>
                 <th scope="row" className="px-3 py-2 font-medium text-slate-700"><span>{dateLabel(row.date)}</span><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{row.source ? `#${row.source.id}` : changed ? 'Unsaved' : 'Blank'}</span></th>
                 <td className="px-3 py-2 text-xs text-slate-500">{dateLabel(row.date, true)}</td>
                 {(['timeIn', 'timeOut'] as const).map(field => <td key={field} className="w-40 px-3 py-1.5">{row.kind !== 'work' ? <span className="text-xs text-slate-500">{field === 'timeIn' ? 'Leave' : row.kind === 'paid' ? 'Paid' : 'Unpaid'}</span> : <div className="flex items-center gap-1">
                   <input aria-label={`${label} ${field === 'timeIn' ? 'Time In' : 'Time Out'}`} aria-invalid={!!row.error} data-time-field={field} value={row[field]} placeholder="h:mm AM/PM" disabled={readOnly} className={`${fieldClass} w-28 font-mono text-xs`}
+                    title={field === 'timeIn' ? 'Quick entry: 820 = 8:20 AM. Type PM for an afternoon arrival.' : 'Quick entry: 820 = 8:20 PM. Type AM for a morning departure.'}
                     onChange={event => updateRow(row.key, { [field]: event.target.value })}
-                    onBlur={event => { if (normalizeEntryTime(event.target.value)) updateRow(row.key, { [field]: displayEntryTime(event.target.value) }); }}
-                    onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); const inputs = [...(tableRef.current?.querySelectorAll<HTMLInputElement>(`input[data-time-field="${field}"]:not(:disabled)`) ?? [])]; inputs[inputs.indexOf(event.currentTarget) + 1]?.focus(); } }} />
-                  <label className="relative cursor-pointer rounded border border-slate-200 bg-white p-1 text-slate-400" title="Choose time">◷<input type="time" aria-label={`${label} choose ${field === 'timeIn' ? 'Time In' : 'Time Out'}`} tabIndex={-1} value={normalizeEntryTime(row[field]) ?? ''} disabled={readOnly} onChange={event => updateRow(row.key, { [field]: displayEntryTime(event.target.value) })} className="absolute inset-0 w-full cursor-pointer opacity-0" /></label>
+                    onBlur={event => { if (normalizeManualEntryTime(event.target.value, field)) updateRow(row.key, { [field]: displayManualEntryTime(event.target.value, field) }); }}
+                    onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (normalizeManualEntryTime(event.currentTarget.value, field)) updateRow(row.key, { [field]: displayManualEntryTime(event.currentTarget.value, field) }); const inputs = [...(tableRef.current?.querySelectorAll<HTMLInputElement>(`input[data-time-field="${field}"]:not(:disabled)`) ?? [])]; inputs[inputs.indexOf(event.currentTarget) + 1]?.focus(); } }} />
+                  <label className="relative cursor-pointer rounded border border-slate-200 bg-white p-1 text-slate-400" title="Choose time">◷<input type="time" aria-label={`${label} choose ${field === 'timeIn' ? 'Time In' : 'Time Out'}`} tabIndex={-1} value={normalizeManualEntryTime(row[field], field) ?? ''} disabled={readOnly} onChange={event => updateRow(row.key, { [field]: displayEntryTime(event.target.value) })} className="absolute inset-0 w-full cursor-pointer opacity-0" /></label>
                 </div>}{field === 'timeOut' && overnight && <span className="text-[10px] text-indigo-600">Ends next day</span>}</td>)}
                 <td className="px-3 py-2 font-mono text-xs text-indigo-700">{pending ? 'Pending' : row.source ? row.source.metrics ? hoursLabel(row.source.metrics.regularMinutes) : 'Unavailable' : '—'}</td>
                 <td className="px-3 py-2 font-mono text-xs text-purple-700">{pending ? 'Pending' : row.source ? row.source.metrics ? hoursLabel(row.source.metrics.otMinutes) : 'Unavailable' : '—'}</td>

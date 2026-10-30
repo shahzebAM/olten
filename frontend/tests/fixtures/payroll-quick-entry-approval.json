@@ -1,0 +1,12 @@
+{
+  "parentCommit": "c96e6ec5fbde0defdef8c8a93d6238de1ec709f0",
+  "previousApproval": "payroll-same-day-breaks-approval.json",
+  "scope": [
+    "manual-attendance-compact-time-entry"
+  ],
+  "authorization": "User requested compact manual attendance entry: 820 defaults to 8:20 AM for Time In and 8:20 PM for Time Out. Explicit periods and 24-hour inputs keep their meaning. No payroll formulas, source imports, or stored records change.",
+  "previousGridSHA256": "B6516D67B57085337ECC5B108AF613076434FBAE4C61EF79D7EDE988B1144855",
+  "gridSHA256": "C54164F5272E7E57264B9CF0172A4288846AF447E592F500B1DE1E7F79515E3A",
+  "previousEntryHelpersSHA256": "9C30EDA86B80762BC327818F7C31FA2DDD8C15DAD135ECAB930CA84238AB0F65",
+  "entryHelpersSHA256": "B195FB87AF01D78D9251DB3D15D65696E624DADF06CA0CA490692221944E66A1"
+}

@@ -105,13 +105,28 @@ export function displayEntryTime(value: string): string {
   return `${hour % 12 || 12}:${normalized.slice(3)} ${hour >= 12 ? 'PM' : 'AM'}`;
 }
 
+// Apply column defaults only to manually typed compact times. Stored times and
+// colon-bearing 24-hour values must keep their existing AM/PM meaning.
+export function normalizeManualEntryTime(value: string, field: 'timeIn' | 'timeOut'): string | null {
+  const compact = value.trim().match(/^(\d{1,2})(\d{2})\s*(AM|PM)?$/i);
+  if (!compact) return normalizeEntryTime(value);
+  const hour = Number(compact[1]);
+  const period = compact[3] ?? (hour >= 1 && hour <= 12 ? field === 'timeIn' ? 'AM' : 'PM' : '');
+  return normalizeEntryTime(`${compact[1]}:${compact[2]}${period ? ` ${period}` : ''}`);
+}
+
+export function displayManualEntryTime(value: string, field: 'timeIn' | 'timeOut'): string {
+  const normalized = normalizeManualEntryTime(value, field);
+  return normalized === null ? value : displayEntryTime(normalized);
+}
+
 export function entrySessionKey(record: Pick<AttendanceEntryRecord, 'employeeId' | 'date' | 'timeIn' | 'timeOut'>): string {
   return attendanceSessionKey(record);
 }
 
 export const sourcePunches = (record: AttendanceEntryRecord): Punches => ({ timeIn: normalizeEntryTime(record.timeIn) ?? record.timeIn, timeOut: normalizeEntryTime(record.timeOut) ?? record.timeOut, reason: record.reason || null });
 export const rowPunches = (row: EntryRow): Punches => row.kind === 'work'
-  ? { timeIn: normalizeEntryTime(row.timeIn) ?? row.timeIn.trim(), timeOut: normalizeEntryTime(row.timeOut) ?? row.timeOut.trim(), reason: row.reason || null }
+  ? { timeIn: normalizeManualEntryTime(row.timeIn, 'timeIn') ?? row.timeIn.trim(), timeOut: normalizeManualEntryTime(row.timeOut, 'timeOut') ?? row.timeOut.trim(), reason: row.reason || null }
   : { timeIn: 'LEAVE', timeOut: row.kind === 'paid' ? 'PAID' : 'UNPAID', reason: row.reason || null };
 export const samePunches = (a: Punches, b: Punches) => a.timeIn === b.timeIn && a.timeOut === b.timeOut && a.reason === b.reason;
 export const isChanged = (row: EntryRow) => !!row.unconfirmed || (row.source
