@@ -54,6 +54,12 @@ export class EmployeesController {
     return await this.employeesService.createAttendance(data);
   }
 
+  @Post('employees/attendance/import-biometrics')
+  @UseGuards(PayrollAuthGuard)
+  async importBiometrics(@Body() data: Record<string, unknown>) {
+    return await this.employeesService.importBiometrics(data);
+  }
+
   @Patch('employees/attendance/:id')
   @UseGuards(PayrollAuthGuard)
   async updateAttendance(@Param('id') id: string, @Body() data: any) {

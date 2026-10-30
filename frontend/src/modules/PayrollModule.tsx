@@ -6,6 +6,7 @@ import { APP_ATTENDANCE_POLICY, aggregateAttendanceRecords, attendanceSessionKey
 import { resolvePayrollBasis, validatePayrollDefaults } from '../../../backend/src/employees/payroll-profile';
 import { multiplyPayrollCents, toPayrollMoneyCents } from '../../../backend/src/employees/payroll-money';
 import AttendanceEntryGrid from './AttendanceEntryGrid';
+import BiometricsAttendanceImport from './BiometricsAttendanceImport';
 import PayrollProfileFields, { SavedEmployeePaySetup } from './PayrollProfileEditor';
 import type { PayrollProfileEmployee } from './PayrollProfileEditor';
 import CompanyPayrollSetup from './CompanyPayrollSetup';
@@ -349,6 +350,7 @@ export default function PayrollModule({ selectedCompany, loginUsername, API_BASE
   const [activeTab, setActiveTab] = useState<'dashboard' | 'list' | 'add' | 'attendance' | 'payroll' | 'tax' | 'report' | 'setup'>('dashboard');
   const [attendanceDirty, setAttendanceDirty] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
+  const [biometricsBusy, setBiometricsBusy] = useState(false);
   const [attendanceRefreshVersion, setAttendanceRefreshVersion] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -686,7 +688,7 @@ const toCents = (val: any): number => {
       }
     }
     if (activeTab !== 'attendance') return true;
-    if (attendanceBusy || isSaving) {
+    if (attendanceBusy || biometricsBusy || isSaving) {
       showToast('Please wait for the attendance operation to finish.', 'error');
       return false;
     }
@@ -1902,7 +1904,15 @@ const toCents = (val: any): number => {
             {/* ATTENDANCE TAB */}
             {activeTab === 'attendance' && (
               <div className="space-y-4">
-                <fieldset disabled={isSaving} className="min-w-0">
+                <BiometricsAttendanceImport
+                  key={selectedCompany}
+                  selectedCompany={selectedCompany}
+                  API_BASE_URL={API_BASE_URL}
+                  disabled={isSaving || attendanceBusy || attendanceDirty}
+                  onBusyChange={setBiometricsBusy}
+                  onImported={async () => { await fetchAttendances(); setAttendanceRefreshVersion(version => version + 1); }}
+                />
+                <fieldset disabled={isSaving || biometricsBusy} className="min-w-0">
                   <AttendanceEntryGrid
                     key={selectedCompany + ':' + attendanceRefreshVersion}
                     selectedCompany={selectedCompany}
@@ -1919,7 +1929,7 @@ const toCents = (val: any): number => {
                   <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">Attendance tools: CSV &amp; office shift</summary>
                   <div className="border-t border-slate-100 p-4">
                     {attendanceDirty && <p className="mb-3 text-xs text-amber-700">Save or discard your attendance changes before using these tools.</p>}
-                    <fieldset disabled={isSaving || attendanceBusy || attendanceDirty} className="flex flex-col gap-4 disabled:opacity-50">
+                    <fieldset disabled={isSaving || attendanceBusy || biometricsBusy || attendanceDirty} className="flex flex-col gap-4 disabled:opacity-50">
                       <div className="flex flex-wrap items-end gap-3">
                         <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Office In</label><TimePicker12h value={tempShiftStart} onChange={setTempShiftStart} compact /></div>
                         <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Office Out</label><TimePicker12h value={tempShiftEnd} onChange={setTempShiftEnd} compact /></div>

@@ -1,0 +1,14 @@
+{
+  "parentCommit": "f6a3d740b99c3d389f8c3be0b11a62d361eb649f",
+  "previousApproval": "payroll-workflow-approval.json",
+  "scope": [
+    "biometrics-attendance-import"
+  ],
+  "authorization": "User requested employee-ID biometrics import, minute-only punches, multiple sessions per date and blank missing punches. Existing saved attendance is preserved, with preview and duplicate/conflict checks. Payroll arithmetic and saved print templates are unchanged.",
+  "previousNonClassCodeSHA256": "e7b1fac839c8b4cc99bae59f5fe3e1ffdf6ddd40bd03e740e16af9f2ba6c8ecb",
+  "nonClassCodeSHA256": "15f1e092182e22703c1e68316d5404a77ae760bb973000e4a8f462ddf6402a14",
+  "printTemplatesSHA256": {
+    "payslip-print-area": "45f21a5183255ebcfc05c723381c91deb9d3501f317e29055d76860acb84ee11",
+    "report-print-area": "df036fb72dbe68cdaa579a1886b558a687789ea339593686592e6188476742a3"
+  }
+}

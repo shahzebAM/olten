@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
+import { importBiometricAttendance } from './biometrics-attendance.service';
 import {
   resolveEffectivePayrollProfile,
   resolvePayrollBasis,
@@ -617,6 +618,10 @@ export class EmployeesService {
     );
     if (duplicate) return duplicate;
     return await prisma.attendance.create({ data: normalized });
+  }
+
+  async importBiometrics(data: Record<string, unknown>) {
+    return await importBiometricAttendance(prisma, data);
   }
 
   async updateAttendance(id: number, data: any) {
